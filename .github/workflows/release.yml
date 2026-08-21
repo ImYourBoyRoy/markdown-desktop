@@ -135,21 +135,18 @@ jobs:
 
       - name: Upload Windows portable executable
         if: runner.os == 'Windows'
-        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          projectPath: .
-          args: '--no-bundle'
-          tagName: v__VERSION__
-          releaseName: Markdown Desktop Viewer-Editor v__VERSION__
-          releaseBody: |
-            Download the Markdown Desktop build for your operating system. Windows includes a Setup installer, an MSI installer, and a Portable executable. macOS includes Intel and Apple Silicon DMGs plus signed app archives. Linux includes AppImage, DEB, and RPM packages. Files ending in .sig are signed updater companions; latest.json is used by the in-app updater. GitHub provides Source code archives for this tag below the release assets.
-          releaseDraft: true
-          prerelease: false
-          uploadPlainBinary: true
-          includeUpdaterJson: false
-          assetNamePattern: 'Markdown-Desktop-[version]-Windows-x64-Portable[ext]'
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: pwsh
+        run: |
+          $version = (Get-Content -Raw -LiteralPath 'package.json' | ConvertFrom-Json).version
+          $binary = Join-Path $env:GITHUB_WORKSPACE 'src-tauri/target/release/markdown-desktop.exe'
+          if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) {
+            throw "Release binary was not built: $binary"
+          }
+          $assetName = "Markdown-Desktop-$version-Windows-x64-Portable.exe"
+          gh release upload $env:RELEASE_TAG "$binary#$assetName" --repo $env:GITHUB_REPOSITORY --clobber
 
   publish:
     name: Publish and verify release

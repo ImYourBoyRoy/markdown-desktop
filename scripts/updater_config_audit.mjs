@@ -38,8 +38,11 @@ if (releaseConfig.bundle?.createUpdaterArtifacts !== true) failures.push('releas
 for (const permission of ['process:default', 'updater:default']) {
   if (!capability.permissions?.includes(permission)) failures.push(`missing updater capability permission: ${permission}`);
 }
-for (const marker of ['TAURI_SIGNING_PRIVATE_KEY', 'includeUpdaterJson: true', 'includeUpdaterJson: false', 'assetNamePattern:', 'updaterJsonPreferNsis: true', 'tauri.release.conf.json']) {
+for (const marker of ['TAURI_SIGNING_PRIVATE_KEY', 'includeUpdaterJson: true', 'assetNamePattern:', 'updaterJsonPreferNsis: true', 'tauri.release.conf.json', 'gh release upload']) {
   if (!releaseWorkflow.includes(marker)) failures.push(`release workflow is missing updater marker: ${marker}`);
+}
+for (const obsoleteMarker of ['uploadUpdaterJson:', 'releaseAssetNamePattern:']) {
+  if (releaseWorkflow.includes(obsoleteMarker)) failures.push(`release workflow still uses obsolete Tauri Action input: ${obsoleteMarker}`);
 }
 if (!/max-parallel:\s*1/.test(releaseWorkflow)) {
   failures.push('release workflow must serialize shared draft-release/latest.json uploads');
