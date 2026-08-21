@@ -146,7 +146,9 @@ jobs:
             throw "Release binary was not built: $binary"
           }
           $assetName = "Markdown-Desktop-$version-Windows-x64-Portable.exe"
-          gh release upload $env:RELEASE_TAG "$binary#$assetName" --repo $env:GITHUB_REPOSITORY --clobber
+          $staged = Join-Path $env:RUNNER_TEMP $assetName
+          Copy-Item -LiteralPath $binary -Destination $staged -Force
+          gh release upload $env:RELEASE_TAG $staged --repo $env:GITHUB_REPOSITORY --clobber
 
   publish:
     name: Publish and verify release
