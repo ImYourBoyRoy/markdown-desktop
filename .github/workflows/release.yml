@@ -126,7 +126,16 @@ jobs:
           tagName: v__VERSION__
           releaseName: Markdown Desktop Viewer-Editor v__VERSION__
           releaseBody: |
-            Download the Markdown Desktop build for your operating system. Windows includes a Setup installer, an MSI installer, and a Portable executable. macOS includes Intel and Apple Silicon DMGs plus signed app archives. Linux includes AppImage, DEB, and RPM packages. Files ending in .sig are signed updater companions; latest.json is used by the in-app updater. GitHub provides Source code archives for this tag below the release assets.
+            ## Download Markdown Desktop
+
+            Choose the package for your operating system:
+
+            - **Windows:** `Markdown-Desktop-<version>-Windows-x64-setup.exe` is the recommended installer. Use `...-Windows-x64.msi` for managed Windows Installer deployments or `...-Windows-x64-Portable.exe` without installation.
+            - **macOS Apple Silicon:** `...-macOS-Apple-Silicon.dmg`
+            - **macOS Intel:** `...-macOS-Intel.dmg`
+            - **Linux:** `...-Linux-x64.AppImage` is the portable option; `.deb` is for Debian/Ubuntu-based systems and `.rpm` is for Fedora/openSUSE-based systems.
+
+            Files ending in `.sig` and `latest.json` support signed in-app updates and normally do not need to be downloaded manually. GitHub provides the `Source code` archives for the tagged source tree below the release assets.
           releaseDraft: true
           prerelease: false
           includeUpdaterJson: true
