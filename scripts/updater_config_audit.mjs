@@ -38,7 +38,7 @@ if (releaseConfig.bundle?.createUpdaterArtifacts !== true) failures.push('releas
 for (const permission of ['process:default', 'updater:default']) {
   if (!capability.permissions?.includes(permission)) failures.push(`missing updater capability permission: ${permission}`);
 }
-for (const marker of ['TAURI_SIGNING_PRIVATE_KEY', 'uploadUpdaterJson: true', 'releaseAssetNamePattern:', 'tauri.release.conf.json']) {
+for (const marker of ['TAURI_SIGNING_PRIVATE_KEY', 'includeUpdaterJson: true', 'includeUpdaterJson: false', 'assetNamePattern:', 'updaterJsonPreferNsis: true', 'tauri.release.conf.json']) {
   if (!releaseWorkflow.includes(marker)) failures.push(`release workflow is missing updater marker: ${marker}`);
 }
 if (!/max-parallel:\s*1/.test(releaseWorkflow)) {

@@ -50,19 +50,22 @@ Open a file or folder, read the rendered document, switch to source when you nee
 
 ## Download
 
-Installers and portable builds are on the [Releases](https://github.com/ImYourBoyRoy/markdown-desktop/releases) page.
+Installers and portable builds are on the [Releases](https://github.com/ImYourBoyRoy/markdown-desktop/releases) page. Every downloadable build follows the same pattern: `Markdown-Desktop-<version>-<platform>-<architecture>...`.
 
 | Platform | Installer | Other packages |
 | --- | --- | --- |
-| Windows x64 | `*-setup.exe` | `.msi`, portable `.exe` |
-| macOS | `.dmg` | `.app.tar.gz` (Intel and Apple Silicon) |
-| Linux x64 | `.AppImage` | `.deb`, `.rpm` |
+| Windows x64 | `Markdown-Desktop-<version>-Windows-x64-setup.exe` | `...-Windows-x64.msi`, `...-Windows-x64-Portable.exe` |
+| macOS Apple Silicon | `...-macOS-Apple-Silicon.dmg` | `...-macOS-Apple-Silicon.app.tar.gz` |
+| macOS Intel | `...-macOS-Intel.dmg` | `...-macOS-Intel.app.tar.gz` |
+| Linux x64 | `...-Linux-x64.AppImage` | `...-Linux-x64.deb`, `...-Linux-x64.rpm` |
+
+Files ending in `.sig` are signed companions used to verify updates. `latest.json` is the machine-readable manifest used by the in-app updater; users normally do not download it. GitHub adds the two `Source code` archives automatically for anyone who wants the tagged source tree.
 
 ## Install
 
 ### Windows
 
-Run the `*-setup.exe` installer, or use the `.msi` when your environment expects Windows Installer. The portable `.exe` runs without installing an uninstaller.
+Run `Markdown-Desktop-<version>-Windows-x64-setup.exe`, or use `Markdown-Desktop-<version>-Windows-x64.msi` when your environment expects Windows Installer. `Markdown-Desktop-<version>-Windows-x64-Portable.exe` runs without installing an uninstaller.
 
 ### macOS
 
@@ -71,16 +74,16 @@ Open the `.dmg` and drag **Markdown Desktop Viewer-Editor** into Applications.
 ### Linux
 
 ```bash
-chmod +x ./markdown-desktop-*.AppImage
-./markdown-desktop-*.AppImage
+chmod +x ./Markdown-Desktop-*-Linux-x64.AppImage
+./Markdown-Desktop-*-Linux-x64.AppImage
 ```
 
 Or install the `.deb` / `.rpm` with your package manager:
 
 ```bash
-sudo apt install ./markdown-desktop-*.deb
+sudo apt install ./Markdown-Desktop-*-Linux-x64.deb
 # or
-sudo dnf install ./markdown-desktop-*.rpm
+sudo dnf install ./Markdown-Desktop-*-Linux-x64.rpm
 ```
 
 ## Uninstall

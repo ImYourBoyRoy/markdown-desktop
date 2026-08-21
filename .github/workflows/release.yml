@@ -33,18 +33,22 @@ jobs:
             os: windows-latest
             target: ''
             args: ''
+            asset_pattern: 'Markdown-Desktop-[version]-Windows-x64[setup][ext]'
           - name: macOS Apple Silicon
             os: macos-latest
             target: aarch64-apple-darwin
             args: '--target aarch64-apple-darwin'
+            asset_pattern: 'Markdown-Desktop-[version]-macOS-Apple-Silicon[ext]'
           - name: macOS Intel
             os: macos-latest
             target: x86_64-apple-darwin
             args: '--target x86_64-apple-darwin'
+            asset_pattern: 'Markdown-Desktop-[version]-macOS-Intel[ext]'
           - name: Linux x64
             os: ubuntu-22.04
             target: ''
             args: ''
+            asset_pattern: 'Markdown-Desktop-[version]-Linux-x64[ext]'
     runs-on: ${{ matrix.os }}
     env:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -122,11 +126,12 @@ jobs:
           tagName: v__VERSION__
           releaseName: Markdown Desktop Viewer-Editor v__VERSION__
           releaseBody: |
-            Download the installer for your operating system from the assets below. Windows also includes a portable executable. GitHub provides Source code archives for this tag below the release assets.
+            Download the Markdown Desktop build for your operating system. Windows includes a Setup installer, an MSI installer, and a Portable executable. macOS includes Intel and Apple Silicon DMGs plus signed app archives. Linux includes AppImage, DEB, and RPM packages. Files ending in .sig are signed updater companions; latest.json is used by the in-app updater. GitHub provides Source code archives for this tag below the release assets.
           releaseDraft: true
           prerelease: false
-          uploadUpdaterJson: true
-          releaseAssetNamePattern: 'markdown-desktop-[version]-[platform]-[arch][setup][ext]'
+          includeUpdaterJson: true
+          updaterJsonPreferNsis: true
+          assetNamePattern: ${{ matrix.asset_pattern }}
 
       - name: Upload Windows portable executable
         if: runner.os == 'Windows'
@@ -139,12 +144,12 @@ jobs:
           tagName: v__VERSION__
           releaseName: Markdown Desktop Viewer-Editor v__VERSION__
           releaseBody: |
-            Download the installer for your operating system from the assets below. Windows also includes a portable executable. GitHub provides Source code archives for this tag below the release assets.
+            Download the Markdown Desktop build for your operating system. Windows includes a Setup installer, an MSI installer, and a Portable executable. macOS includes Intel and Apple Silicon DMGs plus signed app archives. Linux includes AppImage, DEB, and RPM packages. Files ending in .sig are signed updater companions; latest.json is used by the in-app updater. GitHub provides Source code archives for this tag below the release assets.
           releaseDraft: true
           prerelease: false
           uploadPlainBinary: true
-          uploadUpdaterJson: false
-          releaseAssetNamePattern: 'markdown-desktop-[version]-[platform]-[arch][setup][ext]'
+          includeUpdaterJson: false
+          assetNamePattern: 'Markdown-Desktop-[version]-Windows-x64-Portable[ext]'
 
   publish:
     name: Publish and verify release
@@ -182,6 +187,8 @@ jobs:
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: |
           gh release view "$RELEASE_TAG" --json isDraft,assets,tarballUrl,zipballUrl > release.json
+          mkdir -p release-assets
+          gh release download "$RELEASE_TAG" --pattern latest.json --dir release-assets --clobber
           latest_tag="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name)"
           export LATEST_TAG="$latest_tag"
           node --input-type=module <<'NODE'
@@ -189,23 +196,47 @@ jobs:
 
           const release = JSON.parse(readFileSync('release.json', 'utf8'));
           const names = release.assets.map((asset) => asset.name);
+          const latest = JSON.parse(readFileSync('release-assets/latest.json', 'utf8'));
+          const version = process.env.RELEASE_TAG.replace(/^v/, '');
+          const expected = {
+            windowsSetup: `Markdown-Desktop-${version}-Windows-x64-setup.exe`,
+            windowsMsi: `Markdown-Desktop-${version}-Windows-x64.msi`,
+            windowsPortable: `Markdown-Desktop-${version}-Windows-x64-Portable.exe`,
+            macAppleDmg: `Markdown-Desktop-${version}-macOS-Apple-Silicon.dmg`,
+            macIntelDmg: `Markdown-Desktop-${version}-macOS-Intel.dmg`,
+            macAppleArchive: `Markdown-Desktop-${version}-macOS-Apple-Silicon.app.tar.gz`,
+            macIntelArchive: `Markdown-Desktop-${version}-macOS-Intel.app.tar.gz`,
+            linuxAppImage: `Markdown-Desktop-${version}-Linux-x64.AppImage`,
+            linuxDeb: `Markdown-Desktop-${version}-Linux-x64.deb`,
+            linuxRpm: `Markdown-Desktop-${version}-Linux-x64.rpm`,
+          };
           const has = (predicate) => names.some(predicate);
           const failures = [];
 
           if (release.isDraft) failures.push('release is still a draft');
           if (process.env.LATEST_TAG !== process.env.RELEASE_TAG) failures.push(`release is not marked latest: ${process.env.LATEST_TAG ?? 'unknown'}`);
           if (!release.tarballUrl || !release.zipballUrl) failures.push('GitHub source archives are missing');
-          if (!has((name) => /-setup\.exe$/i.test(name))) failures.push('Windows NSIS installer is missing');
-          if (!has((name) => /\.msi$/i.test(name))) failures.push('Windows MSI installer is missing');
-          if (!has((name) => /windows/i.test(name) && /\.exe$/i.test(name) && !/-setup\.exe$/i.test(name))) failures.push('Windows portable executable is missing');
-          if (names.filter((name) => /\.dmg$/i.test(name)).length < 2) failures.push('macOS Intel and Apple Silicon DMGs are missing');
-          if (!has((name) => /\.AppImage$/i.test(name))) failures.push('Linux AppImage is missing');
-          if (!has((name) => /\.deb$/i.test(name))) failures.push('Linux DEB package is missing');
-          if (!has((name) => /\.rpm$/i.test(name))) failures.push('Linux RPM package is missing');
-          if (!has((name) => /\.sig$/i.test(name))) failures.push('signed updater assets are missing');
+          for (const [label, name] of Object.entries(expected)) {
+            if (!names.includes(name)) failures.push(`${label} is missing: ${name}`);
+          }
+          for (const name of [expected.windowsSetup, expected.windowsMsi, expected.macAppleArchive, expected.macIntelArchive, expected.linuxAppImage, expected.linuxDeb, expected.linuxRpm]) {
+            if (!names.includes(`${name}.sig`)) failures.push(`signed companion is missing: ${name}.sig`);
+          }
           if (!has((name) => name === 'latest.json')) failures.push('latest.json updater metadata is missing');
 
-          console.log(JSON.stringify({ tag: process.env.RELEASE_TAG, assets: names, sourceArchives: { tarball: release.tarballUrl, zipball: release.zipballUrl } }, null, 2));
+          const updaterPlatforms = Object.entries(latest.platforms ?? {});
+          if (updaterPlatforms.length === 0) failures.push('latest.json contains no updater platforms');
+          for (const [platform, data] of updaterPlatforms) {
+            if (!data?.signature || !data?.url) {
+              failures.push(`latest.json platform is incomplete: ${platform}`);
+              continue;
+            }
+            const assetName = decodeURIComponent(new URL(data.url).pathname.split('/').pop() ?? '');
+            if (!names.includes(assetName)) failures.push(`latest.json URL does not point to a release asset: ${platform} -> ${assetName}`);
+            if (!names.includes(`${assetName}.sig`)) failures.push(`latest.json asset has no signed companion: ${assetName}.sig`);
+          }
+
+          console.log(JSON.stringify({ tag: process.env.RELEASE_TAG, assets: names, updaterPlatforms: Object.fromEntries(updaterPlatforms.map(([platform, data]) => [platform, data.url])), sourceArchives: { tarball: release.tarballUrl, zipball: release.zipballUrl } }, null, 2));
           if (failures.length) {
             console.error(failures.join('\n'));
             process.exit(1);
