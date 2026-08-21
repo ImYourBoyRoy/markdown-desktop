@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Reinforce Explorer DefaultIcon for associated Markdown ProgIds on the MSI
+  path. Use INSTALLDIR + the known main binary name instead of a WiX file-id
+  reference so light.exe ICE69 does not fail across features/components.
+  NSIS already registers "$INSTDIR\main.exe,0" via Tauri's association macro.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Fragment>
+    <DirectoryRef Id="TARGETDIR">
+      <Component Id="MarkdownDesktopFileIcon.md" Guid="*">
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\Classes\Markdown Desktop Viewer-Editor.md\DefaultIcon"
+          Type="string"
+          Value="[INSTALLDIR]markdown-desktop.exe,0"
+          KeyPath="yes" />
+      </Component>
+      <Component Id="MarkdownDesktopFileIcon.markdown" Guid="*">
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\Classes\Markdown Desktop Viewer-Editor.markdown\DefaultIcon"
+          Type="string"
+          Value="[INSTALLDIR]markdown-desktop.exe,0"
+          KeyPath="yes" />
+      </Component>
+      <Component Id="MarkdownDesktopFileIcon.mdown" Guid="*">
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\Classes\Markdown Desktop Viewer-Editor.mdown\DefaultIcon"
+          Type="string"
+          Value="[INSTALLDIR]markdown-desktop.exe,0"
+          KeyPath="yes" />
+      </Component>
+      <Component Id="MarkdownDesktopFileIcon.mkdown" Guid="*">
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\Classes\Markdown Desktop Viewer-Editor.mkdown\DefaultIcon"
+          Type="string"
+          Value="[INSTALLDIR]markdown-desktop.exe,0"
+          KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+  </Fragment>
+</Wix>

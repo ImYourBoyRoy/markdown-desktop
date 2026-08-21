@@ -1,0 +1,86 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Markdown Desktop Viewer-Editor",
+  "version": "1.0.0",
+  "identifier": "com.markdownnative.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Markdown Desktop Viewer-Editor",
+        "width": 1440,
+        "height": 920,
+        "minWidth": 920,
+        "minHeight": 560,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' customprotocol: asset:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc:; script-src 'self'"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc4OTk1NEYxNkE5NEU1NTUKUldSVjVaUnE4VlNaZUphTFo1WWNQd3p0TDkvSVZhTWI0TGljWDFQbWF5Z0d3MVBDUmpldVpGNzYK",
+      "endpoints": [
+        "https://github.com/ImYourBoyRoy/markdown-desktop/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "createUpdaterArtifacts": false,
+    "targets": "all",
+    "fileAssociations": [
+      {
+        "ext": ["md", "markdown", "mdown", "mkdown"],
+        "mimeType": "text/markdown",
+        "name": "Markdown document",
+        "description": "Markdown source document",
+        "role": "Editor",
+        "rank": "Default",
+        "contentTypes": ["net.daringfireball.markdown", "public.plain-text"],
+        "exportedType": {
+          "identifier": "com.markdownnative.desktop.markdown",
+          "conformsTo": ["public.plain-text", "public.text"]
+        }
+      }
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/64x64.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "installerHooks": "./windows/hooks.nsh"
+      },
+      "wix": {
+        "fragmentPaths": [
+          "./windows/fragments/app-data-cleanup.wxs",
+          "./windows/fragments/markdown-file-icons.wxs"
+        ],
+        "componentRefs": [
+          "MarkdownDesktopAppDataCleanup",
+          "MarkdownDesktopFileIcon.md",
+          "MarkdownDesktopFileIcon.markdown",
+          "MarkdownDesktopFileIcon.mdown",
+          "MarkdownDesktopFileIcon.mkdown"
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi" xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
+  <Fragment>
+    <!--
+      RemoveFolderEx needs the absolute path before CostInitialize. Remember
+      the resolved per-user paths during install and retrieve them during
+      uninstall. Resolving AppDataFolder directly at uninstall time is not
+      reliable for a per-machine MSI because elevated Windows Installer
+      actions can run under the system profile instead of the launching user.
+    -->
+    <Property Id="MARKDOWN_DESKTOP_APPDATA">
+      <RegistrySearch Id="MarkdownDesktopAppDataSearch" Root="HKCU" Key="Software\Markdown Desktop\Cleanup" Name="AppData" Type="raw" />
+    </Property>
+    <Property Id="MARKDOWN_DESKTOP_LOCALDATA">
+      <RegistrySearch Id="MarkdownDesktopLocalDataSearch" Root="HKCU" Key="Software\Markdown Desktop\Cleanup" Name="LocalData" Type="raw" />
+    </Property>
+
+    <DirectoryRef Id="TARGETDIR">
+      <Component Id="MarkdownDesktopAppDataCleanup" Guid="*">
+        <RegistryValue Root="HKCU" Key="Software\Markdown Desktop\Cleanup" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
+        <RegistryValue Root="HKCU" Key="Software\Markdown Desktop\Cleanup" Name="AppData" Type="string" Value="[AppDataFolder]com.markdownnative.desktop" />
+        <RegistryValue Root="HKCU" Key="Software\Markdown Desktop\Cleanup" Name="LocalData" Type="string" Value="[LocalAppDataFolder]com.markdownnative.desktop" />
+        <util:RemoveFolderEx Id="MarkdownDesktopRemoveAppData" On="uninstall" Property="MARKDOWN_DESKTOP_APPDATA" />
+        <util:RemoveFolderEx Id="MarkdownDesktopRemoveLocalData" On="uninstall" Property="MARKDOWN_DESKTOP_LOCALDATA" />
+      </Component>
+    </DirectoryRef>
+  </Fragment>
+</Wix>
