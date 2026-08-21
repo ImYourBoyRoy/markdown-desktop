@@ -174,7 +174,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: |
-          gh release view "$RELEASE_TAG" --json isDraft,isLatest,assets,tarballUrl,zipballUrl > release.json
+          gh release view "$RELEASE_TAG" --json isDraft,assets,tarballUrl,zipballUrl > release.json
+          latest_tag="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name)"
+          echo "LATEST_TAG=${latest_tag}" >> "$GITHUB_ENV"
           node --input-type=module <<'NODE'
           import { readFileSync } from 'node:fs';
 
@@ -184,7 +186,7 @@ jobs:
           const failures = [];
 
           if (release.isDraft) failures.push('release is still a draft');
-          if (!release.isLatest) failures.push('release is not marked latest');
+          if (process.env.LATEST_TAG !== process.env.RELEASE_TAG) failures.push(`release is not marked latest: ${process.env.LATEST_TAG ?? 'unknown'}`);
           if (!release.tarballUrl || !release.zipballUrl) failures.push('GitHub source archives are missing');
           if (!has((name) => /-setup\.exe$/i.test(name))) failures.push('Windows NSIS installer is missing');
           if (!has((name) => /\.msi$/i.test(name))) failures.push('Windows MSI installer is missing');
