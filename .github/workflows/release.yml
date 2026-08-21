@@ -4,6 +4,12 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      verify_only:
+        description: Verify an existing versioned release without rebuilding artifacts
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -14,6 +20,7 @@ env:
 
 jobs:
   release:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.verify_only }}
     name: Build ${{ matrix.name }}
     strategy:
       fail-fast: false
@@ -142,7 +149,7 @@ jobs:
   publish:
     name: Publish and verify release
     needs: release
-    if: ${{ needs.release.result == 'success' }}
+    if: ${{ always() && (needs.release.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.verify_only)) }}
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -176,7 +183,7 @@ jobs:
         run: |
           gh release view "$RELEASE_TAG" --json isDraft,assets,tarballUrl,zipballUrl > release.json
           latest_tag="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name)"
-          echo "LATEST_TAG=${latest_tag}" >> "$GITHUB_ENV"
+          export LATEST_TAG="$latest_tag"
           node --input-type=module <<'NODE'
           import { readFileSync } from 'node:fs';
 
