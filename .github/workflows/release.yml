@@ -63,13 +63,7 @@ jobs:
     env:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-      APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      MACOS_SIGNING_CONFIGURED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_SIGNING_IDENTITY != '' && secrets.APPLE_KEYCHAIN_PASSWORD != '' && secrets.APPLE_ID != '' && secrets.APPLE_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
@@ -109,6 +103,14 @@ jobs:
       - name: Verify macOS signing and notarization secrets
         if: runner.os == 'macOS'
         shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           required=(APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_KEYCHAIN_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID)
           present=0
@@ -148,6 +150,19 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build and stage portable/installable layout
+        if: runner.os != 'macOS' || env.MACOS_SIGNING_CONFIGURED != 'true'
+        run: pnpm build:app ${{ matrix.args }} --config src-tauri/tauri.release.conf.json
+
+      - name: Build and stage portable/installable layout (signed macOS)
+        if: runner.os == 'macOS' && env.MACOS_SIGNING_CONFIGURED == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: pnpm build:app ${{ matrix.args }} --config src-tauri/tauri.release.conf.json
 
       - name: Upload staged platform artifacts
@@ -161,6 +176,7 @@ jobs:
         run: pnpm smoke:native ${{ matrix.args }}
 
       - name: Build and upload release bundles
+        if: runner.os != 'macOS' || env.MACOS_SIGNING_CONFIGURED != 'true'
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -188,9 +204,53 @@ jobs:
           updaterJsonPreferNsis: true
           assetNamePattern: ${{ matrix.asset_pattern }}
 
+      - name: Build and upload release bundles (signed macOS)
+        if: runner.os == 'macOS' && env.MACOS_SIGNING_CONFIGURED == 'true'
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: .
+          args: ${{ matrix.args }} --config src-tauri/tauri.release.conf.json
+          tagName: v__VERSION__
+          releaseName: Markdown Desktop v__VERSION__
+          releaseBody: |
+            ## Download Markdown Desktop
+
+            Choose the package for your operating system:
+
+            - **Windows x64:** `Markdown-Desktop-<version>-Windows-x64-setup.exe` is the recommended installer. Use `...-Windows-x64.msi` for managed Windows Installer deployments or `...-Windows-x64-Portable.exe` without installation.
+            - **Windows ARM64:** `Markdown-Desktop-<version>-Windows-ARM64-setup.exe` is the native ARM installer. The NSIS installer itself uses Windows compatibility support where needed.
+            - **macOS Apple Silicon:** `...-macOS-Apple-Silicon.dmg` is signed and notarized when the Apple Developer credentials are configured.
+            - **macOS Intel:** `...-macOS-Intel.dmg` is signed and notarized when the Apple Developer credentials are configured.
+            - **Linux x64:** `...-Linux-x64.AppImage` is the portable option; `.deb` is for Debian/Ubuntu-based systems and `.rpm` is for Fedora/openSUSE-based systems.
+            - **Linux ARM64:** `...-Linux-ARM64.AppImage` is the portable option; `.deb` and `.rpm` are also provided.
+
+            Files ending in `.sig` and `latest.json` support signed in-app updates and normally do not need to be downloaded manually. GitHub provides the `Source code` archives for the tagged source tree below the release assets.
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: true
+          updaterJsonPreferNsis: true
+          assetNamePattern: ${{ matrix.asset_pattern }}
+
       - name: Verify macOS signature, Gatekeeper assessment, and notarization ticket
         if: runner.os == 'macOS'
         shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
           search_root="src-tauri/target"
