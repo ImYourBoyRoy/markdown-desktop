@@ -52,7 +52,7 @@ Open a file or folder, read the rendered document, switch to source when you nee
 
 Installers and portable builds are on the [Releases](https://github.com/ImYourBoyRoy/markdown-desktop/releases) page. Every downloadable build follows the same pattern: `Markdown-Desktop-<version>-<platform>-<architecture>...`.
 
-The checked-in release workflow targets all six platform families in the table below. Availability is release-specific: the published `v1.0.0` release predates the ARM64 and Apple notarization gates; the next intended release is `v1.0.1`, and it must not be announced until its complete asset list and `latest.json` have been verified. Current preparation evidence covers Windows x64 packaging/launch, Linux x64 packaging plus DEB install/purge, and macOS Intel packaging plus private DMG copy/remove. This does not substitute for published ARM64, Apple Silicon, signing, notarization, desktop-session integration, or live updater evidence.
+The checked-in release workflow targets all six platform families in the table below. Availability is release-specific: the published `v1.0.0` release predates the ARM64 and Apple notarization gates; the next intended release is `v1.0.1`, and it must not be announced until its complete asset list and `latest.json` have been verified. CI preparation run `32545608162` passed native packaging checks for all six architecture families and Windows NSIS/MSI install/uninstall smoke; remote Linux DEB install/purge and unsigned macOS Intel DMG copy/remove also pass. This does not substitute for published asset/signature metadata, Apple signing/notarization, Gatekeeper, desktop-session integration, or live updater evidence.
 
 | Platform | Installer | Other packages |
 | --- | --- | --- |
@@ -69,7 +69,7 @@ Files ending in `.sig` are signed companions used to verify updates on a signed 
 
 ### Windows
 
-Run the x64 or ARM64 `-setup.exe` that matches your Windows device, or use the matching `.msi` when your environment expects Windows Installer. The installed app is registered as **Markdown Desktop**, adds a Start menu entry, and can be launched from Windows Search. The matching `-Portable.exe` runs without installing an uninstaller or Start menu entry.
+Run the x64 or ARM64 `-setup.exe` that matches your Windows device, or use the matching `.msi` when your environment expects Windows Installer. The NSIS installer embeds the WebView2 bootstrapper for machines that need it. The installed app is registered as **Markdown Desktop**, adds a Start menu entry, and can be launched from Windows Search. The matching `-Portable.exe` runs without installing an uninstaller or Start menu entry.
 
 ### macOS
 
