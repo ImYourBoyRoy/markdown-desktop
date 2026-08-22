@@ -124,7 +124,9 @@ function readUninstallEntries() {
 }
 
 try {
-  run(join(installerDir, 'nsis', nsisInstaller), ['/S', '/currentuser', `/D=${installDir}`, `/LOG=${nsisLogPath}`]);
+  // NSIS requires /D=... to be the final installer argument. Keep the log
+  // switch before it or the silent install may fall back to its default path.
+  run(join(installerDir, 'nsis', nsisInstaller), ['/S', '/currentuser', `/LOG=${nsisLogPath}`, `/D=${installDir}`]);
   nsisInstalled = true;
   if (!existsSync(join(installDir, 'uninstall.exe'))) {
     const log = existsSync(nsisLogPath) ? readFileSync(nsisLogPath, 'utf8') : 'NSIS log was not created.';

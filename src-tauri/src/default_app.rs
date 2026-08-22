@@ -87,6 +87,7 @@ fn windows_registered_app_uri(kind: &str, app_name: &str) -> String {
 
 /// Settings parses the registered-app name like a query parameter; escape it
 /// the same way Chromium and Microsoft samples do (including `+`).
+#[cfg(windows)]
 fn encode_settings_query_value(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for byte in value.bytes() {
@@ -409,6 +410,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn encodes_product_name_for_settings_query() {
         assert_eq!(
             encode_settings_query_value("Markdown Desktop"),
