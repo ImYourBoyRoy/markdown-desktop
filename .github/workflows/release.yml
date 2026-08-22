@@ -375,7 +375,6 @@ jobs:
           const has = (predicate) => names.some(predicate);
           const failures = [];
 
-          if (!release.tarballUrl || !release.zipballUrl) failures.push('GitHub source archives are missing');
           for (const [label, name] of Object.entries(expected)) {
             if (!names.includes(name)) failures.push(`${label} is missing: ${name}`);
           }
@@ -438,7 +437,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: |
-          gh release view "$RELEASE_TAG" --json isDraft > release-published.json
+          gh release view "$RELEASE_TAG" --json isDraft,tarballUrl,zipballUrl > release-published.json
           latest_tag="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name)"
           export LATEST_TAG="$latest_tag"
-          node -e "const fs=require('node:fs'); const release=JSON.parse(fs.readFileSync('release-published.json','utf8')); const latest=process.env.LATEST_TAG; if (release.isDraft) { console.error('release is still a draft'); process.exit(1); } if (latest !== process.env.RELEASE_TAG) { console.error('release is not marked latest: ' + (latest || 'unknown')); process.exit(1); }"
+          node -e "const fs=require('node:fs'); const release=JSON.parse(fs.readFileSync('release-published.json','utf8')); const latest=process.env.LATEST_TAG; if (release.isDraft) { console.error('release is still a draft'); process.exit(1); } if (!release.tarballUrl || !release.zipballUrl) { console.error('published release is missing GitHub source archives'); process.exit(1); } if (latest !== process.env.RELEASE_TAG) { console.error('release is not marked latest: ' + (latest || 'unknown')); process.exit(1); }"
