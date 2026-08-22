@@ -52,7 +52,7 @@ Open a file or folder, read the rendered document, switch to source when you nee
 
 Installers and portable builds are on the [Releases](https://github.com/ImYourBoyRoy/markdown-desktop/releases) page. Every downloadable build follows the same pattern: `Markdown-Desktop-<version>-<platform>-<architecture>...`.
 
-The checked-in release workflow targets all six platform families in the table below. Availability is release-specific: the published `v1.0.0` release predates the ARM64 and Apple notarization gates; the next intended release is `v1.0.1`, and it must not be announced until its complete asset list and `latest.json` have been verified. CI preparation run `32545608162` passed native packaging checks for all six architecture families and Windows NSIS/MSI install/uninstall smoke; remote Linux DEB install/purge and unsigned macOS Intel DMG copy/remove also pass. This does not substitute for published asset/signature metadata, Apple signing/notarization, Gatekeeper, desktop-session integration, or live updater evidence.
+The checked-in release workflow targets all six platform families in the table below. Availability is release-specific: the published `v1.0.0` release predates the ARM64 assets. The intended `v1.0.1` release must not be announced until its complete asset list, updater metadata, and signatures have been verified. Apple Developer signing/notarization is intentionally deferred for this release because no Apple Developer account is configured; macOS packages must therefore be treated as unsigned and may show an unidentified-developer warning. CI preparation run `32545608162` passed native packaging checks for all six architecture families and Windows NSIS/MSI install/uninstall smoke; remote Linux DEB install/purge and unsigned macOS Intel DMG copy/remove also pass. This does not substitute for published asset/signature metadata, Gatekeeper, desktop-session integration, or live updater evidence.
 
 | Platform | Installer | Other packages |
 | --- | --- | --- |
@@ -73,7 +73,7 @@ Run the x64 or ARM64 `-setup.exe` that matches your Windows device, or use the m
 
 ### macOS
 
-Open a signed and notarized `.dmg` from a verified release, then drag **Markdown Desktop** into Applications. macOS then exposes it through Finder and Launchpad like any other installed app. The current remote VM packaging evidence is unsigned and is for maintainer verification only.
+For a signed and notarized build, open the corresponding `.dmg` from a verified release, then drag **Markdown Desktop** into Applications. For the intentionally unsigned `v1.0.1` path, open only a trusted release asset: macOS may report an unidentified developer, so use the Finder context menu → **Open** after verifying the download. macOS then exposes the app through Finder and Launchpad like any other installed app. Apple signing, notarization, stapling, and Gatekeeper approval are not claimed until Apple Developer credentials are provisioned.
 
 ### Linux
 
