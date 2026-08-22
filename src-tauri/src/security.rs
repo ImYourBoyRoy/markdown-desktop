@@ -96,7 +96,7 @@ fn is_private_ip(ip: IpAddr) -> bool {
                 || ip.is_multicast()
                 || (ip.segments()[0] & 0xffc0) == 0xfe80
                 || ip
-                    .to_ipv4_mapped()
+                    .to_ipv4()
                     .is_some_and(|mapped| is_private_ip(IpAddr::V4(mapped)))
         }
     }

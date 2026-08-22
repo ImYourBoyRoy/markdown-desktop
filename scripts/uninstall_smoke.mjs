@@ -46,7 +46,7 @@ function run(file, args) {
       '-NoProfile',
       '-NonInteractive',
       '-Command',
-      '$arguments = $env:MARKDOWN_SMOKE_ARGS | ConvertFrom-Json; & $env:MARKDOWN_SMOKE_FILE @arguments; exit $LASTEXITCODE',
+      '$arguments = [string[]]($env:MARKDOWN_SMOKE_ARGS | ConvertFrom-Json); $process = Start-Process -FilePath $env:MARKDOWN_SMOKE_FILE -ArgumentList $arguments -Wait -PassThru -WindowStyle Hidden; exit $process.ExitCode',
       ], {
       env: {
         ...process.env,
@@ -81,6 +81,25 @@ async function assertAbsent(label, paths) {
   if (remaining.length > 0) {
     throw new Error(`${label} left these paths behind: ${remaining.join('; ')}`);
   }
+}
+
+async function waitForPath(label, path, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (existsSync(path)) return;
+    await sleep(250);
+  }
+  throw new Error(`${label} did not create ${path} within ${timeoutMs}ms.`);
+}
+
+async function waitForMatches(label, finder, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const matches = finder();
+    if (matches.length > 0) return matches;
+    await sleep(250);
+  }
+  throw new Error(`${label} did not appear within ${timeoutMs}ms.`);
 }
 
 function findFiles(root, predicate) {
@@ -128,15 +147,19 @@ try {
   // switch before it or the silent install may fall back to its default path.
   run(join(installerDir, 'nsis', nsisInstaller), ['/S', '/currentuser', `/LOG=${nsisLogPath}`, `/D=${installDir}`]);
   nsisInstalled = true;
-  if (!existsSync(join(installDir, 'uninstall.exe'))) {
+  try {
+    await waitForPath('NSIS installer', join(installDir, 'uninstall.exe'));
+  } catch (error) {
     const log = existsSync(nsisLogPath) ? readFileSync(nsisLogPath, 'utf8') : 'NSIS log was not created.';
-    throw new Error(`NSIS installer did not create uninstall.exe.\n${log.slice(-8000)}`);
+    throw new Error(`${error.message}\n${log.slice(-8000)}`);
   }
-  const createdStartMenuLinks = startMenuRoots.flatMap((root) => findFiles(
-    root,
-    (name, path) => /^Markdown Desktop.*\.lnk$/i.test(name) && !beforeStartMenuLinks.has(path),
-  ));
-  if (createdStartMenuLinks.length === 0) throw new Error('NSIS installer did not create a Markdown Desktop Start menu shortcut.');
+  const createdStartMenuLinks = await waitForMatches(
+    'NSIS Start menu shortcut',
+    () => startMenuRoots.flatMap((root) => findFiles(
+      root,
+      (name, path) => /^Markdown Desktop.*\.lnk$/i.test(name) && !beforeStartMenuLinks.has(path),
+    )),
+  );
   const uninstallEntries = readUninstallEntries();
   if (!uninstallEntries.some((entry) => entry.Publisher === 'Roy Dawson IV')) {
     throw new Error(`Windows uninstall publisher was not Roy Dawson IV: ${JSON.stringify(uninstallEntries)}`);
