@@ -4,6 +4,7 @@ import type {
   AssetResult,
   ConflictResult,
   OpenedDocument,
+  PathGrant,
   RecoveryInfo,
   RecoverySnapshot,
   RenderedSource,
@@ -14,8 +15,24 @@ import type {
 
 export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
-export function openPath(path: string, profile = 'github') {
-  return invoke<OpenedDocument>('open_path', { path, profile });
+export function pickMarkdownPath() {
+  return invoke<PathGrant | null>('pick_markdown_path');
+}
+
+export function pickWorkspacePath() {
+  return invoke<PathGrant | null>('pick_workspace_path');
+}
+
+export function pickImportPath(kind: 'html' | 'docx') {
+  return invoke<PathGrant | null>('pick_import_path', { kind });
+}
+
+export function pickSavePath(fileName: string) {
+  return invoke<PathGrant | null>('pick_save_path', { fileName });
+}
+
+export function openDocumentGrant(token: string, profile = 'github') {
+  return invoke<OpenedDocument>('open_document_grant', { token, profile });
 }
 
 export function readDocument(documentId: string, profile = 'github') {
@@ -26,6 +43,10 @@ export function openWorkspaceDocument(workspaceId: string, relativePath: string,
   return invoke<OpenedDocument>('open_workspace_document', { workspaceId, relativePath, profile });
 }
 
+export function openDocumentLink(documentId: string, target: string, profile = 'github') {
+  return invoke<OpenedDocument>('open_document_link', { documentId, target, profile });
+}
+
 export function renderSource(source: string, profile = 'github') {
   return invoke<RenderedSource>('render_source', { source, profile });
 }
@@ -34,8 +55,8 @@ export function saveDocument(documentId: string, expectedRevision: string, sourc
   return invoke<SaveResult>('save_document', { documentId, expectedRevision, source });
 }
 
-export function openWorkspace(path: string, maxDepth = 3) {
-  return invoke<WorkspaceInfo>('open_workspace', { path, maxDepth });
+export function openWorkspaceGrant(token: string, maxDepth = 3) {
+  return invoke<WorkspaceInfo>('open_workspace_grant', { token, maxDepth });
 }
 
 export function refreshWorkspace(workspaceId: string, maxDepth: number) {
@@ -82,8 +103,8 @@ export function discardRecovery(documentId: string) {
   return invoke<void>('discard_recovery', { documentId });
 }
 
-export function saveDocumentAs(documentId: string, path: string, source: string, profile = 'github') {
-  return invoke<OpenedDocument>('save_document_as', { documentId, path, source, profile });
+export function saveDocumentAs(documentId: string, pathGrant: string, source: string, profile = 'github') {
+  return invoke<OpenedDocument>('save_document_as', { documentId, pathGrant, source, profile });
 }
 
 export function closeDocument(documentId: string) {
@@ -103,11 +124,18 @@ export function saveClipboardImage(documentId: string, bytes: number[], extensio
 }
 
 export function startupPaths() {
-  return invoke<string[]>('startup_paths');
+  return invoke<PathGrant[]>('startup_paths');
 }
 
-export function readImportFile(path: string) {
-  return invoke<number[]>('read_import_file', { path });
+export function requestDefaultMarkdownApp(confirmed: boolean) {
+  return invoke<{ message: string; platform: string; appliedLocally: boolean }>(
+    'request_default_markdown_app',
+    { confirmed },
+  );
+}
+
+export function readImportGrant(token: string) {
+  return invoke<number[]>('read_import_grant', { token });
 }
 
 export function onAppEvent<T>(name: string, handler: (payload: T) => void): Promise<UnlistenFn> {

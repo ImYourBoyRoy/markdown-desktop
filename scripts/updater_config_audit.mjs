@@ -35,11 +35,28 @@ if (!Array.isArray(updater?.endpoints) || updater.endpoints.length !== 1 || !upd
 if (tauriConfig.bundle?.createUpdaterArtifacts !== false) failures.push('base Tauri config must not require signing secrets');
 if (releaseConfig.bundle?.createUpdaterArtifacts !== true) failures.push('release Tauri config must enable updater artifacts');
 
-for (const permission of ['process:default', 'updater:default']) {
+for (const permission of ['process:allow-restart', 'updater:default']) {
   if (!capability.permissions?.includes(permission)) failures.push(`missing updater capability permission: ${permission}`);
+}
+for (const forbidden of ['process:default', 'opener:default', 'opener:allow-reveal-item-in-dir']) {
+  if (capability.permissions?.includes(forbidden)) failures.push(`capability is broader than required: ${forbidden}`);
+}
+if (!capability.permissions?.includes('opener:allow-open-url')) {
+  failures.push('missing narrowly scoped opener permission: opener:allow-open-url');
 }
 for (const marker of ['TAURI_SIGNING_PRIVATE_KEY', 'includeUpdaterJson: true', 'assetNamePattern:', 'updaterJsonPreferNsis: true', 'tauri.release.conf.json', 'gh release upload']) {
   if (!releaseWorkflow.includes(marker)) failures.push(`release workflow is missing updater marker: ${marker}`);
+}
+const prePublishVerification = releaseWorkflow.indexOf('name: Verify release assets before publication');
+const publishRelease = releaseWorkflow.indexOf('name: Publish release');
+if (prePublishVerification < 0 || publishRelease < 0 || prePublishVerification > publishRelease) {
+  failures.push('release assets must be verified before publication');
+}
+if (!releaseWorkflow.includes('releaseTag = if') || !releaseWorkflow.includes('!inputs.verify_only')) {
+  failures.push('manual release dispatch and verify-only behavior must use the versioned tag safely');
+}
+for (const marker of ['windows-11-vs2026-arm', 'ubuntu-22.04-arm', 'aarch64-pc-windows-msvc', 'aarch64-unknown-linux-gnu', 'Windows-ARM64', 'Linux-ARM64', 'windows-aarch64', 'linux-aarch64']) {
+  if (!releaseWorkflow.includes(marker)) failures.push(`release workflow is missing ARM updater marker: ${marker}`);
 }
 for (const obsoleteMarker of ['uploadUpdaterJson:', 'releaseAssetNamePattern:']) {
   if (releaseWorkflow.includes(obsoleteMarker)) failures.push(`release workflow still uses obsolete Tauri Action input: ${obsoleteMarker}`);
@@ -53,6 +70,15 @@ if (!releaseWorkflow.includes('Release tag must match package.json version')) {
 
 if (read('src-tauri/src/lib.rs').includes('check_for_updates') || read('src/lib/ipc.ts').includes('check_for_updates')) {
   failures.push('legacy unauthenticated custom update command remains wired');
+}
+if (!read('src-tauri/src/lib.rs').includes('check-for-updates')) {
+  failures.push('Help menu must expose check-for-updates');
+}
+if (!read('src/lib/updater.ts').includes('checkForAppUpdate') || !read('src/lib/updater.ts').includes('installAppUpdate')) {
+  failures.push('frontend updater module must expose checkForAppUpdate and installAppUpdate');
+}
+if (/api\.github\.com\/repos\/.*\/releases\/latest/.test(read('src/App.svelte')) || /api\.github\.com\/repos\/.*\/releases\/latest/.test(read('src/lib/updater.ts'))) {
+  failures.push('webview must not fetch GitHub Releases directly; use the signed Tauri updater');
 }
 
 if (failures.length) {

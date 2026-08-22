@@ -1,7 +1,13 @@
 {
   "name": "markdown-desktop",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A viewer-first desktop application for reading and editing Markdown files.",
+  "author": "Roy Dawson IV",
+  "homepage": "https://github.com/ImYourBoyRoy/markdown-desktop",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ImYourBoyRoy/markdown-desktop.git"
+  },
   "type": "module",
   "packageManager": "pnpm@11.21.0",
   "scripts": {
@@ -18,9 +24,13 @@
     "tauri": "tauri",
     "purge": "node scripts/purge_build_environment.mjs",
     "purge:rebuild": "node scripts/purge_build_environment.mjs --rebuild",
-    "purge:fresh": "node scripts/purge_build_environment.mjs --fresh --rebuild",
+    "purge:fresh": "node scripts/purge_build_environment.mjs --fresh --include-app --rebuild",
     "update:dependencies": "node scripts/purge_build_environment.mjs --locks-only",
     "accessibility:audit": "node scripts/accessibility_audit.mjs",
+    "wcagate:doctor": "wcagate doctor",
+    "wcagate:prepare": "wcagate prepare",
+    "wcagate:audit": "wcagate run",
+    "wcagate:results": "wcagate serve",
     "smoke:native": "node scripts/native_smoke.mjs",
     "smoke:uninstall": "node scripts/uninstall_smoke.mjs",
     "audit:updater": "node scripts/updater_config_audit.mjs",
@@ -62,6 +72,8 @@
     "unified": "^11.0.5"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@imyourboyroy/wcagate": "github:imyourboyroy/WCAGate",
     "@sveltejs/vite-plugin-svelte": "^7.3.0",
     "@tauri-apps/cli": "^2.11.4",
     "@testing-library/svelte": "^5.4.2",
@@ -69,6 +81,7 @@
     "@types/katex": "^0.16.8",
     "@typescript/native": "npm:typescript@^7.0.2",
     "jsdom": "^30.0.1",
+    "playwright": "^1.62.1",
     "svelte": "^5.56.9",
     "svelte-check": "^4.7.6",
     "typescript": "~6.0.3",

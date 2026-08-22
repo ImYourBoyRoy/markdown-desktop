@@ -23,6 +23,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_dialog::DialogExt;
+use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct StoredDocument {
@@ -33,12 +35,14 @@ pub struct StoredDocument {
     pub bom: bool,
     pub line_ending: String,
     pub final_newline: bool,
+    pub newline_sequences: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct StoredWorkspace {
     pub root: PathBuf,
     pub scan_depth: usize,
+    pub indexing: bool,
 }
 
 pub struct AppState {
@@ -46,9 +50,42 @@ pub struct AppState {
     pub workspaces: HashMap<String, StoredWorkspace>,
     pub watchers: HashMap<String, RecommendedWatcher>,
     pub watch_ignore_until: HashMap<String, Instant>,
+    pub path_grants: HashMap<String, PathGrantEntry>,
 }
 
 pub type SharedState = Mutex<AppState>;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PathGrant {
+    pub token: String,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PathGrantKind {
+    Document,
+    Workspace,
+    Import,
+    Save,
+}
+
+impl PathGrantKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Document => "document",
+            Self::Workspace => "workspace",
+            Self::Import => "import",
+            Self::Save => "save",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PathGrantEntry {
+    path: PathBuf,
+    kind: PathGrantKind,
+}
 
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", content = "detail")]
@@ -80,17 +117,17 @@ pub fn initial_state() -> SharedState {
         workspaces: HashMap::new(),
         watchers: HashMap::new(),
         watch_ignore_until: HashMap::new(),
+        path_grants: HashMap::new(),
     })
 }
 
-#[tauri::command]
-pub fn open_path(
+fn open_path(
     app: AppHandle,
     state: State<'_, SharedState>,
-    path: String,
+    path: PathBuf,
     profile: Option<String>,
 ) -> Result<OpenedDocument, CommandError> {
-    let path = security::canonical_existing(&path)?;
+    let path = security::canonical_existing(&path.to_string_lossy())?;
     if !security::is_markdown(&path) {
         return Err(CommandError::Message(
             "Only Markdown documents can be opened here.".into(),
@@ -140,6 +177,69 @@ pub fn open_workspace_document(
 }
 
 #[tauri::command]
+pub fn open_document_link(
+    app: AppHandle,
+    state: State<'_, SharedState>,
+    document_id: String,
+    target: String,
+    profile: Option<String>,
+) -> Result<OpenedDocument, CommandError> {
+    let record = state
+        .lock()
+        .map_err(|_| CommandError::Message("document state is unavailable".into()))?
+        .documents
+        .get(&document_id)
+        .cloned()
+        .ok_or_else(|| CommandError::Message("document is no longer open".into()))?;
+    let clean_target = target.split(['#', '?']).next().unwrap_or_default();
+    if clean_target.is_empty() {
+        return Err(CommandError::Message("document link has no target".into()));
+    }
+    let (root, workspace_id) = if let Some(workspace_id) = record.workspace_id.clone() {
+        let workspace = state
+            .lock()
+            .map_err(|_| CommandError::Message("workspace state is unavailable".into()))?
+            .workspaces
+            .get(&workspace_id)
+            .cloned()
+            .ok_or_else(|| CommandError::Message("workspace is no longer open".into()))?;
+        (workspace.root, Some(workspace_id))
+    } else {
+        (
+            record
+                .path
+                .parent()
+                .ok_or_else(|| CommandError::Message("document has no parent folder".into()))?
+                .to_path_buf(),
+            None,
+        )
+    };
+    let candidate = record
+        .path
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join(clean_target.replace('/', std::path::MAIN_SEPARATOR_STR));
+    let relative = candidate.strip_prefix(&root).map_err(|_| {
+        CommandError::Message("document link escapes the authorized workspace".into())
+    })?;
+    let path = security::safe_child(&root, &relative.to_string_lossy())?;
+    if !security::is_markdown(&path) {
+        return Err(CommandError::Message(
+            "Only Markdown documents can be opened from a link.".into(),
+        ));
+    }
+    let next_record = build_document_record(&path, workspace_id)?;
+    let opened = load_opened_document(&next_record, profile.as_deref().unwrap_or("github"))?;
+    state
+        .lock()
+        .map_err(|_| CommandError::Message("document state is unavailable".into()))?
+        .documents
+        .insert(next_record.id.clone(), next_record.clone());
+    watch_document(&app, &state, &next_record)?;
+    Ok(opened)
+}
+
+#[tauri::command]
 pub fn read_document(
     state: State<'_, SharedState>,
     document_id: String,
@@ -175,9 +275,8 @@ pub fn render_source(source: String, profile: Option<String>) -> RenderedSource 
     }
 }
 
-#[tauri::command]
-pub fn read_import_file(path: String) -> Result<Vec<u8>, CommandError> {
-    let path = security::canonical_existing(&path)?;
+fn read_import_file(path: PathBuf) -> Result<Vec<u8>, CommandError> {
+    let path = security::canonical_existing(&path.to_string_lossy())?;
     let extension = path
         .extension()
         .and_then(|value| value.to_str())
@@ -197,6 +296,233 @@ pub fn read_import_file(path: String) -> Result<Vec<u8>, CommandError> {
     fs::read(path).map_err(|e| CommandError::Message(e.to_string()))
 }
 
+fn issue_path_grant(
+    state: &SharedState,
+    path: PathBuf,
+    kind: PathGrantKind,
+) -> Result<PathGrant, CommandError> {
+    let token = Uuid::new_v4().to_string();
+    let mut state = state
+        .lock()
+        .map_err(|_| CommandError::Message("document state is unavailable".into()))?;
+    if state.path_grants.len() >= 256 {
+        state.path_grants.clear();
+    }
+    state
+        .path_grants
+        .insert(token.clone(), PathGrantEntry { path, kind });
+    Ok(PathGrant {
+        token,
+        kind: kind.as_str().to_owned(),
+    })
+}
+
+fn take_path_grant(
+    state: &SharedState,
+    token: String,
+    expected: PathGrantKind,
+) -> Result<PathBuf, CommandError> {
+    let mut state = state
+        .lock()
+        .map_err(|_| CommandError::Message("document state is unavailable".into()))?;
+    let entry = state.path_grants.get(&token).cloned().ok_or_else(|| {
+        CommandError::Message("file selection expired or was already used".into())
+    })?;
+    if entry.kind != expected {
+        return Err(CommandError::Message(
+            "file selection type is not valid for this operation".into(),
+        ));
+    }
+    state.path_grants.remove(&token);
+    Ok(entry.path)
+}
+
+pub fn startup_path_grants(
+    state: &SharedState,
+    args: impl IntoIterator<Item = String>,
+) -> Vec<PathGrant> {
+    args.into_iter()
+        .filter(|arg| !arg.starts_with('-'))
+        .filter_map(|arg| {
+            let path = PathBuf::from(&arg);
+            if security::is_markdown(&path) {
+                security::canonical_existing(&arg)
+                    .ok()
+                    .and_then(|path| issue_path_grant(state, path, PathGrantKind::Document).ok())
+            } else {
+                security::canonical_workspace(&arg)
+                    .ok()
+                    .and_then(|path| issue_path_grant(state, path, PathGrantKind::Workspace).ok())
+            }
+        })
+        .collect()
+}
+
+async fn choose_file(
+    app: AppHandle,
+    title: &'static str,
+    filter: Option<(&'static str, &'static [&'static str])>,
+    file_name: Option<String>,
+    save: bool,
+) -> Result<Option<PathBuf>, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut dialog = app.dialog().file().set_title(title);
+        if let Some((name, extensions)) = filter {
+            dialog = dialog.add_filter(name, extensions);
+        }
+        if let Some(file_name) = file_name {
+            dialog = dialog.set_file_name(file_name);
+        }
+        let selected = if save {
+            dialog.blocking_save_file()
+        } else {
+            dialog.blocking_pick_file()
+        };
+        selected.and_then(|path| path.into_path().ok())
+    })
+    .await
+    .map_err(|error| CommandError::Message(format!("file dialog failed: {error}")))
+}
+
+#[tauri::command]
+pub async fn pick_markdown_path(
+    app: AppHandle,
+    state: State<'_, SharedState>,
+) -> Result<Option<PathGrant>, CommandError> {
+    let Some(path) = choose_file(
+        app,
+        "Open Markdown",
+        Some(("Markdown", &["md", "markdown", "mdown", "mkdown"])),
+        None,
+        false,
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+    let path = security::canonical_existing(&path.to_string_lossy())?;
+    if !security::is_markdown(&path) {
+        return Err(CommandError::Message(
+            "Only Markdown documents can be opened here.".into(),
+        ));
+    }
+    issue_path_grant(state.inner(), path, PathGrantKind::Document).map(Some)
+}
+
+#[tauri::command]
+pub async fn pick_workspace_path(
+    app: AppHandle,
+    state: State<'_, SharedState>,
+) -> Result<Option<PathGrant>, CommandError> {
+    let selected = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .set_title("Open Workspace")
+            .blocking_pick_folder()
+            .and_then(|path| path.into_path().ok())
+    })
+    .await
+    .map_err(|error| CommandError::Message(format!("folder dialog failed: {error}")))?;
+    let Some(path) = selected else {
+        return Ok(None);
+    };
+    let path = security::canonical_workspace(&path.to_string_lossy())?;
+    issue_path_grant(state.inner(), path, PathGrantKind::Workspace).map(Some)
+}
+
+#[tauri::command]
+pub async fn pick_import_path(
+    app: AppHandle,
+    state: State<'_, SharedState>,
+    kind: String,
+) -> Result<Option<PathGrant>, CommandError> {
+    let (name, extensions) = match kind.as_str() {
+        "html" => ("HTML", &["html", "htm"][..]),
+        "docx" => ("Word document", &["docx"][..]),
+        _ => return Err(CommandError::Message("unsupported import type".into())),
+    };
+    let Some(path) = choose_file(
+        app,
+        "Import document",
+        Some((name, extensions)),
+        None,
+        false,
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+    let path = security::canonical_existing(&path.to_string_lossy())?;
+    issue_path_grant(state.inner(), path, PathGrantKind::Import).map(Some)
+}
+
+#[tauri::command]
+pub async fn pick_save_path(
+    app: AppHandle,
+    state: State<'_, SharedState>,
+    file_name: String,
+) -> Result<Option<PathGrant>, CommandError> {
+    let Some(path) = choose_file(
+        app,
+        "Save Markdown As",
+        Some(("Markdown", &["md", "markdown", "mdown", "mkdown"])),
+        Some(file_name),
+        true,
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| CommandError::Message("Save As requires a file name.".into()))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| CommandError::Message("Save As requires a destination folder.".into()))?
+        .canonicalize()
+        .map_err(|error| {
+            CommandError::Message(format!("cannot resolve destination folder: {error}"))
+        })?;
+    let target = parent.join(file_name);
+    if !security::is_markdown(&target) {
+        return Err(CommandError::Message(
+            "Save As requires a Markdown file path.".into(),
+        ));
+    }
+    issue_path_grant(state.inner(), target, PathGrantKind::Save).map(Some)
+}
+
+#[tauri::command]
+pub fn open_document_grant(
+    app: AppHandle,
+    state: State<'_, SharedState>,
+    token: String,
+    profile: Option<String>,
+) -> Result<OpenedDocument, CommandError> {
+    let path = take_path_grant(state.inner(), token, PathGrantKind::Document)?;
+    open_path(app, state, path, profile)
+}
+
+#[tauri::command]
+pub fn open_workspace_grant(
+    app: AppHandle,
+    state: State<'_, SharedState>,
+    token: String,
+    max_depth: Option<u32>,
+) -> Result<WorkspaceInfo, CommandError> {
+    let path = take_path_grant(state.inner(), token, PathGrantKind::Workspace)?;
+    open_workspace(app, state, path.to_string_lossy().into_owned(), max_depth)
+}
+
+#[tauri::command]
+pub fn read_import_grant(
+    state: State<'_, SharedState>,
+    token: String,
+) -> Result<Vec<u8>, CommandError> {
+    let path = take_path_grant(state.inner(), token, PathGrantKind::Import)?;
+    read_import_file(path)
+}
+
 #[tauri::command]
 pub fn save_document(
     state: State<'_, SharedState>,
@@ -212,10 +538,11 @@ pub fn save_document(
         .cloned()
         .ok_or_else(|| CommandError::Message("document is no longer open".into()))?;
 
+    let _write_lock = acquire_write_lock(&record.path)?;
     let current_bytes = fs::read(&record.path).map_err(|e| CommandError::Message(e.to_string()))?;
     let current_revision = revision_for(&current_bytes);
     if current_revision != expected_revision {
-        let (disk_source, encoding, _bom, line_ending, final_newline) =
+        let (disk_source, encoding, _bom, line_ending, final_newline, _sequences) =
             decode_bytes(&current_bytes, &record.path)?;
         let disk_meta = DocumentMeta {
             path: record.path.to_string_lossy().into_owned(),
@@ -249,8 +576,9 @@ pub fn save_document(
         record.bom,
         &record.line_ending,
         record.final_newline,
+        &record.newline_sequences,
     )?;
-    atomic_write(&record.path, &bytes)?;
+    atomic_write_locked(&record.path, &bytes)?;
     if let Ok(mut state) = state.lock() {
         state.watch_ignore_until.insert(
             document_id.clone(),
@@ -281,7 +609,6 @@ pub fn check_document_revision(
     Ok(revision_for(&bytes) == expected_revision)
 }
 
-#[tauri::command]
 pub fn open_workspace(
     app: AppHandle,
     state: State<'_, SharedState>,
@@ -294,6 +621,7 @@ pub fn open_workspace(
     let workspace = StoredWorkspace {
         root: root.clone(),
         scan_depth: depth,
+        indexing: true,
     };
     state
         .lock()
@@ -301,16 +629,7 @@ pub fn open_workspace(
         .workspaces
         .insert(id.clone(), workspace);
     let info = scan_workspace_tree(&root, &id, depth)?;
-    let db_path = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| CommandError::Message(e.to_string()))?
-        .join("indexes")
-        .join(format!("{id}.sqlite3"));
-    let root_for_index = root.clone();
-    std::thread::spawn(move || {
-        let _ = index_workspace(&db_path, &root_for_index, depth);
-    });
+    queue_workspace_index(&app, state.inner(), &id)?;
     Ok(info)
 }
 
@@ -337,16 +656,48 @@ pub fn refresh_workspace(
         .workspaces
         .insert(workspace_id.clone(), workspace);
     let info = scan_workspace_tree(&root, &workspace_id, depth)?;
+    queue_workspace_index(&app, state.inner(), &workspace_id)?;
+    Ok(info)
+}
+
+fn queue_workspace_index(
+    app: &AppHandle,
+    shared: &SharedState,
+    workspace_id: &str,
+) -> Result<(), CommandError> {
+    let (root, depth) = {
+        let mut state = shared
+            .lock()
+            .map_err(|_| CommandError::Message("workspace state is unavailable".into()))?;
+        let workspace = state
+            .workspaces
+            .get_mut(workspace_id)
+            .ok_or_else(|| CommandError::Message("workspace is no longer open".into()))?;
+        workspace.indexing = true;
+        (workspace.root.clone(), workspace.scan_depth)
+    };
     let db_path = app
         .path()
         .app_data_dir()
         .map_err(|e| CommandError::Message(e.to_string()))?
         .join("indexes")
         .join(format!("{workspace_id}.sqlite3"));
+    let app_for_index = app.clone();
+    let indexed_id = workspace_id.to_owned();
     std::thread::spawn(move || {
-        let _ = index_workspace(&db_path, &root, depth);
+        let result = index_workspace(&db_path, &root, depth);
+        if let Some(shared) = app_for_index.try_state::<SharedState>()
+            && let Ok(mut state) = shared.lock()
+            && let Some(workspace) = state.workspaces.get_mut(&indexed_id)
+        {
+            workspace.indexing = false;
+        }
+        let _ = app_for_index.emit(
+            "workspace-indexed",
+            serde_json::json!({ "workspaceId": indexed_id, "ok": result.is_ok() }),
+        );
     });
-    Ok(info)
+    Ok(())
 }
 
 #[tauri::command]
@@ -369,22 +720,36 @@ pub fn search_workspace(
         .map_err(|e| CommandError::Message(e.to_string()))?
         .join("indexes")
         .join(format!("{workspace_id}.sqlite3"));
-    if let Ok(connection) = Connection::open(db_path)
+    let match_query = fts_match_query(&query);
+    if !match_query.is_empty()
+        && !workspace.indexing
+        && let Ok(connection) = Connection::open(db_path)
         && let Ok(mut statement) = connection.prepare(
             "SELECT document_id, path, title, snippet(markdown_fts, 1, '[', ']', '…', 12) FROM markdown_fts WHERE markdown_fts MATCH ?1 LIMIT 50",
         )
     {
-            let rows = statement.query_map(params![query], |row| {
+            let rows = statement.query_map(params![match_query], |row| {
                 Ok(SearchResult {
                     document_id: row.get(0)?,
                     path: row.get(1)?,
+                    relative_path: String::new(),
                     title: row.get(2)?,
                     snippet: row.get(3)?,
                     line: 1,
                 })
             });
         if let Ok(rows) = rows {
-            let matches = rows.filter_map(Result::ok).collect::<Vec<_>>();
+            let matches = rows
+                .filter_map(Result::ok)
+                .filter_map(|mut result| {
+                    result.relative_path = Path::new(&result.path)
+                        .strip_prefix(&workspace.root)
+                        .ok()?
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    Some(result)
+                })
+                .collect::<Vec<_>>();
             if !matches.is_empty() {
                 return Ok(matches);
             }
@@ -436,16 +801,9 @@ pub fn resolve_asset(
         ));
     }
     if mime == "image/svg+xml" {
-        let text = String::from_utf8_lossy(&bytes).to_ascii_lowercase();
-        if text.contains("<script")
-            || text.contains("javascript:")
-            || text.contains("onload=")
-            || text.contains("onerror=")
-        {
-            return Err(CommandError::Message(
-                "SVG was blocked by the sanitizer".into(),
-            ));
-        }
+        return Err(CommandError::Message(
+            "SVG image assets are not supported".into(),
+        ));
     }
     Ok(AssetResult {
         asset_id: stable_id(&canonical.to_string_lossy()),
@@ -473,10 +831,7 @@ pub fn fetch_remote_asset(url: String) -> Result<AssetResult, CommandError> {
         .map_err(|e| CommandError::Message(e.to_string()))?;
     let mut response = client
         .get(parsed)
-        .header(
-            "accept",
-            "image/avif,image/webp,image/apng,image/svg+xml,image/*;q=0.9",
-        )
+        .header("accept", "image/avif,image/webp,image/apng,image/*;q=0.9")
         .send()
         .map_err(|e| CommandError::Message(format!("remote image failed: {e}")))?;
     if !response.status().is_success() {
@@ -514,12 +869,9 @@ pub fn fetch_remote_asset(url: String) -> Result<AssetResult, CommandError> {
         ));
     }
     if mime == "image/svg+xml" {
-        let text = String::from_utf8_lossy(&bytes).to_ascii_lowercase();
-        if text.contains("<script") || text.contains("javascript:") || text.contains("onload=") {
-            return Err(CommandError::Message(
-                "remote SVG was blocked by the sanitizer".into(),
-            ));
-        }
+        return Err(CommandError::Message(
+            "SVG image assets are not supported".into(),
+        ));
     }
     Ok(AssetResult {
         asset_id: stable_id(&url),
@@ -572,16 +924,11 @@ pub fn save_recovery(
 #[tauri::command]
 pub fn clear_recovery(app: AppHandle, document_id: String) -> Result<(), CommandError> {
     let dir = recovery_dir(&app)?;
-    for name in [
-        recovery_file_name(&document_id),
-        format!("{document_id}.json"),
-    ] {
-        let path = dir.join(name);
-        match fs::remove_file(&path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(CommandError::Message(error.to_string())),
-        }
+    let path = recovery_path(&dir, &document_id)?;
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(CommandError::Message(error.to_string())),
     }
     Ok(())
 }
@@ -644,12 +991,7 @@ pub fn restore_recovery(
     let profile = profile.unwrap_or_else(|| "github".into());
     let original = PathBuf::from(&snapshot.original_path);
     if original.exists() {
-        let opened = open_path(
-            app,
-            state,
-            snapshot.original_path.clone(),
-            Some(profile.clone()),
-        )?;
+        let opened = open_path(app, state, original, Some(profile.clone()))?;
         let rendered = markdown::render(&snapshot.source, &profile);
         return Ok(OpenedDocument {
             source: snapshot.source,
@@ -671,10 +1013,11 @@ pub fn save_document_as(
     app: AppHandle,
     state: State<'_, SharedState>,
     document_id: String,
-    path: String,
+    path_grant: String,
     source: String,
     profile: Option<String>,
 ) -> Result<OpenedDocument, CommandError> {
+    let target = take_path_grant(state.inner(), path_grant, PathGrantKind::Save)?;
     let record = state
         .lock()
         .map_err(|_| CommandError::Message("document state is unavailable".into()))?
@@ -682,12 +1025,12 @@ pub fn save_document_as(
         .get(&document_id)
         .cloned()
         .ok_or_else(|| CommandError::Message("document is no longer open".into()))?;
-    let target = PathBuf::from(&path);
     if !security::is_markdown(&target) {
         return Err(CommandError::Message(
             "Save As requires a Markdown file path.".into(),
         ));
     }
+    let _write_lock = acquire_write_lock(&target)?;
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent).map_err(|e| CommandError::Message(e.to_string()))?;
     }
@@ -697,9 +1040,19 @@ pub fn save_document_as(
         record.bom,
         &record.line_ending,
         record.final_newline,
+        &record.newline_sequences,
     )?;
-    atomic_write(&target, &bytes)?;
-    open_path(app, state, target.to_string_lossy().into_owned(), profile)
+    atomic_write_locked(&target, &bytes)?;
+    open_path(app, state, target, profile)
+}
+
+fn fts_match_query(query: &str) -> String {
+    query
+        .split_whitespace()
+        .filter(|token| !token.is_empty())
+        .map(|token| format!("\"{}\"", token.replace('"', "\"\"")))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[tauri::command]
@@ -725,12 +1078,13 @@ pub fn inspect_document(
         .cloned()
         .ok_or_else(|| CommandError::Message("document is no longer open".into()))?;
     let current_bytes = fs::read(&record.path).map_err(|e| CommandError::Message(e.to_string()))?;
-    let (disk_source, encoding, _bom, line_ending, final_newline) =
+    let (disk_source, encoding, _bom, line_ending, final_newline, newline_sequences) =
         decode_bytes(&current_bytes, &record.path)?;
     let mut disk_record = record.clone();
     disk_record.encoding = encoding;
     disk_record.line_ending = line_ending;
     disk_record.final_newline = final_newline;
+    disk_record.newline_sequences = newline_sequences;
     Ok(ConflictResult {
         current_revision: revision_for(&current_bytes),
         disk_source,
@@ -818,7 +1172,8 @@ pub fn save_clipboard_image(
 
 fn build_document_record(path: &Path, workspace_id: Option<String>) -> Result<StoredDocument> {
     let bytes = fs::read(path)?;
-    let (_, encoding, bom, line_ending, final_newline) = decode_bytes(&bytes, path)?;
+    let (_, encoding, bom, line_ending, final_newline, newline_sequences) =
+        decode_bytes(&bytes, path)?;
     Ok(StoredDocument {
         id: stable_id(&path.to_string_lossy()),
         path: path.to_path_buf(),
@@ -827,24 +1182,27 @@ fn build_document_record(path: &Path, workspace_id: Option<String>) -> Result<St
         bom,
         line_ending,
         final_newline,
+        newline_sequences,
     })
 }
 
 fn refresh_record_format(record: &mut StoredDocument) -> Result<()> {
     let bytes =
         fs::read(&record.path).with_context(|| format!("cannot read {}", record.path.display()))?;
-    let (_, encoding, bom, line_ending, final_newline) = decode_bytes(&bytes, &record.path)?;
+    let (_, encoding, bom, line_ending, final_newline, newline_sequences) =
+        decode_bytes(&bytes, &record.path)?;
     record.encoding = encoding;
     record.bom = bom;
     record.line_ending = line_ending;
     record.final_newline = final_newline;
+    record.newline_sequences = newline_sequences;
     Ok(())
 }
 
 fn load_opened_document(record: &StoredDocument, profile: &str) -> Result<OpenedDocument> {
     let bytes =
         fs::read(&record.path).with_context(|| format!("cannot read {}", record.path.display()))?;
-    let (source, _, _, _, _) = decode_bytes(&bytes, &record.path)?;
+    let (source, _, _, _, _, _) = decode_bytes(&bytes, &record.path)?;
     let rendered = markdown::render(&source, profile);
     let meta = document_meta(&record.path, &bytes, record, profile)?;
     Ok(OpenedDocument {
@@ -904,14 +1262,19 @@ fn recovery_file_name(document_id: &str) -> String {
     format!("{}.json", document_id.replace([':', '/', '\\'], "_"))
 }
 
+fn recovery_path(dir: &Path, document_id: &str) -> Result<PathBuf, CommandError> {
+    if document_id.is_empty() || document_id.contains("..") || document_id.contains(['/', '\\']) {
+        return Err(CommandError::Message("invalid recovery document id".into()));
+    }
+    let path = dir.join(recovery_file_name(document_id));
+    if path.parent() != Some(dir) {
+        return Err(CommandError::Message("invalid recovery path".into()));
+    }
+    Ok(path)
+}
+
 fn load_recovery_snapshot(dir: &Path, document_id: &str) -> Result<RecoverySnapshot, CommandError> {
-    let preferred = dir.join(recovery_file_name(document_id));
-    let legacy = dir.join(format!("{document_id}.json"));
-    let path = if preferred.exists() {
-        preferred
-    } else {
-        legacy
-    };
+    let path = recovery_path(dir, document_id)?;
     let bytes = fs::read(&path).map_err(|e| CommandError::Message(e.to_string()))?;
     serde_json::from_slice(&bytes).map_err(|e| CommandError::Message(e.to_string()))
 }
@@ -955,6 +1318,36 @@ pub fn revision_for(bytes: &[u8]) -> String {
 }
 
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
+    let lock = acquire_write_lock(path)?;
+    let result = atomic_write_locked(path, bytes);
+    let _ = lock.unlock();
+    result
+}
+
+fn acquire_write_lock(path: &Path) -> Result<fs::File> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("file has no parent directory"))?;
+    let lock_name = format!(
+        ".markdown-desktop-{}.lock",
+        stable_id(&path.to_string_lossy())
+    );
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(parent.join(lock_name))?;
+    lock.lock()?;
+    Ok(lock)
+}
+
+fn atomic_write_locked(path: &Path, bytes: &[u8]) -> Result<()> {
+    // The lock serializes revision checks and replacement for this path. The
+    // temporary file is flushed before rename, and the parent directory is
+    // flushed where the platform permits it. Directory metadata flushing is
+    // best-effort on Windows, so this is crash-consistent replacement rather
+    // than a claim of power-loss durability on every filesystem.
     let parent = path
         .parent()
         .ok_or_else(|| anyhow!("file has no parent directory"))?;
@@ -972,6 +1365,7 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     match fs::rename(&temp_path, path) {
         Ok(()) => {
             let _ = fs::remove_file(&backup);
+            let _ = fs::File::open(parent).and_then(|directory| directory.sync_all());
             Ok(())
         }
         Err(error) => {
@@ -990,6 +1384,7 @@ fn watch_document(
 ) -> Result<(), CommandError> {
     let document_id = record.id.clone();
     let watched_id = record.id.clone();
+    let workspace_id = record.workspace_id.clone();
     let handle = app.clone();
     let path = record.path.clone();
     let mut watcher = RecommendedWatcher::new(
@@ -1005,6 +1400,23 @@ fn watch_document(
                     return;
                 }
                 let _ = handle.emit("document-changed", document_id.clone());
+                if let Some(workspace_id) = workspace_id.as_deref()
+                    && let Some(shared) = handle.try_state::<SharedState>()
+                {
+                    let should_queue = shared
+                        .lock()
+                        .ok()
+                        .and_then(|state| {
+                            state
+                                .workspaces
+                                .get(workspace_id)
+                                .map(|workspace| !workspace.indexing)
+                        })
+                        .unwrap_or(false);
+                    if should_queue {
+                        let _ = queue_workspace_index(&handle, shared.inner(), workspace_id);
+                    }
+                }
             }
         },
         Config::default(),
@@ -1032,10 +1444,18 @@ mod tests {
         let path = dir.path().join("fixture.md");
         let bytes = b"\xEF\xBB\xBF# Title\r\n\r\nNo final newline";
         fs::write(&path, bytes).unwrap();
-        let (source, encoding, bom, line_ending, final_newline) =
+        let (source, encoding, bom, line_ending, final_newline, sequences) =
             decode_bytes(bytes, &path).unwrap();
         assert_eq!(
-            encode_source(&source, &encoding, bom, &line_ending, final_newline).unwrap(),
+            encode_source(
+                &source,
+                &encoding,
+                bom,
+                &line_ending,
+                final_newline,
+                &sequences,
+            )
+            .unwrap(),
             bytes
         );
     }
@@ -1065,6 +1485,27 @@ mod tests {
     }
 
     #[test]
+    fn fts_query_quotes_tokens_and_cannot_inject_operators() {
+        let query = fts_match_query("alpha OR beta\"gamma");
+        assert_eq!(query, "\"alpha\" \"OR\" \"beta\"\"gamma\"");
+        assert!(!query.contains(" OR "));
+    }
+
+    #[test]
+    fn path_grants_are_single_use_and_type_bound() {
+        let state = initial_state();
+        let grant = issue_path_grant(
+            &state,
+            PathBuf::from("C:/notes/example.md"),
+            PathGrantKind::Document,
+        )
+        .unwrap();
+        assert!(take_path_grant(&state, grant.token.clone(), PathGrantKind::Save).is_err());
+        assert!(take_path_grant(&state, grant.token.clone(), PathGrantKind::Document).is_ok());
+        assert!(take_path_grant(&state, grant.token, PathGrantKind::Document).is_err());
+    }
+
+    #[test]
     fn refresh_record_format_adopts_external_encoding_and_line_endings() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("format.md");
@@ -1089,7 +1530,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("classic.md");
         let bytes = b"# title\rbody";
-        let (source, encoding, bom, line_ending, final_newline) =
+        let (source, encoding, bom, line_ending, final_newline, sequences) =
             decode_bytes(bytes, &path).unwrap();
 
         assert_eq!(source, "# title\rbody");
@@ -1098,14 +1539,22 @@ mod tests {
         assert_eq!(line_ending, "CR");
         assert!(!final_newline);
         assert_eq!(
-            encode_source(&source, &encoding, bom, &line_ending, final_newline).unwrap(),
+            encode_source(
+                &source,
+                &encoding,
+                bom,
+                &line_ending,
+                final_newline,
+                &sequences,
+            )
+            .unwrap(),
             bytes
         );
     }
 
     #[test]
     fn editor_lf_source_saves_with_recorded_crlf() {
-        let encoded = encode_source("# Title\n\nBody", "UTF-8", false, "CRLF", false).unwrap();
+        let encoded = encode_source("# Title\n\nBody", "UTF-8", false, "CRLF", false, &[]).unwrap();
         assert_eq!(encoded, b"# Title\r\n\r\nBody");
     }
 
@@ -1127,6 +1576,13 @@ mod tests {
         let loaded = load_recovery_snapshot(dir.path(), "id:abc").unwrap();
         assert_eq!(loaded.source, "# recovered");
         assert_eq!(recovery_file_name("id:abc"), "id_abc.json");
+    }
+
+    #[test]
+    fn recovery_path_rejects_traversal_ids() {
+        let dir = tempdir().unwrap();
+        assert!(recovery_path(dir.path(), "..\\outside").is_err());
+        assert!(recovery_path(dir.path(), "../outside").is_err());
     }
 
     #[test]

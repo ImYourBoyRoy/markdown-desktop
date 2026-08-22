@@ -15,7 +15,7 @@
   let renderVersion = 0;
   let observers: IntersectionObserver[] = [];
 
-  $: if (html) {
+  $: {
     rendered = DOMPurify.sanitize(html, {
       USE_PROFILES: { html: true },
       FORBID_TAGS: ['style', 'script', 'iframe', 'object', 'embed', 'form'],

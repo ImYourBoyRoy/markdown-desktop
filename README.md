@@ -4,14 +4,14 @@ A focused desktop viewer and editor for ordinary Markdown files.
 
 <p align="center">
   <a href="https://github.com/ImYourBoyRoy/markdown-desktop/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/ImYourBoyRoy/markdown-desktop/actions/workflows/ci.yml/badge.svg?branch=main" /></a>
-  <a href="https://github.com/ImYourBoyRoy/markdown-desktop/releases"><img alt="Version 1.0.0" src="https://img.shields.io/badge/version-1.0.0-b7833f?style=flat-square" /></a>
+  <a href="https://github.com/ImYourBoyRoy/markdown-desktop/releases"><img alt="Version 1.0.1" src="https://img.shields.io/badge/version-1.0.1-b7833f?style=flat-square" /></a>
   <a href="./LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-6b6158?style=flat-square" /></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/ImYourBoyRoy/markdown-desktop/releases"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-5f6f64?style=flat-square" /></a>
+  <a href="https://github.com/ImYourBoyRoy/markdown-desktop/releases"><img alt="Windows x64 and ARM64" src="https://img.shields.io/badge/Windows-x64%20%2B%20ARM64-5f6f64?style=flat-square" /></a>
   <a href="https://github.com/ImYourBoyRoy/markdown-desktop/releases"><img alt="macOS Intel and Apple Silicon" src="https://img.shields.io/badge/macOS-Intel%20%2B%20Apple%20Silicon-5f6f64?style=flat-square" /></a>
-  <a href="https://github.com/ImYourBoyRoy/markdown-desktop/releases"><img alt="Linux x64" src="https://img.shields.io/badge/Linux-x64-5f6f64?style=flat-square" /></a>
+  <a href="https://github.com/ImYourBoyRoy/markdown-desktop/releases"><img alt="Linux x64 and ARM64" src="https://img.shields.io/badge/Linux-x64%20%2B%20ARM64-5f6f64?style=flat-square" /></a>
 </p>
 
 <p align="center">
@@ -25,7 +25,7 @@ A focused desktop viewer and editor for ordinary Markdown files.
 Open a file or folder, read the rendered document, switch to source when you need to edit, and save back to the same path on disk. There is no proprietary library, sync service, or document conversion step — the Markdown you already keep is the source of truth.
 
 <p align="center">
-  <img src="./docs/media/workspace-dark.png" alt="Markdown Desktop in the dark theme with the Files and Inspect sidebars visible" width="1600" height="902" />
+  <img src="./docs/media/workspace-dark.png" alt="Markdown Desktop in the dark theme with the Files and Inspect sidebars visible" width="1600" height="903" />
 </p>
 
 ## Features
@@ -52,30 +52,35 @@ Open a file or folder, read the rendered document, switch to source when you nee
 
 Installers and portable builds are on the [Releases](https://github.com/ImYourBoyRoy/markdown-desktop/releases) page. Every downloadable build follows the same pattern: `Markdown-Desktop-<version>-<platform>-<architecture>...`.
 
+The checked-in release workflow targets all six platform families in the table below. Availability is release-specific: the published `v1.0.0` release predates the ARM64 and Apple notarization gates; the next intended release is `v1.0.1`, and it must not be announced until its complete asset list and `latest.json` have been verified. Current preparation evidence covers Windows x64 packaging/launch, Linux x64 packaging plus DEB install/purge, and macOS Intel packaging plus private DMG copy/remove. This does not substitute for published ARM64, Apple Silicon, signing, notarization, desktop-session integration, or live updater evidence.
+
 | Platform | Installer | Other packages |
 | --- | --- | --- |
 | Windows x64 | `Markdown-Desktop-<version>-Windows-x64-setup.exe` | `...-Windows-x64.msi`, `...-Windows-x64-Portable.exe` |
+| Windows ARM64 | `Markdown-Desktop-<version>-Windows-ARM64-setup.exe` | `...-Windows-ARM64.msi`, `...-Windows-ARM64-Portable.exe` |
 | macOS Apple Silicon | `...-macOS-Apple-Silicon.dmg` | `...-macOS-Apple-Silicon.app.tar.gz` |
 | macOS Intel | `...-macOS-Intel.dmg` | `...-macOS-Intel.app.tar.gz` |
 | Linux x64 | `...-Linux-x64.AppImage` | `...-Linux-x64.deb`, `...-Linux-x64.rpm` |
+| Linux ARM64 | `...-Linux-ARM64.AppImage` | `...-Linux-ARM64.deb`, `...-Linux-ARM64.rpm` |
 
-Files ending in `.sig` are signed companions used to verify updates. `latest.json` is the machine-readable manifest used by the in-app updater; users normally do not download it. GitHub adds the two `Source code` archives automatically for anyone who wants the tagged source tree.
+Files ending in `.sig` are signed companions used to verify updates on a signed release. `latest.json` is the machine-readable manifest used by the in-app updater; users normally do not download it. GitHub adds the two `Source code` archives automatically for anyone who wants the tagged source tree.
 
 ## Install
 
 ### Windows
 
-Run `Markdown-Desktop-<version>-Windows-x64-setup.exe`, or use `Markdown-Desktop-<version>-Windows-x64.msi` when your environment expects Windows Installer. `Markdown-Desktop-<version>-Windows-x64-Portable.exe` runs without installing an uninstaller.
+Run the x64 or ARM64 `-setup.exe` that matches your Windows device, or use the matching `.msi` when your environment expects Windows Installer. The installed app is registered as **Markdown Desktop**, adds a Start menu entry, and can be launched from Windows Search. The matching `-Portable.exe` runs without installing an uninstaller or Start menu entry.
 
 ### macOS
 
-Open the `.dmg` and drag **Markdown Desktop Viewer-Editor** into Applications.
+Open a signed and notarized `.dmg` from a verified release, then drag **Markdown Desktop** into Applications. macOS then exposes it through Finder and Launchpad like any other installed app. The current remote VM packaging evidence is unsigned and is for maintainer verification only.
 
 ### Linux
 
 ```bash
 chmod +x ./Markdown-Desktop-*-Linux-x64.AppImage
 ./Markdown-Desktop-*-Linux-x64.AppImage
+# ARM64 users: use the matching *-Linux-ARM64.AppImage name instead. AppImage is portable; use the `.deb` or `.rpm` package below when you want the app registered in the desktop application menu.
 ```
 
 Or install the `.deb` / `.rpm` with your package manager:
@@ -84,19 +89,20 @@ Or install the `.deb` / `.rpm` with your package manager:
 sudo apt install ./Markdown-Desktop-*-Linux-x64.deb
 # or
 sudo dnf install ./Markdown-Desktop-*-Linux-x64.rpm
+# ARM64 users: use the matching *-Linux-ARM64.deb or *-Linux-ARM64.rpm name instead.
 ```
 
 ## Uninstall
 
 Uninstall removes the application and, with the steps below, its settings, recovery data, search index, logs, and webview cache. Your Markdown files are not deleted.
 
-**Windows:** Settings → Apps → Markdown Desktop Viewer-Editor → Uninstall. The installers also clear `%APPDATA%\com.markdownnative.desktop` and `%LOCALAPPDATA%\com.markdownnative.desktop`.
+**Windows:** Settings → Apps → Markdown Desktop → Uninstall. The installers also clear `%APPDATA%\com.markdownnative.desktop` and `%LOCALAPPDATA%\com.markdownnative.desktop`.
 
 **macOS:**
 
 ```bash
 rm -rf -- \
-  "/Applications/Markdown Desktop Viewer-Editor.app" \
+  "/Applications/Markdown Desktop.app" \
   "$HOME/Library/Application Support/com.markdownnative.desktop" \
   "$HOME/Library/Caches/com.markdownnative.desktop" \
   "$HOME/Library/Logs/com.markdownnative.desktop" \
@@ -136,7 +142,7 @@ pnpm tauri build
 
 Documents stay on your machine. The app does not upload file contents. Rendered Markdown is sanitized, and filesystem and remote asset access are restricted in the Rust host.
 
-**About → Check for updates** downloads a signed update manifest from GitHub Releases, verifies the artifact, then installs it. Updates are never checked at startup. The signing private key is a maintainer secret and is not stored in this repository.
+**Help → Check for Updates** (or **About**) checks a signed update manifest from GitHub Releases. A quiet check may run after launch to notify you in the status bar; updates are never downloaded or installed until you confirm. The signing private key is a maintainer secret and is not stored in this repository.
 
 Upstream dependency advisories that remain in the stable Tauri Linux stack are documented in [SECURITY.md](./SECURITY.md).
 

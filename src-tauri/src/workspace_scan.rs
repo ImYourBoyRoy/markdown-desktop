@@ -77,7 +77,22 @@ pub fn build_tree(
             .to_owned()
     };
     let mut children = Vec::new();
-    if current.is_dir() && depth < max_depth && *count < MAX_TREE_NODES {
+    let current_type = fs::symlink_metadata(current)
+        .ok()
+        .map(|metadata| metadata.file_type());
+    if current_type.is_some_and(|file_type| file_type.is_symlink()) {
+        return FileNode {
+            id: stable_id(&current.to_string_lossy()),
+            name,
+            relative_path,
+            is_directory: false,
+            children,
+        };
+    }
+    if current_type.is_some_and(|file_type| file_type.is_dir())
+        && depth < max_depth
+        && *count < MAX_TREE_NODES
+    {
         match fs::read_dir(current) {
             Ok(entries) => {
                 let mut paths = entries
@@ -85,8 +100,11 @@ pub fn build_tree(
                     .map(|entry| entry.path())
                     .collect::<Vec<_>>();
                 paths.sort_by_key(|path| {
+                    let is_directory = fs::symlink_metadata(path)
+                        .map(|metadata| metadata.file_type().is_dir())
+                        .unwrap_or(false);
                     (
-                        !path.is_dir(),
+                        !is_directory,
                         path.file_name().map(|value| value.to_os_string()),
                     )
                 });
@@ -94,7 +112,14 @@ pub fn build_tree(
                     if should_ignore(&path) {
                         continue;
                     }
-                    if path.is_dir() {
+                    let file_type = match fs::symlink_metadata(&path) {
+                        Ok(metadata) => metadata.file_type(),
+                        Err(_) => continue,
+                    };
+                    if file_type.is_symlink() {
+                        continue;
+                    }
+                    if file_type.is_dir() {
                         let child = build_tree(root, &path, depth + 1, max_depth, count, warnings);
                         if child.children.is_empty() {
                             continue;
@@ -135,7 +160,7 @@ pub fn build_tree(
         id: stable_id(&current.to_string_lossy()),
         name,
         relative_path,
-        is_directory: current.is_dir(),
+        is_directory: current_type.is_some_and(|file_type| file_type.is_dir()),
         children,
     }
 }
@@ -168,7 +193,7 @@ pub fn index_workspace(db_path: &Path, root: &Path, max_depth: usize) -> Result<
             Ok(bytes) => bytes,
             Err(_) => continue,
         };
-        let Ok((source, _, _, _, _)) = decode_bytes(&bytes, &path) else {
+        let Ok((source, _, _, _, _, _)) = decode_bytes(&bytes, &path) else {
             continue;
         };
         let title = path
@@ -189,7 +214,14 @@ pub fn index_workspace(db_path: &Path, root: &Path, max_depth: usize) -> Result<
 }
 
 pub fn search_files(root: &Path, query: &str, max_depth: usize) -> Vec<SearchResult> {
-    let query_lower = query.to_ascii_lowercase();
+    let terms = query
+        .split_whitespace()
+        .map(str::to_ascii_lowercase)
+        .filter(|term| !term.is_empty())
+        .collect::<Vec<_>>();
+    if terms.is_empty() {
+        return Vec::new();
+    }
     let mut warnings = Vec::new();
     bounded_markdown_walk(root, max_depth, &mut warnings)
         .into_iter()
@@ -198,14 +230,19 @@ pub fn search_files(root: &Path, query: &str, max_depth: usize) -> Vec<SearchRes
                 return None;
             }
             let bytes = fs::read(&path).ok()?;
-            let (source, _, _, _, _) = decode_bytes(&bytes, &path).ok()?;
-            let line = source
-                .lines()
-                .enumerate()
-                .find(|(_, line)| line.to_ascii_lowercase().contains(&query_lower))?;
+            let (source, _, _, _, _, _) = decode_bytes(&bytes, &path).ok()?;
+            let line = source.lines().enumerate().find(|(_, line)| {
+                let lower = line.to_ascii_lowercase();
+                terms.iter().all(|term| lower.contains(term))
+            })?;
             Some(SearchResult {
                 document_id: stable_id(&path.to_string_lossy()),
                 path: path.to_string_lossy().into_owned(),
+                relative_path: path
+                    .strip_prefix(root)
+                    .ok()?
+                    .to_string_lossy()
+                    .replace('\\', "/"),
                 title: path.file_name()?.to_string_lossy().into_owned(),
                 snippet: line.1.trim().to_owned(),
                 line: line.0 + 1,
@@ -316,6 +353,38 @@ mod tests {
             .query_row("SELECT count(*) FROM markdown_fts", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn literal_search_treats_operator_words_as_text() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("notes.md"), b"Alpha OR beta\nOther line").unwrap();
+        let results = search_files(dir.path(), "alpha OR beta", 3);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].relative_path, "notes.md");
+        assert_eq!(results[0].line, 1);
+    }
+
+    #[test]
+    fn reindex_removes_deleted_documents_from_fts() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("notes.md");
+        let db = dir.path().join("index.sqlite3");
+        fs::write(&path, b"# Keep").unwrap();
+        index_workspace(&db, dir.path(), 3).unwrap();
+        let connection = Connection::open(&db).unwrap();
+        let count: i64 = connection
+            .query_row("SELECT count(*) FROM markdown_fts", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+        drop(connection);
+        fs::remove_file(path).unwrap();
+        index_workspace(&db, dir.path(), 3).unwrap();
+        let connection = Connection::open(&db).unwrap();
+        let count: i64 = connection
+            .query_row("SELECT count(*) FROM markdown_fts", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
     }
 
     fn flatten_names(node: &FileNode) -> Vec<String> {

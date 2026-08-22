@@ -196,4 +196,17 @@ mod tests {
         assert_eq!(rendered.headings[0].slug, "same");
         assert_eq!(rendered.headings[1].slug, "same-2");
     }
+
+    #[test]
+    fn sanitizes_unsafe_links_attributes_and_embeds() {
+        let rendered = render(
+            "[run](javascript:alert(1))\n\n<img src=x onerror=alert(1)>\n\n<iframe src=\"https://evil.example\"></iframe><object data=x></object>",
+            "github",
+        );
+        let html = rendered.html.to_ascii_lowercase();
+        assert!(!html.contains("javascript:"));
+        assert!(!html.contains("onerror"));
+        assert!(!html.contains("<iframe"));
+        assert!(!html.contains("<object"));
+    }
 }

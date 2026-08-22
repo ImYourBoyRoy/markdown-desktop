@@ -4,6 +4,7 @@ dist/
 .svelte-check/
 .vite/
 .wcag-audit-results/
+wcag-audit/
 coverage/
 src-tauri/target/
 src-tauri/gen/
@@ -66,6 +67,7 @@ desktop.ini
 /AGENTS.md
 /MEMORY.md
 /V1_IMPLEMENTATION_MATRIX.md
+/findings_and_corrections.md
 /icon-source-fuchsia.png
 
 # Local application state and databases

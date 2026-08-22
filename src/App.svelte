@@ -1,22 +1,26 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { open, save } from '@tauri-apps/plugin-dialog';
   import { openUrl } from '@tauri-apps/plugin-opener';
-  import { relaunch } from '@tauri-apps/plugin-process';
-  import { check, type Update as TauriUpdate } from '@tauri-apps/plugin-updater';
+  import type { Update as TauriUpdate } from '@tauri-apps/plugin-updater';
   import FileTree from './components/FileTree.svelte';
   import EditorRibbon from './components/EditorRibbon.svelte';
   import MarkdownEditor from './components/MarkdownEditor.svelte';
   import MarkdownView from './components/MarkdownView.svelte';
+  import UpdateBanner from './components/UpdateBanner.svelte';
   import type { EditResult } from './lib/formatting';
   import {
     isTauri,
     onAppEvent,
-    openPath,
+    openDocumentGrant,
     openWorkspaceDocument,
-    openWorkspace,
+    openWorkspaceGrant,
     readDocument,
-    readImportFile,
+    readImportGrant,
+    pickImportPath,
+    pickMarkdownPath,
+    pickSavePath,
+    pickWorkspacePath,
+    openDocumentLink,
     renderSource,
     saveClipboardImage,
     saveDocument,
@@ -32,11 +36,23 @@
     inspectDocument,
     adoptDiskRevision,
     refreshWorkspace,
+    requestDefaultMarkdownApp,
   } from './lib/ipc';
-  import type { DocumentMeta, FileNode, MarkdownProfile, OpenedDocument, RecoveryInfo, SearchResult, Theme, ViewMode, WorkspaceInfo } from './lib/types';
+  import type { DocumentMeta, FileNode, MarkdownProfile, OpenedDocument, PathGrant, RecoveryInfo, SearchResult, Theme, ViewMode, WorkspaceInfo } from './lib/types';
   import { htmlToMarkdown, plainTextPaste } from './lib/paste';
-  import { escapeHtml, isMarkdownPath, joinDocumentPath } from './lib/app-utils';
+  import { escapeHtml } from './lib/app-utils';
   import { clampScanDepth, invokeErrorMessage, parseInvokeError } from './lib/invoke-error';
+  import {
+    aboutUpdateCopy,
+    checkForAppUpdate,
+    formatVersionLabel,
+    formatUpdateNotes,
+    getAppVersion,
+    installAppUpdate,
+    setDismissedUpdateVersion,
+    shouldShowUpdateBanner,
+    type UpdateUiState,
+  } from './lib/updater';
 
   type Tab = OpenedDocument & { dirty: boolean; savedSource: string };
   type RightPanel = 'outline' | 'links' | 'backlinks' | 'issues' | 'properties';
@@ -60,15 +76,22 @@
   let showPalette = $state(false);
   let showSettings = $state(false);
   let showAbout = $state(false);
-  let updateCheckState = $state<'idle' | 'checking' | 'current' | 'available' | 'installing' | 'error'>('idle');
+  let showDefaultAppConfirm = $state(false);
+  let pendingCloseTabId = $state<string | undefined>();
+  let showUpdateConfirm = $state(false);
+  let showUpdateDirtyWarn = $state(false);
+  let updateCheckState = $state<UpdateUiState>('idle');
   let pendingUpdate = $state<TauriUpdate | undefined>();
   let updateProgress = $state(0);
+  let appVersion = $state('…');
+  let showUpdateBanner = $state(false);
   let showWelcome = $state(true);
   let statusMessage = $state('Ready');
   let conflict = $state<{ tabId: string; diskSource: string; currentRevision: string; diskMeta: DocumentMeta } | null>(null);
   let editorSelection = $state({ from: 0, to: 0 });
   let searchTimer: number | undefined;
   let recoveryTimer: number | undefined;
+  let quietUpdateTimer: number | undefined;
   let paletteQuery = $state('');
   let paletteIndex = $state(0);
   let backHistory = $state<string[]>([]);
@@ -76,6 +99,10 @@
   let paletteInput = $state<HTMLInputElement | undefined>();
   let settingsCloseButton = $state<HTMLButtonElement | undefined>();
   let aboutCloseButton = $state<HTMLButtonElement | undefined>();
+  let defaultAppConfirmButton = $state<HTMLButtonElement | undefined>();
+  let recoveryPrimaryButton = $state<HTMLButtonElement | undefined>();
+  let closeConfirmButton = $state<HTMLButtonElement | undefined>();
+  let updateConfirmButton = $state<HTMLButtonElement | undefined>();
   let conflictPrimaryButton = $state<HTMLButtonElement | undefined>();
   let renderedPane = $state<HTMLDivElement | undefined>();
   let contextMenu = $state<ContextMenuState | null>(null);
@@ -85,6 +112,7 @@
   let scanDepth = $state(clampScanDepth(Number(localStorage.getItem('markdown-native-scan-depth') || '3')));
   let recoveryItems = $state<RecoveryInfo[]>([]);
   let selectedRecoveryId = $state<string | undefined>();
+  let activeHeadingSlug = $state<string | undefined>();
 
   const platformModifier = typeof navigator !== 'undefined' && /Mac/i.test(`${navigator.platform} ${navigator.userAgent}`) ? '⌘' : 'Ctrl';
   const platformOpenShortcut = platformModifier === '⌘' ? '⌘O' : 'Ctrl+O';
@@ -106,6 +134,7 @@
     ['Save As…', () => void saveActiveAs()],
     ['Check Links', () => revealInspect('issues')],
     ['Settings', () => (showSettings = true)],
+    ['Check for updates', () => void runUpdateCheck({ manual: true })],
     ['Import HTML', () => void importDocument('html')],
     ['Import DOCX', () => void importDocument('docx')],
     ['Insert Mermaid Diagram', () => insertBlock('mermaid')],
@@ -138,11 +167,15 @@
   });
 
   $effect(() => {
-    if (showPalette || showSettings || showAbout || conflict) {
+    if (showPalette || showSettings || showAbout || showDefaultAppConfirm || pendingCloseTabId || showUpdateConfirm || showUpdateDirtyWarn || recoveryItems.length || conflict) {
       void tick().then(() => {
         if (showPalette) { paletteIndex = 0; paletteInput?.focus(); }
+        else if (showUpdateConfirm || showUpdateDirtyWarn) updateConfirmButton?.focus();
+        else if (showDefaultAppConfirm) defaultAppConfirmButton?.focus();
+        else if (pendingCloseTabId) closeConfirmButton?.focus();
         else if (showSettings) settingsCloseButton?.focus();
         else if (showAbout) aboutCloseButton?.focus();
+        else if (recoveryItems.length) recoveryPrimaryButton?.focus();
         else conflictPrimaryButton?.focus();
       });
     }
@@ -151,31 +184,45 @@
   onMount(() => {
     const cleanup: (() => void)[] = [];
     void (async () => {
-      cleanup.push(await onAppEvent<string[]>('startup-paths', (paths) => void openStartupPaths(paths)));
+      cleanup.push(await onAppEvent<PathGrant[]>('startup-paths', (grants) => void openStartupPaths(grants)));
+      cleanup.push(await onAppEvent<{ workspaceId: string; ok: boolean }>('workspace-indexed', (event) => {
+        if (workspace?.id !== event.workspaceId) return;
+        workspace = { ...workspace, indexing: false };
+        statusMessage = event.ok ? 'Workspace index ready' : 'Workspace index unavailable; live search remains available';
+      }));
       cleanup.push(await onAppEvent<string>('document-changed', (documentId) => {
         void handleExternalChange(documentId);
       }));
       cleanup.push(await onAppEvent<string>('menu-action', (action) => void handleMenuAction(action)));
       if (isTauri) {
         try {
-          const paths = await startupPaths();
-          await openStartupPaths(paths);
+          appVersion = await getAppVersion();
+          const grants = await startupPaths();
+          await openStartupPaths(grants);
           recoveryItems = await listRecovery();
           selectedRecoveryId = recoveryItems[0]?.documentId;
         } catch {
           statusMessage = 'Native bridge unavailable';
         }
+        quietUpdateTimer = window.setTimeout(() => {
+          void runUpdateCheck({ quiet: true });
+        }, 4000);
+      } else {
+        appVersion = '0.0.0';
       }
     })();
-    return () => cleanup.forEach((dispose) => dispose());
+    return () => {
+      if (quietUpdateTimer !== undefined) window.clearTimeout(quietUpdateTimer);
+      if (pendingUpdate) void pendingUpdate.close().catch(() => undefined);
+      cleanup.forEach((dispose) => dispose());
+    };
   });
 
-  async function openStartupPaths(paths: string[]) {
-    for (const path of paths) {
-      if (!path || path.startsWith('-')) continue;
+  async function openStartupPaths(grants: PathGrant[]) {
+    for (const grant of grants) {
       try {
-        if (isMarkdownPath(path)) await openDocumentPath(path);
-        else await openWorkspacePath(path);
+        if (grant.kind === 'document') await openDocumentPath(grant.token);
+        else if (grant.kind === 'workspace') await openWorkspacePath(grant.token);
       } catch (error) {
         statusMessage = String(error);
       }
@@ -184,20 +231,20 @@
 
   async function openFile() {
     if (!isTauri) return (statusMessage = 'File dialogs are available in the desktop build');
-    const selected = await open({ multiple: false, directory: false, filters: [{ name: 'Markdown', extensions: ['md', 'markdown', 'mdown', 'mkdown'] }] });
-    if (typeof selected === 'string') await openDocumentPath(selected);
+    const selected = await pickMarkdownPath();
+    if (selected) await openDocumentPath(selected.token);
   }
 
   async function openFolder() {
     if (!isTauri) return (statusMessage = 'Folder dialogs are available in the desktop build');
-    const selected = await open({ multiple: false, directory: true });
-    if (typeof selected === 'string') await openWorkspacePath(selected);
+    const selected = await pickWorkspacePath();
+    if (selected) await openWorkspacePath(selected.token);
   }
 
-  async function openDocumentPath(path: string) {
+  async function openDocumentPath(token: string) {
     if (!isTauri) return;
     statusMessage = 'Opening document…';
-    const document = await openPath(path, markdownProfile);
+    const document = await openDocumentGrant(token, markdownProfile);
     if (showWelcome && !active) {
       leftCollapsed = false;
       rightCollapsed = false;
@@ -214,13 +261,13 @@
     statusMessage = 'Rendered from the current source';
   }
 
-  async function openWorkspacePath(path: string) {
+  async function openWorkspacePath(token: string) {
     if (!isTauri) return;
     statusMessage = `Scanning workspace to depth ${scanDepth}…`;
     workspaceLoading = true;
     treeScanning = true;
     try {
-      const nextWorkspace = await openWorkspace(path, scanDepth);
+      const nextWorkspace = await openWorkspaceGrant(token, scanDepth);
       if (showWelcome && !active) {
         leftCollapsed = false;
         rightCollapsed = false;
@@ -386,9 +433,9 @@
       statusMessage = 'Open a Markdown document before importing content';
       return;
     }
-    const selected = await open({ multiple: false, directory: false, filters: [{ name: kind === 'html' ? 'HTML' : 'Word document', extensions: kind === 'html' ? ['html', 'htm'] : ['docx'] }] });
-    if (typeof selected !== 'string') return;
-    const bytes = await readImportFile(selected);
+    const selected = await pickImportPath(kind);
+    if (!selected) return;
+    const bytes = await readImportGrant(selected.token);
     if (kind === 'html') {
       const text = new TextDecoder().decode(new Uint8Array(bytes));
       replaceSelection(await htmlToMarkdown(text));
@@ -433,13 +480,10 @@
   async function saveActiveAs() {
     if (!active) return;
     if (!isTauri) return (statusMessage = 'Save As is available in the desktop build');
-    const selected = await save({
-      defaultPath: active.meta.fileName || `${active.title}.md`,
-      filters: [{ name: 'Markdown', extensions: ['md', 'markdown', 'mdown', 'mkdown'] }],
-    });
-    if (typeof selected !== 'string') return;
+    const selected = await pickSavePath(active.meta.fileName || `${active.title}.md`);
+    if (!selected) return;
     try {
-      const document = await saveDocumentAs(active.id, selected, active.source, markdownProfile);
+      const document = await saveDocumentAs(active.id, selected.token, active.source, markdownProfile);
       tabs = tabs.map((tab) => tab.id === active.id ? { ...document, dirty: false, savedSource: document.source } : tab);
       activeId = document.id;
       statusMessage = 'Saved as a new Markdown file';
@@ -482,12 +526,25 @@
 
   function closeTab(id: string) {
     const tab = tabs.find((item) => item.id === id);
-    if (tab?.dirty && !confirm(`${tab.title} has unsaved changes. Close it?`)) return;
+    if (tab?.dirty) {
+      pendingCloseTabId = id;
+      return;
+    }
+    completeCloseTab(id);
+  }
+
+  function completeCloseTab(id: string) {
     if (isTauri) void closeDocument(id);
     const index = tabs.findIndex((item) => item.id === id);
     tabs = tabs.filter((item) => item.id !== id);
     if (activeId === id) activeId = tabs[Math.max(0, index - 1)]?.id;
     if (!activeId) showWelcome = true;
+  }
+
+  function confirmCloseTab() {
+    const id = pendingCloseTabId;
+    pendingCloseTabId = undefined;
+    if (id) completeCloseTab(id);
   }
 
   function selectTab(id: string) {
@@ -523,7 +580,12 @@
   }
 
   async function openSearchResult(result: SearchResult) {
-    await openDocumentPath(result.path);
+    if (!workspace) return;
+    const document = await openWorkspaceDocument(workspace.id, result.relativePath, markdownProfile);
+    const existing = tabs.find((tab) => tab.id === document.id);
+    if (existing) activeId = existing.id;
+    else tabs = [...tabs, { ...document, dirty: false, savedSource: document.source }], activeId = document.id;
+    showWelcome = false;
     rightPanel = 'outline';
   }
 
@@ -531,8 +593,15 @@
     if (!active) return;
     const [path, fragment] = target.split('#', 2);
     if (!path && fragment) return scrollToHeading(fragment);
-    const base = active.meta.path.slice(0, Math.max(active.meta.path.lastIndexOf('\\'), active.meta.path.lastIndexOf('/')) + 1);
-    void openDocumentPath(joinDocumentPath(base, path)).then(() => fragment && setTimeout(() => scrollToHeading(fragment), 80));
+    void openDocumentLink(active.id, path, markdownProfile).then((document) => {
+      const existing = tabs.find((tab) => tab.id === document.id);
+      if (existing) activeId = existing.id;
+      else tabs = [...tabs, { ...document, dirty: false, savedSource: document.source }], activeId = document.id;
+      showWelcome = false;
+      if (fragment) setTimeout(() => scrollToHeading(fragment), 80);
+    }).catch((error) => {
+      statusMessage = invokeErrorMessage(error);
+    });
   }
 
   async function scrollToHeading(fragment: string) {
@@ -549,7 +618,10 @@
       const id = heading.id.toLowerCase();
       return id === target || id === normalizedTarget || id === `user-content-${normalizedTarget}` || (expectedHeading !== undefined && heading.textContent?.trim() === expectedHeading.text);
     });
-    element?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (element) {
+      activeHeadingSlug = expectedHeading?.slug ?? element.id;
+      element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   }
 
   async function copyRendered() {
@@ -589,6 +661,7 @@
       'check-links': () => revealInspect('issues'),
       reindex: () => workspace && void changeScanDepth(scanDepth),
       settings: () => (showSettings = true),
+      'check-for-updates': () => void runUpdateCheck({ manual: true }),
       about: () => (showAbout = true),
       print: () => window.print(),
       copy: () => void copySelection(),
@@ -621,7 +694,16 @@
         focusable[next].focus();
       }
     }
-    if (event.key === 'Escape') { showPalette = false; showSettings = false; showAbout = false; contextMenu = null; }
+    if (event.key === 'Escape') {
+      showPalette = false;
+      showSettings = false;
+      showAbout = false;
+      showDefaultAppConfirm = false;
+      pendingCloseTabId = undefined;
+      showUpdateConfirm = false;
+      showUpdateDirtyWarn = false;
+      contextMenu = null;
+    }
   }
 
   function handleTablistKeydown(event: KeyboardEvent) {
@@ -681,53 +763,123 @@
     void openUrl(url);
   }
 
-  async function runUpdateCheck() {
+  function promptDefaultMarkdownApp() {
     if (!isTauri) {
-      updateCheckState = 'error';
-      statusMessage = 'Update checks are available in the desktop build';
+      statusMessage = 'Default-app setup is available in the desktop build';
       return;
     }
-    updateCheckState = 'checking';
-    updateProgress = 0;
-    if (pendingUpdate) {
-      await pendingUpdate.close().catch(() => undefined);
-      pendingUpdate = undefined;
-    }
+    showDefaultAppConfirm = true;
+  }
+
+  async function confirmDefaultMarkdownApp() {
+    showDefaultAppConfirm = false;
     try {
-      const result = await check({ timeout: 10_000 });
-      pendingUpdate = result ?? undefined;
-      updateCheckState = result ? 'available' : 'current';
-      statusMessage = result ? `Update available: v${result.version}` : 'Markdown Desktop is up to date';
-    } catch {
-      updateCheckState = 'error';
-      statusMessage = 'Could not check for updates';
+      const result = await requestDefaultMarkdownApp(true);
+      statusMessage = result.message;
+    } catch (error) {
+      statusMessage = invokeErrorMessage(error);
     }
   }
 
-  async function installUpdate() {
+  async function runUpdateCheck(options?: { quiet?: boolean; manual?: boolean }) {
+    const quiet = options?.quiet === true;
+    const manual = options?.manual === true || !quiet;
+    if (!isTauri) {
+      if (manual) {
+        updateCheckState = 'error';
+        statusMessage = 'Update checks are available in the desktop build';
+      }
+      return;
+    }
+    if (updateCheckState === 'checking' || updateCheckState === 'installing') return;
+    updateCheckState = 'checking';
+    updateProgress = 0;
+    const result = await checkForAppUpdate({ quiet, previous: pendingUpdate });
+    pendingUpdate = result.update;
+    updateCheckState = result.state;
+    if (result.state === 'available' && result.update) {
+      showUpdateBanner = shouldShowUpdateBanner(result.update.version);
+      if (manual && result.message) statusMessage = result.message;
+      else if (!quiet && result.message) statusMessage = result.message;
+    } else if (result.state === 'current') {
+      showUpdateBanner = false;
+      if (manual) statusMessage = result.message;
+    } else if (result.state === 'error') {
+      if (manual && result.message) statusMessage = result.message;
+    }
+    if (manual) showAbout = true;
+  }
+
+  function promptInstallUpdate() {
+    if (!pendingUpdate || updateCheckState === 'installing') return;
+    const dirtyCount = tabs.filter((tab) => tab.dirty).length;
+    if (dirtyCount > 0) {
+      showUpdateDirtyWarn = true;
+      showUpdateConfirm = false;
+      return;
+    }
+    showUpdateDirtyWarn = false;
+    showUpdateConfirm = true;
+  }
+
+  function dismissUpdateBanner() {
+    if (pendingUpdate) setDismissedUpdateVersion(pendingUpdate.version);
+    showUpdateBanner = false;
+  }
+
+  async function protectDirtyTabsForUpdate(dirtyTabs: Tab[]): Promise<boolean> {
+    if (!dirtyTabs.length) return true;
+    statusMessage = 'Saving recovery snapshots before update…';
+    try {
+      await Promise.all(dirtyTabs.map((tab) => saveRecovery(tab.id, tab.source, tab.revision)));
+      return true;
+    } catch (error) {
+      updateCheckState = 'available';
+      statusMessage = `Could not protect unsaved edits: ${invokeErrorMessage(error)}`;
+      showUpdateDirtyWarn = true;
+      return false;
+    }
+  }
+
+  async function confirmInstallUpdate() {
     const update = pendingUpdate;
-    if (!update) return;
+    if (!update || updateCheckState === 'installing') return;
+    const dirtyTabs = tabs.filter((tab) => tab.dirty);
+    if (dirtyTabs.length) {
+      showUpdateConfirm = false;
+      showUpdateDirtyWarn = true;
+      updateCheckState = 'installing';
+      updateProgress = 0;
+      if (!await protectDirtyTabsForUpdate(dirtyTabs)) return;
+    }
+    showUpdateConfirm = false;
+    showUpdateDirtyWarn = false;
     updateCheckState = 'installing';
     updateProgress = 0;
+    statusMessage = 'Downloading signed update…';
     try {
-      let contentLength = 0;
-      let downloaded = 0;
-      await update.downloadAndInstall((event) => {
-        if (event.event === 'Started') {
-          contentLength = event.data.contentLength ?? 0;
-          downloaded = 0;
-        } else if (event.event === 'Progress') {
-          downloaded += event.data.chunkLength;
-          updateProgress = contentLength > 0 ? Math.min(100, Math.round((downloaded / contentLength) * 100)) : 0;
-        } else {
-          updateProgress = 100;
-        }
+      const installResult = await installAppUpdate(update, {
+        confirmed: true,
+        onProgress: (percent) => {
+          updateProgress = percent;
+          statusMessage = percent >= 100
+            ? 'Installing signed update…'
+            : percent > 0
+              ? `Downloading signed update… ${percent}%`
+              : 'Downloading signed update…';
+        },
       });
-      statusMessage = 'Update installed. Restarting…';
-      await relaunch();
-    } catch {
+      updateCheckState = 'current';
+      pendingUpdate = undefined;
+      showUpdateBanner = false;
+      statusMessage = installResult.relaunched
+        ? 'Update installed. Restarting…'
+        : 'Update installed. Restart Markdown Desktop to finish.';
+    } catch (error) {
       updateCheckState = 'error';
-      statusMessage = 'Could not install the update';
+      pendingUpdate = undefined;
+      showUpdateBanner = false;
+      statusMessage = invokeErrorMessage(error) || 'Could not install the update';
     }
   }
 
@@ -813,7 +965,7 @@
 
 <div class="app-shell" aria-busy={workspaceLoading}>
   <header class="app-toolbar">
-    <div class="nav-controls" aria-label="Navigation">
+    <div class="nav-controls">
       <button class="icon-button" type="button" aria-label="Go back" title="Back (Alt+Left)" disabled={!backHistory.length} onclick={goBack}>←</button>
       <button class="icon-button" type="button" aria-label="Go forward" title="Forward (Alt+Right)" disabled={!forwardHistory.length} onclick={goForward}>→</button>
     </div>
@@ -824,17 +976,25 @@
         {#if active.dirty}<span class="dirty-dot" title="Unsaved changes"></span>{/if}
       {/if}
     </div>
-    <button class="command-trigger" type="button" aria-label="Search and command palette" onclick={() => (showPalette = true)}><span>⌕</span> Search or command… <kbd>{platformPaletteShortcut}</kbd></button>
+    <button class="command-trigger" type="button" aria-label="Search and command palette" onclick={() => (showPalette = true)}><span class="command-glyph" aria-hidden="true"></span> Search or command… <kbd>{platformPaletteShortcut}</kbd></button>
     <button class="toolbar-edit" type="button" disabled={!active} aria-label={mode === 'rendered' ? 'Switch to editing view' : 'Switch to reading view'} onclick={() => (mode = mode === 'rendered' ? 'split' : 'rendered')}>{mode === 'rendered' ? 'Edit' : 'Read'}</button>
     <button class="icon-button" type="button" aria-label="Open settings" title="Settings" onclick={() => (showSettings = true)}>•••</button>
   </header>
 
+  {#if showUpdateBanner && pendingUpdate && updateCheckState === 'available'}
+    <UpdateBanner
+      version={formatVersionLabel(pendingUpdate.version)}
+      onInstall={promptInstallUpdate}
+      onDismiss={dismissUpdateBanner}
+    />
+  {/if}
+
   {#if tabs.length}
     <div class="document-tabs-bar">
-      <div class="tabs-bar" role="tablist" aria-label="Open documents">
+      <div class="tabs-bar">
         {#each tabs as tab (tab.id)}
           <div class:active={activeId === tab.id} class="document-tab">
-            <button class="document-tab-main" type="button" role="tab" aria-selected={activeId === tab.id} aria-label={`Open ${tab.title}`} onclick={() => selectTab(tab.id)} onkeydown={handleTablistKeydown}><span class="tab-icon">◈</span>{tab.title}<span class:dirty={tab.dirty} class="tab-state">{tab.dirty ? '•' : ''}</span></button>
+            <button class="document-tab-main" type="button" aria-pressed={activeId === tab.id} aria-label={`Open ${tab.title}`} onclick={() => selectTab(tab.id)}><span class="tab-icon">◈</span>{tab.title}<span class:dirty={tab.dirty} class="tab-state">{tab.dirty ? '•' : ''}</span></button>
             <button class="tab-close" type="button" aria-label={`Close ${tab.title}`} onclick={() => closeTab(tab.id)}>×</button>
           </div>
         {/each}
@@ -842,13 +1002,24 @@
       </div>
     </div>
   {:else}
-    <div class="document-tabs-bar empty-tabs-bar" aria-label="Open documents">
+    <div class="document-tabs-bar empty-tabs-bar">
       <button class="new-tab" type="button" aria-label="Open a new document" onclick={openFile}>+</button>
       <span>No open documents</span>
     </div>
   {/if}
 
-  {#if active}
+  {#if pendingCloseTabId}
+    {@const closingTab = tabs.find((tab) => tab.id === pendingCloseTabId)}
+    <div class="modal-backdrop" role="presentation" onclick={(event) => event.target === event.currentTarget && (pendingCloseTabId = undefined)}>
+      <div class="settings-modal default-app-confirm" role="alertdialog" aria-modal="true" aria-labelledby="close-tab-title" aria-describedby="close-tab-description" tabindex="-1">
+        <div class="settings-header"><div><span class="eyebrow">Unsaved changes</span><h2 id="close-tab-title">Close {closingTab?.title ?? 'document'}?</h2></div><button class="icon-button" type="button" aria-label="Cancel" onclick={() => (pendingCloseTabId = undefined)}>×</button></div>
+        <p id="close-tab-description">This document has unsaved edits. Close it and discard those edits?</p>
+        <div class="default-app-actions"><button type="button" class="secondary-button" onclick={() => (pendingCloseTabId = undefined)}>Keep editing</button><button bind:this={closeConfirmButton} type="button" class="primary-button" onclick={confirmCloseTab}>Close without saving</button></div>
+      </div>
+    </div>
+  {/if}
+
+  {#if active && (mode === 'source' || mode === 'split')}
     <EditorRibbon
       selection={editorSelection}
       selectedText={active.source.slice(editorSelection.from, editorSelection.to)}
@@ -859,13 +1030,15 @@
 
   <div class="workspace-grid" class:left-collapsed={leftCollapsed} class:right-collapsed={rightCollapsed}>
     <aside class="left-sidebar" aria-label="Workspace navigation">
-      <div class="sidebar-tabs" role="tablist" aria-label="Workspace panels">
-        <button class:active={leftPanel === 'files'} type="button" role="tab" aria-selected={leftPanel === 'files'} onclick={() => (leftPanel = 'files')} onkeydown={handleTablistKeydown}>Files</button>
-        <button class:active={leftPanel === 'search'} type="button" role="tab" aria-selected={leftPanel === 'search'} onclick={() => (leftPanel = 'search')} onkeydown={handleTablistKeydown}>Search</button>
+      <div class="sidebar-tabs">
+        <div class="panel-tablist" role="tablist" aria-label="Workspace panels">
+          <button id="left-files-tab" class:active={leftPanel === 'files'} type="button" role="tab" aria-selected={leftPanel === 'files'} aria-controls={leftPanel === 'files' ? 'left-files-panel' : undefined} tabindex={leftPanel === 'files' ? 0 : -1} onclick={() => (leftPanel = 'files')} onkeydown={handleTablistKeydown}>Files</button>
+          <button id="left-search-tab" class:active={leftPanel === 'search'} type="button" role="tab" aria-selected={leftPanel === 'search'} aria-controls={leftPanel === 'search' ? 'left-search-panel' : undefined} tabindex={leftPanel === 'search' ? 0 : -1} onclick={() => (leftPanel = 'search')} onkeydown={handleTablistKeydown}>Search</button>
+        </div>
         <button class="collapse-button panel-collapse-control" type="button" aria-label="Collapse left sidebar" aria-expanded={!leftCollapsed} onclick={() => (leftCollapsed = true)}>‹</button>
       </div>
       {#if leftPanel === 'files'}
-        <div class="sidebar-heading">
+        <div id="left-files-panel" class="sidebar-heading" role="tabpanel" aria-labelledby="left-files-tab" tabindex="0">
           <span>{workspace?.name ?? 'Recent documents'}</span>
           <span class="heading-actions">
             {#if workspace}
@@ -902,7 +1075,7 @@
           <div class="empty-sidebar"><span class="empty-symbol">⌂</span><p>Open a folder to browse its Markdown files.</p><button type="button" onclick={openFolder}>Open Folder</button></div>
         {/if}
       {:else}
-        <div class="search-panel">
+        <div id="left-search-panel" class="search-panel" role="tabpanel" aria-labelledby="left-search-tab" tabindex="0">
           <label for="workspace-search">Search in workspace</label>
           <div class="search-input"><span>⌕</span><input id="workspace-search" value={searchQuery} oninput={(event) => handleSearch(event.currentTarget.value)} placeholder="Search files and content" /></div>
           {#if !workspace}
@@ -918,8 +1091,8 @@
     <main class="document-area" aria-label="Document">
       {#if showWelcome || !active}
         <section class="welcome">
-          <img class="welcome-logo" src="/markdown-desktop-viewer-editor.png" alt="" aria-hidden="true" />
-          <p class="eyebrow">Markdown Desktop Viewer-Editor</p>
+          <img class="welcome-logo" src="/markdown-desktop.png" alt="" aria-hidden="true" />
+          <p class="eyebrow">Markdown Desktop</p>
           <h1>Open a Markdown file.<br /><em>Read or edit it.</em></h1>
           <p class="welcome-copy">Read the rendered document, switch to the source when you want to edit, and save the file back to disk.</p>
           <div class="welcome-actions"><button class="primary-button" type="button" onclick={openFile}>Open Markdown</button><button class="secondary-button" type="button" onclick={openFolder}>Open Workspace</button></div>
@@ -930,7 +1103,7 @@
           <div><span class="doc-type">MARKDOWN DOCUMENT</span><h1>{active.title}</h1></div>
           <div class="header-actions"><button type="button" onclick={copyRendered}>Copy source</button><button type="button" onclick={exportHtml}>Export HTML</button></div>
         </div>
-        <div class="document-views" class:split={mode === 'split'}>
+         <div id="view-mode-panel" class="document-views" class:split={mode === 'split'} role="tabpanel" aria-label={`${mode} document view`} tabindex="0">
           {#if mode === 'rendered' || mode === 'split'}
             <div class="rendered-pane" bind:this={renderedPane}><MarkdownView html={active.html} documentId={active.id} headingSlugs={active.headings.map((heading) => heading.slug)} allowRemoteImages={remoteImagesEnabled} onOpenLink={handleLink} /></div>
           {/if}
@@ -950,13 +1123,14 @@
         <button class="collapse-button panel-collapse-control" type="button" aria-label="Collapse right sidebar" aria-expanded={!rightCollapsed} onclick={() => (rightCollapsed = true)}>›</button>
         <div class="right-panel-tabs" role="tablist" aria-label="Document panels">
           {#each [['outline', 'Outline'], ['links', 'Links'], ['backlinks', 'Backlinks'], ['issues', 'Issues'], ['properties', 'Props']] as panel}
-            <button class:active={rightPanel === panel[0]} type="button" role="tab" aria-selected={rightPanel === panel[0]} onclick={() => (rightPanel = panel[0] as RightPanel)} onkeydown={handleTablistKeydown}>{panel[1]}</button>
+            <button id={`right-${panel[0]}-tab`} class:active={rightPanel === panel[0]} type="button" role="tab" aria-selected={rightPanel === panel[0]} aria-controls={rightPanel === panel[0] && active ? `right-${panel[0]}-panel` : undefined} tabindex={rightPanel === panel[0] ? 0 : -1} onclick={() => (rightPanel = panel[0] as RightPanel)} onkeydown={handleTablistKeydown}>{panel[1]}</button>
           {/each}
         </div>
       </div>
       {#if active}
+        <div id={`right-${rightPanel}-panel`} role="tabpanel" aria-labelledby={`right-${rightPanel}-tab`} tabindex="0">
         {#if rightPanel === 'outline'}
-          <div class="panel-list"><div class="panel-title">Document outline</div>{#each active.headings as heading (heading.slug)}<button class="outline-row" type="button" style={`padding-left: ${10 + heading.level * 9}px`} onclick={() => scrollToHeading(heading.slug)}><span>{heading.level}</span>{heading.text}</button>{/each}{#if !active.headings.length}<p class="muted-copy">No headings in this document.</p>{/if}</div>
+          <div class="panel-list"><div class="panel-title">Document outline</div>{#each active.headings as heading (heading.slug)}<button class="outline-row" type="button" aria-current={activeHeadingSlug === heading.slug ? 'location' : undefined} style={`padding-left: ${10 + heading.level * 9}px`} onclick={() => scrollToHeading(heading.slug)}><span>{heading.level}</span>{heading.text}</button>{/each}{#if !active.headings.length}<p class="muted-copy">No headings in this document.</p>{/if}</div>
         {:else if rightPanel === 'links'}
           <div class="panel-list"><div class="panel-title">Links in this document <span>{active.links.length}</span></div>{#each active.links as link}<button class="info-row" type="button" onclick={() => handleLink(link.target)}><span class="status-dot" class:external={link.kind === 'external'}></span><span><strong>{link.label || link.target}</strong><small>{link.target}</small></span></button>{/each}{#if !active.links.length}<p class="muted-copy">No links found.</p>{/if}</div>
         {:else if rightPanel === 'backlinks'}
@@ -966,22 +1140,38 @@
         {:else}
           <div class="panel-list properties"><div class="panel-title">Properties</div><dl><dt>File</dt><dd>{active.meta.fileName}</dd><dt>Location</dt><dd title={active.meta.path}>{active.meta.path}</dd><dt>Size</dt><dd>{Math.max(1, Math.round(active.meta.bytes / 1024))} KB</dd><dt>Encoding</dt><dd>{active.meta.encoding}</dd><dt>Line endings</dt><dd>{active.meta.lineEnding}</dd><dt>Profile</dt><dd>{active.meta.profile}</dd></dl></div>
         {/if}
+        </div>
       {:else}
         <div class="empty-sidebar"><span class="empty-symbol">⌁</span><p>Open a document to see its outline, links, issues, and properties.</p></div>
       {/if}
     </aside>
 
     {#if leftCollapsed}
-      <button class="sidebar-restore left-restore" type="button" aria-label="Expand left sidebar" title="Expand left sidebar" onclick={() => (leftCollapsed = false)}><span class="restore-glyph" aria-hidden="true">◈</span><span class="restore-label">Files</span><span class="restore-chevron" aria-hidden="true">›</span></button>
+      <button class="sidebar-restore left-restore" type="button" aria-label="Expand left sidebar" title="Expand left sidebar" onclick={() => (leftCollapsed = false)}><span class="restore-glyph" aria-hidden="true"></span><span class="restore-label">Files</span><span class="restore-chevron" aria-hidden="true">›</span></button>
     {/if}
     {#if rightCollapsed}
-      <button class="sidebar-restore right-restore" type="button" aria-label="Expand right sidebar" title="Expand right sidebar" onclick={() => (rightCollapsed = false)}><span class="restore-chevron" aria-hidden="true">‹</span><span class="restore-label">Inspect</span><span class="restore-glyph" aria-hidden="true">◈</span></button>
+      <button class="sidebar-restore right-restore" type="button" aria-label="Expand right sidebar" title="Expand right sidebar" onclick={() => (rightCollapsed = false)}><span class="restore-chevron" aria-hidden="true">‹</span><span class="restore-label">Inspect</span><span class="restore-glyph" aria-hidden="true"></span></button>
     {/if}
   </div>
 
   <footer class="bottom-bar">
-    <div class="view-switcher" role="tablist" aria-label="View mode"><button class:active={mode === 'rendered'} type="button" role="tab" aria-selected={mode === 'rendered'} disabled={!active} onclick={() => (mode = 'rendered')} onkeydown={handleTablistKeydown}>Render</button><button class:active={mode === 'source'} type="button" role="tab" aria-selected={mode === 'source'} disabled={!active} onclick={() => (mode = 'source')} onkeydown={handleTablistKeydown}>Source</button><button class:active={mode === 'split'} type="button" role="tab" aria-selected={mode === 'split'} disabled={!active} onclick={() => (mode = 'split')} onkeydown={handleTablistKeydown}>Split</button></div>
-    <div class="status-bar"><span class="status-live" class:ready={statusMessage === 'Ready'} aria-hidden="true"></span>{statusMessage}<span class="status-spacer"></span>{active ? `${active.source.split('\n').length} lines` : 'Markdown Desktop Viewer-Editor'}</div>
+    <div class="view-switcher" role="tablist" aria-label="View mode"><button id="view-rendered-tab" class:active={mode === 'rendered'} type="button" role="tab" aria-selected={mode === 'rendered'} aria-controls={active ? 'view-mode-panel' : undefined} tabindex={mode === 'rendered' ? 0 : -1} disabled={!active} onclick={() => (mode = 'rendered')} onkeydown={handleTablistKeydown}>Render</button><button id="view-source-tab" class:active={mode === 'source'} type="button" role="tab" aria-selected={mode === 'source'} aria-controls={active ? 'view-mode-panel' : undefined} tabindex={mode === 'source' ? 0 : -1} disabled={!active} onclick={() => (mode = 'source')} onkeydown={handleTablistKeydown}>Source</button><button id="view-split-tab" class:active={mode === 'split'} type="button" role="tab" aria-selected={mode === 'split'} aria-controls={active ? 'view-mode-panel' : undefined} tabindex={mode === 'split' ? 0 : -1} disabled={!active} onclick={() => (mode = 'split')} onkeydown={handleTablistKeydown}>Split</button></div>
+    <div class="status-bar">
+      <span class="status-live" class:ready={statusMessage === 'Ready'} aria-hidden="true"></span>
+      <span class="status-message" aria-live="polite" aria-atomic="true">{statusMessage}</span>
+      <span class="status-spacer"></span>
+      {#if updateCheckState === 'available' && pendingUpdate}
+        <button type="button" class="status-update" onclick={promptInstallUpdate}>
+          Update {formatVersionLabel(pendingUpdate.version)}
+        </button>
+      {/if}
+      <span class="status-version" title="Installed version">{formatVersionLabel(appVersion)}</span>
+      {#if active}
+        <span class="status-meta">{active.source.split('\n').length} lines</span>
+      {:else}
+        <span class="status-meta">Markdown Desktop</span>
+      {/if}
+    </div>
   </footer>
 </div>
 
@@ -990,8 +1180,8 @@
 {/if}
 
 {#if contextMenu}
-  <div class="context-menu" role="menu" tabindex="-1" aria-label="Markdown Desktop Viewer-Editor actions" style={`left: ${contextMenu.x}px; top: ${contextMenu.y}px`} onpointerdown={(event) => event.stopPropagation()} oncontextmenu={(event) => event.stopPropagation()} onkeydown={handleContextMenuKeydown}>
-    <div class="context-menu-label">Markdown Desktop Viewer-Editor</div>
+  <div class="context-menu" role="menu" tabindex="-1" aria-label="Markdown Desktop actions" style={`left: ${contextMenu.x}px; top: ${contextMenu.y}px`} onpointerdown={(event) => event.stopPropagation()} oncontextmenu={(event) => event.stopPropagation()} onkeydown={handleContextMenuKeydown}>
+    <div class="context-menu-label">Markdown Desktop</div>
     <button bind:this={contextMenuFirstItem} type="button" role="menuitem" onclick={() => void copyContextContent()}>Copy {active ? 'source or selection' : 'selection'}</button>
     <button type="button" role="menuitem" onclick={() => { contextMenu = null; void openFile(); }}>Open Markdown</button>
     <button type="button" role="menuitem" onclick={() => { contextMenu = null; void openFolder(); }}>Open Workspace</button>
@@ -1007,9 +1197,9 @@
 {#if showPalette}
   <div class="modal-backdrop" role="presentation" onclick={(event) => event.target === event.currentTarget && (showPalette = false)}>
     <div class="palette" role="dialog" aria-modal="true" aria-label="Command palette" tabindex="-1">
-      <div class="palette-input"><span aria-hidden="true">⌕</span><input bind:this={paletteInput} value={paletteQuery} aria-label="Command search" placeholder="Type a command…" oninput={(event) => { paletteQuery = event.currentTarget.value; paletteIndex = 0; }} onkeydown={handlePaletteKeydown} /></div>
-      <div class="palette-list">{#each filteredPaletteCommands as [label, action], index}<button class:active={index === paletteIndex} type="button" onclick={() => { showPalette = false; paletteQuery = ''; action(); }}>{label}<kbd>↵</kbd></button>{/each}</div>
-      <div class="palette-footer"><span>Navigate</span><span><kbd>↑</kbd><kbd>↓</kbd> Select</span><span><kbd>Esc</kbd> Close</span></div>
+      <div class="palette-input"><span class="palette-glyph" aria-hidden="true"></span><input bind:this={paletteInput} value={paletteQuery} aria-label="Command search" placeholder="Type a command…" oninput={(event) => { paletteQuery = event.currentTarget.value; paletteIndex = 0; }} onkeydown={handlePaletteKeydown} /></div>
+      <div class="palette-list">{#each filteredPaletteCommands as [label, action], index}<button class:active={index === paletteIndex} type="button" onclick={() => { showPalette = false; paletteQuery = ''; action(); }}>{label}<kbd aria-hidden="true" class="keycap keycap-enter"></kbd><span class="visually-hidden">Enter</span></button>{/each}</div>
+      <div class="palette-footer"><span>Navigate</span><span><kbd aria-hidden="true" class="keycap keycap-up"></kbd><span class="visually-hidden">Arrow up</span><kbd aria-hidden="true" class="keycap keycap-down"></kbd><span class="visually-hidden">Arrow down</span> Select</span><span><kbd>Esc</kbd> Close</span></div>
     </div>
   </div>
 {/if}
@@ -1019,8 +1209,54 @@
     <div class="settings-modal" role="dialog" aria-modal="true" aria-label="Settings" tabindex="-1">
       <div class="settings-header"><div><span class="eyebrow">Preferences</span><h2>Settings</h2></div><button bind:this={settingsCloseButton} class="icon-button" type="button" aria-label="Close settings" onclick={() => (showSettings = false)}>×</button></div>
       <div class="settings-grid"><label for="theme-setting">Theme<select id="theme-setting" bind:value={theme}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label><label for="view-setting">Default view<select id="view-setting" bind:value={mode}><option value="rendered">Rendered</option><option value="source">Source</option><option value="split">Split</option></select></label><label for="profile-setting">Markdown profile<select id="profile-setting" bind:value={markdownProfile}><option value="github">GitHub Compatible</option><option value="extended">Extended</option><option value="commonmarkStrict">CommonMark Strict</option></select></label><label for="remote-images-setting">Remote images<select id="remote-images-setting" value={remoteImagesEnabled ? 'enabled' : 'disabled'} onchange={(event) => (remoteImagesEnabled = event.currentTarget.value === 'enabled')}><option value="enabled">Enabled with safe fetch policy</option><option value="disabled">Disabled</option></select></label><label for="scan-depth-setting">Folder scan depth<input id="scan-depth-setting" type="number" min="1" max="12" value={scanDepth} oninput={(event) => void changeScanDepth(Number(event.currentTarget.value))} /></label></div>
-      <div class="settings-section"><h3>Integration</h3><p>File associations are registered by the signed installer. Choosing a default handler always remains an explicit OS-level action.</p><button type="button" class="secondary-button" onclick={() => (statusMessage = 'Open your operating system Default Apps settings to confirm Markdown Desktop Viewer-Editor')}>Set as Default Markdown App</button></div>
+      <div class="settings-section"><h3>Integration</h3><p>The installer registers Markdown Desktop for .md, .markdown, .mdown, and .mkdown. Defaults change only after you approve — on Windows in Settings, on macOS and Linux after you confirm here.</p><button type="button" class="secondary-button" onclick={promptDefaultMarkdownApp}>Make Default Markdown App…</button></div>
       <div class="settings-section"><h3>Privacy & security</h3><p>Markdown is parsed and sanitized in the Rust core. No document content is loaded as an internal web page and no generic filesystem or shell capability is exposed to the UI.</p></div>
+    </div>
+  </div>
+{/if}
+
+{#if showDefaultAppConfirm}
+  <div class="modal-backdrop" role="presentation" onclick={(event) => event.target === event.currentTarget && (showDefaultAppConfirm = false)}>
+    <div class="settings-modal default-app-confirm" role="dialog" aria-modal="true" aria-label="Make Markdown Desktop the default" tabindex="-1">
+      <div class="settings-header"><div><span class="eyebrow">Integration</span><h2>Make default?</h2></div><button class="icon-button" type="button" aria-label="Cancel" onclick={() => (showDefaultAppConfirm = false)}>×</button></div>
+      <p>Make Markdown Desktop the default app for <strong>.md</strong>, <strong>.markdown</strong>, <strong>.mdown</strong>, and <strong>.mkdown</strong>?</p>
+      <p class="default-app-note">Windows will open Default Apps so you can approve each type there — apps cannot change that silently. On macOS and Linux, confirming here applies the handlers for this account.</p>
+      <div class="default-app-actions">
+        <button type="button" class="secondary-button" onclick={() => (showDefaultAppConfirm = false)}>Cancel</button>
+        <button bind:this={defaultAppConfirmButton} type="button" class="primary-button" onclick={() => void confirmDefaultMarkdownApp()}>Yes, continue</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if showUpdateConfirm && pendingUpdate}
+  <div class="modal-backdrop" role="presentation" onclick={(event) => event.target === event.currentTarget && (showUpdateConfirm = false)}>
+    <div class="settings-modal default-app-confirm" role="dialog" aria-modal="true" aria-labelledby="update-confirm-title" aria-describedby="update-confirm-description" tabindex="-1">
+      <div class="settings-header"><div><span class="eyebrow">Updates</span><h2 id="update-confirm-title">Install {formatVersionLabel(pendingUpdate.version)}?</h2></div><button class="icon-button" type="button" aria-label="Cancel" onclick={() => (showUpdateConfirm = false)}>×</button></div>
+      <p id="update-confirm-description">Download and install the signed update? Markdown Desktop will restart when installation finishes.</p>
+      {#if pendingUpdate.body?.trim()}
+        <div class="update-notes"><strong>Release notes</strong><p>{formatUpdateNotes(pendingUpdate.body)}</p></div>
+      {/if}
+      <div class="default-app-actions">
+        <button type="button" class="secondary-button" onclick={() => (showUpdateConfirm = false)}>Cancel</button>
+        <button bind:this={updateConfirmButton} type="button" class="primary-button" disabled={updateCheckState === 'installing'} onclick={() => void confirmInstallUpdate()}>{updateCheckState === 'installing' ? 'Preparing…' : 'Download and install'}</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if showUpdateDirtyWarn && pendingUpdate}
+  <div class="modal-backdrop" role="presentation" onclick={(event) => event.target === event.currentTarget && updateCheckState !== 'installing' && (showUpdateDirtyWarn = false)}>
+    <div class="settings-modal default-app-confirm" role="dialog" aria-modal="true" aria-labelledby="update-dirty-title" aria-describedby="update-dirty-description" tabindex="-1">
+      <div class="settings-header"><div><span class="eyebrow">Updates</span><h2 id="update-dirty-title">Unsaved changes</h2></div><button class="icon-button" type="button" aria-label="Cancel" disabled={updateCheckState === 'installing'} onclick={() => (showUpdateDirtyWarn = false)}>×</button></div>
+      <p id="update-dirty-description">You have unsaved edits in {tabs.filter((tab) => tab.dirty).length} document{tabs.filter((tab) => tab.dirty).length === 1 ? '' : 's'}. Markdown Desktop will save recovery snapshots before installing {formatVersionLabel(pendingUpdate.version)}. You can restore them after the restart.</p>
+      {#if pendingUpdate.body?.trim()}
+        <div class="update-notes"><strong>Release notes</strong><p>{formatUpdateNotes(pendingUpdate.body)}</p></div>
+      {/if}
+      <div class="default-app-actions">
+        <button type="button" class="secondary-button" disabled={updateCheckState === 'installing'} onclick={() => (showUpdateDirtyWarn = false)}>Cancel</button>
+        <button bind:this={updateConfirmButton} type="button" class="primary-button" disabled={updateCheckState === 'installing'} onclick={() => void confirmInstallUpdate()}>{updateCheckState === 'installing' ? 'Saving…' : 'Save snapshot and install'}</button>
+      </div>
     </div>
   </div>
 {/if}
@@ -1029,24 +1265,24 @@
   <div class="modal-backdrop" role="presentation" onclick={(event) => event.target === event.currentTarget && (showAbout = false)}>
     <div class="about-modal" role="dialog" aria-modal="true" aria-label="About Markdown Desktop" tabindex="-1">
       <button bind:this={aboutCloseButton} class="about-close icon-button" type="button" aria-label="Close About" onclick={() => (showAbout = false)}>×</button>
-      <img class="about-logo" src="/markdown-desktop-viewer-editor.png" alt="" aria-hidden="true" />
+      <img class="about-logo" src="/markdown-desktop.png" alt="" aria-hidden="true" />
       <p class="eyebrow">Markdown Desktop</p>
       <h2>Markdown Desktop</h2>
       <p class="about-copy">Open, read, edit, and save ordinary Markdown files on your computer.</p>
-      <p class="about-version">Version 1.0.0</p>
+      <p class="about-version">Version {appVersion}</p>
       <div class="about-actions">
         <button class="secondary-button about-github" type="button" onclick={() => void openGithub()}>GitHub repository ↗</button>
         {#if updateCheckState === 'available' && pendingUpdate}
-          <button class="primary-button" type="button" onclick={() => void installUpdate()}>Install v{pendingUpdate.version}</button>
+          <button class="primary-button" type="button" onclick={promptInstallUpdate}>Install {formatVersionLabel(pendingUpdate.version)}…</button>
+        {:else if updateCheckState === 'installing'}
+          <button class="secondary-button" type="button" disabled>Installing {updateProgress}%</button>
         {:else}
-          <button class="secondary-button" type="button" disabled={updateCheckState === 'checking' || updateCheckState === 'installing'} onclick={() => void runUpdateCheck()}>
-            {updateCheckState === 'checking' ? 'Checking…' : updateCheckState === 'installing' ? `Installing ${updateProgress}%` : 'Check for updates'}
+          <button class="secondary-button" type="button" disabled={updateCheckState === 'checking'} onclick={() => void runUpdateCheck({ manual: true })}>
+            {updateCheckState === 'checking' ? 'Checking…' : 'Check for updates'}
           </button>
         {/if}
       </div>
-      <p class="about-update" aria-live="polite">
-        {#if updateCheckState === 'current'}You’re up to date.{:else if updateCheckState === 'available' && pendingUpdate}Version {pendingUpdate.version} is ready. Install it from here.{:else if updateCheckState === 'installing'}Downloading and installing the signed update…{:else if updateCheckState === 'error'}Couldn’t check or install the update. Try again later.{:else}Check manually for signed updates from the project’s GitHub Releases.{/if}
-      </p>
+      <p class="about-update" aria-live="polite">{aboutUpdateCopy(updateCheckState, pendingUpdate?.version)}</p>
     </div>
   </div>
 {/if}
@@ -1067,7 +1303,7 @@
       </div>
       <div class="modal-actions">
         <button class="secondary-button" type="button" onclick={() => void discardSelectedRecovery()}>Discard</button>
-        <button class="primary-button" type="button" onclick={() => void restoreSelectedRecovery()}>Restore</button>
+        <button bind:this={recoveryPrimaryButton} class="primary-button" type="button" onclick={() => void restoreSelectedRecovery()}>Restore</button>
       </div>
     </div>
   </div>
@@ -1089,11 +1325,11 @@
   :global(body) { font-family: var(--font-sans); }
   :global(button), :global(input), :global(select) { font: inherit; }
   :global(button:focus-visible), :global(input:focus-visible), :global(select:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
-  :global(:root) { --app-bg: #111214; --panel: #1a1b1d; --panel-2: #202225; --border: #34363a; --hover: #292b2f; --text: #e8e4dc; --heading: #faf7f0; --muted: #aaa79f; --faint: #74736e; --accent: #d29a55; --accent-strong: #f0c37d; --link: #d9ad71; --gold: #d29a55; --danger: #e8877f; --success: #82bd91; --action-bg: #ece8df; --action-text: #191a1b; --action-border: #ece8df; --action-hover: #fffdf7; --code-bg: #0c0d0e; --document-width: 860px; --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; --font-mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace; color-scheme: dark; }
-  :global(:root[data-theme='light']) { --app-bg: #f2efe8; --panel: #fcfbf7; --panel-2: #e8e5dd; --border: #d7d2c7; --hover: #e9e2d5; --text: #2b2b29; --heading: #171817; --muted: #6d6b65; --faint: #96938b; --accent: #9a641f; --accent-strong: #7c4d16; --link: #8a591c; --success: #287047; --action-bg: #fffdf8; --action-text: #252321; --action-border: #cfc7b9; --action-hover: #ffffff; --code-bg: #e7e4dc; color-scheme: light; }
+  :global(:root) { --app-bg: #111214; --panel: #1a1b1d; --panel-2: #202225; --border: #34363a; --hover: #292b2f; --text: #e8e4dc; --heading: #faf7f0; --muted: #aaa79f; --faint: #918e87; --accent: #d29a55; --accent-strong: #f0c37d; --link: #d9ad71; --gold: #d29a55; --danger: #e8877f; --success: #82bd91; --action-bg: #ece8df; --action-text: #191a1b; --action-border: #ece8df; --action-hover: #fffdf7; --code-bg: #0c0d0e; --document-width: 860px; --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; --font-mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace; color-scheme: dark; }
+  :global(:root[data-theme='light']) { --app-bg: #f2efe8; --panel: #fcfbf7; --panel-2: #e8e5dd; --border: #d7d2c7; --hover: #e9e2d5; --text: #2b2b29; --heading: #171817; --muted: #5f5d57; --faint: #696761; --accent: #85500f; --accent-strong: #7c4d16; --link: #8a591c; --success: #287047; --action-bg: #fffdf8; --action-text: #252321; --action-border: #cfc7b9; --action-hover: #ffffff; --code-bg: #e7e4dc; color-scheme: light; }
   :global(:root[data-theme='system']) { color-scheme: dark; }
   @media (prefers-color-scheme: light) {
-    :global(:root[data-theme='system']) { --app-bg: #f2efe8; --panel: #fcfbf7; --panel-2: #e8e5dd; --border: #d7d2c7; --hover: #e9e2d5; --text: #2b2b29; --heading: #171817; --muted: #6d6b65; --faint: #96938b; --accent: #9a641f; --accent-strong: #7c4d16; --link: #8a591c; --success: #287047; --action-bg: #fffdf8; --action-text: #252321; --action-border: #cfc7b9; --action-hover: #ffffff; --code-bg: #e7e4dc; color-scheme: light; }
+    :global(:root[data-theme='system']) { --app-bg: #f2efe8; --panel: #fcfbf7; --panel-2: #e8e5dd; --border: #d7d2c7; --hover: #e9e2d5; --text: #2b2b29; --heading: #171817; --muted: #5f5d57; --faint: #696761; --accent: #85500f; --accent-strong: #7c4d16; --link: #8a591c; --success: #287047; --action-bg: #fffdf8; --action-text: #252321; --action-border: #cfc7b9; --action-hover: #ffffff; --code-bg: #e7e4dc; color-scheme: light; }
   }
   .app-shell { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; color: var(--text); background: var(--app-bg); }
   .app-toolbar { display: flex; flex: 0 0 58px; align-items: center; gap: 12px; min-height: 0; padding: 0 16px; border-bottom: 1px solid var(--border); background: var(--app-bg); }
@@ -1107,6 +1343,8 @@
   .crumb-current { color: var(--text); }
   .dirty-dot { display: inline-block; width: 6px; height: 6px; margin: 0 0 1px 7px; border-radius: 50%; background: var(--gold); }
   .command-trigger { display: flex; align-items: center; gap: 8px; width: min(330px, 30vw); padding: 8px 11px; border: 1px solid var(--border); border-radius: 8px; color: var(--muted); background: var(--panel-2); font-size: 12px; text-align: left; cursor: pointer; }
+  .command-glyph, .palette-glyph { display: inline-block; width: 1em; flex: 0 0 1em; }
+  .command-glyph::before, .palette-glyph::before { content: '⌕'; }
   .command-trigger:hover { border-color: var(--accent); color: var(--text); }
   kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; color: var(--muted); background: var(--panel-2); font-size: 10px; }
   .command-trigger kbd { margin-left: auto; }
@@ -1127,7 +1365,8 @@
   .left-sidebar, .right-sidebar { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; border-right: 1px solid var(--border); background: var(--panel); transition: opacity 160ms ease; }
   .right-sidebar { border-right: 0; border-left: 1px solid var(--border); }
   .left-collapsed .left-sidebar, .right-collapsed .right-sidebar { opacity: 0; pointer-events: none; }
-  .sidebar-tabs, .right-tabs { display: flex; align-items: center; min-height: 44px; padding: 0 8px; gap: 3px; border-bottom: 1px solid var(--border); }
+  .sidebar-tabs, .right-tabs { display: flex; align-items: center; min-height: 44px; padding: 0 8px; gap: 3px; border-bottom: 1px solid var(--border); overflow: visible; }
+  .panel-tablist { display: flex; align-items: center; min-width: 0; gap: 3px; }
   .sidebar-tabs button, .right-tabs button { border: 0; border-radius: 6px; padding: 6px 8px; color: var(--muted); background: transparent; font-size: 11px; cursor: pointer; white-space: nowrap; }
   .sidebar-tabs button.active, .right-tabs button.active { color: var(--text); background: var(--hover); }
   .collapse-button { margin-left: auto; font-size: 18px !important; }
@@ -1143,6 +1382,7 @@
   .search-panel label { display: block; margin-bottom: 7px; color: var(--muted); font-size: 11px; }
   .search-input { display: flex; align-items: center; gap: 7px; padding: 8px 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel-2); }
   .search-input input, .palette-input input { width: 100%; border: 0; outline: 0; color: var(--text); background: transparent; font-size: 12px; }
+  .search-input input:focus-visible, .palette-input input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .search-empty-state { display: flex; flex-direction: column; align-items: flex-start; padding: 30px 5px 10px; color: var(--muted); font-size: 11px; line-height: 1.6; }
   .search-empty-state .empty-symbol { margin-bottom: 8px; font-size: 23px; }
   .search-empty-state p { margin: 0 0 14px; }
@@ -1174,8 +1414,8 @@
   .rendered-pane, .source-pane { min-width: 0; min-height: 0; overflow: auto; }
   .document-views.split .rendered-pane { border-right: 1px solid var(--border); }
   .source-pane { background: color-mix(in srgb, var(--panel) 40%, transparent); }
-  .right-tabs { align-items: center; min-height: 70px; padding: 8px; overflow: hidden; }
-  .right-panel-tabs { display: grid; flex: 1 1 auto; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: minmax(26px, auto); align-content: center; min-width: 0; gap: 3px; overflow: hidden; }
+  .right-tabs { align-items: center; min-height: 70px; padding: 8px; }
+  .right-panel-tabs { display: grid; flex: 1 1 auto; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: minmax(26px, auto); align-content: center; min-width: 0; gap: 3px; overflow: visible; }
   .right-tabs .panel-collapse-control { order: 0; margin: 0 6px 0 0; }
   .right-tabs button { padding: 5px 4px; font-size: 10px; }
   .right-panel-tabs button { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -1231,11 +1471,29 @@
   .view-switcher button { padding: 0 9px; font-size: 10px; }
   .view-switcher button.active { color: var(--text); }
   .status-bar { display: flex; align-items: center; gap: 7px; padding: 0 13px; color: var(--muted); font-size: 10px; }
+  .status-message { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .status-version, .status-meta { flex-shrink: 0; color: var(--faint); }
+  .status-update {
+    flex-shrink: 0;
+    border: 1px solid var(--action-border);
+    border-radius: 999px;
+    padding: 2px 8px;
+    color: var(--action-text);
+    background: var(--action-bg);
+    font: inherit;
+    cursor: pointer;
+  }
+  .status-update:hover { border-color: var(--accent); background: var(--action-hover); }
   .status-spacer { flex: 1; }
-  .modal-backdrop { position: fixed; z-index: 20; inset: 0; display: grid; place-items: start center; overflow: auto; padding: max(24px, 11vh) 24px 24px; background: rgba(2, 5, 10, .68); backdrop-filter: blur(4px); }
+  .modal-backdrop { position: fixed; z-index: 20; isolation: isolate; inset: 0; display: grid; place-items: start center; overflow: auto; padding: max(24px, 11vh) 24px 24px; background: rgba(2, 5, 10, .68); backdrop-filter: blur(4px); }
   .palette, .settings-modal, .conflict-modal, .about-modal { width: min(600px, calc(100vw - 48px)); max-height: calc(100vh - 48px); overflow: auto; border: 1px solid var(--border); border-radius: 13px; box-shadow: 0 24px 80px rgba(0,0,0,.45); background: var(--panel); }
   .palette { overflow: hidden; }
   .palette-input { display: flex; align-items: center; gap: 10px; padding: 15px; border-bottom: 1px solid var(--border); color: var(--accent); }
+  .keycap { display: inline-block; min-width: 1.5em; }
+  .keycap-enter::before { content: '↵'; }
+  .keycap-up::before { content: '↑'; }
+  .keycap-down::before { content: '↓'; }
+  .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
   .palette-input input { font-size: 15px; }
   .palette-list { max-height: 390px; overflow: auto; padding: 7px; }
   .palette-list button { display: flex; justify-content: space-between; width: 100%; padding: 10px; border: 0; border-radius: 7px; color: var(--text); background: transparent; text-align: left; font-size: 12px; cursor: pointer; }
@@ -1251,14 +1509,21 @@
   .about-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
   .about-actions button { min-width: 180px; }
   .about-update { max-width: 390px; min-height: 28px; margin: 14px 0 0; color: var(--faint); font-size: 11px; line-height: 1.5; }
+  .update-notes { max-height: 180px; overflow: auto; margin-top: 16px; padding: 11px 12px; border: 1px solid var(--border); border-radius: 8px; color: var(--muted); background: var(--panel-2); text-align: left; }
+  .update-notes strong { color: var(--heading); font-size: 11px; }
+  .update-notes p { margin: 7px 0 0; white-space: pre-wrap; font: 11px/1.55 var(--font-sans); }
   .settings-header { display: flex; align-items: flex-start; justify-content: space-between; }
   .settings-header h2, .conflict-modal h2 { margin: 0; color: var(--heading); font-size: 25px; }
   .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 24px; }
   .settings-grid label { display: grid; gap: 6px; color: var(--muted); font-size: 11px; }
   .settings-grid select, .settings-grid input { padding: 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--panel-2); }
-  .settings-section { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--border); }
+  .settings-section { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--border); background: var(--panel); }
   .settings-section h3 { margin: 0 0 6px; color: var(--heading); font-size: 13px; }
-  .settings-section p { color: var(--muted); font-size: 11px; line-height: 1.6; }
+  .settings-section p { color: var(--muted); background: var(--panel); font-size: 11px; line-height: 1.6; }
+  .default-app-confirm { max-width: 460px; }
+  .default-app-confirm p { margin: 14px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+  .default-app-confirm .default-app-note { color: var(--faint); font-size: 11px; }
+  .default-app-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
   .conflict-modal { padding: 28px; }
   .conflict-icon { display: grid; place-items: center; width: 34px; height: 34px; margin-bottom: 16px; border-radius: 50%; color: #271706; background: var(--gold); font-weight: 900; }
   .conflict-modal p { color: var(--muted); line-height: 1.6; }
@@ -1271,6 +1536,7 @@
   .left-restore { left: 12px; }
   .right-restore { right: 12px; }
   .restore-glyph { color: var(--accent); font-size: 11px; }
+  .restore-glyph::before { content: '◈'; }
   .restore-label { color: inherit; font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
   .restore-chevron { color: var(--muted); font-size: 17px; line-height: 1; }
   .workspace-loading { position: fixed; z-index: 18; top: 108px; left: 50%; display: inline-flex; align-items: center; gap: 10px; transform: translateX(-50%); padding: 9px 13px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); background: color-mix(in srgb, var(--panel) 94%, transparent); box-shadow: 0 8px 28px rgba(0, 0, 0, .18); font-size: 11px; }

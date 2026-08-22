@@ -8,6 +8,7 @@ const commands = [
   ['pnpm', ['build']],
   ['pnpm', ['accessibility:audit']],
   ['pnpm', ['audit:updater']],
+  ['pnpm', ['audit', '--audit-level', 'high']],
   ['cargo', ['fmt', '--manifest-path', 'src-tauri/Cargo.toml', '--check']],
   ['cargo', ['check', '--manifest-path', 'src-tauri/Cargo.toml', '--locked', '--all-targets', '--all-features']],
   ['cargo', ['clippy', '--manifest-path', 'src-tauri/Cargo.toml', '--locked', '--all-targets', '--all-features', '--', '-D', 'warnings']],

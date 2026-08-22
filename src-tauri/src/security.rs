@@ -35,11 +35,14 @@ pub fn is_markdown(path: &Path) -> bool {
 }
 
 pub fn safe_child(root: &Path, relative: &str) -> Result<PathBuf> {
+    let canonical_root = root
+        .canonicalize()
+        .with_context(|| format!("cannot resolve workspace root: {}", root.display()))?;
     let target = root.join(relative.replace('\\', "/"));
     let canonical = target
         .canonicalize()
         .with_context(|| format!("cannot resolve asset: {relative}"))?;
-    if !canonical.starts_with(root) {
+    if !canonical.starts_with(&canonical_root) {
         return Err(anyhow!("asset escapes the authorized workspace"));
     }
     Ok(canonical)
@@ -81,21 +84,61 @@ fn is_private_ip(ip: IpAddr) -> bool {
                 || ip.is_loopback()
                 || ip.is_link_local()
                 || ip.is_unspecified()
-                || ip.octets()[0] == 169 && ip.octets()[1] == 254
+                || ip.is_broadcast()
+                || ip.is_multicast()
+                || ip.octets()[0] == 0
+                || ip.octets()[0] == 100 && (64..=127).contains(&ip.octets()[1])
         }
-        IpAddr::V6(ip) => ip.is_loopback() || ip.is_unspecified() || ip.is_unique_local(),
+        IpAddr::V6(ip) => {
+            ip.is_loopback()
+                || ip.is_unspecified()
+                || ip.is_unique_local()
+                || ip.is_multicast()
+                || (ip.segments()[0] & 0xffc0) == 0xfe80
+                || ip
+                    .to_ipv4_mapped()
+                    .is_some_and(|mapped| is_private_ip(IpAddr::V4(mapped)))
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn blocks_unsafe_remote_schemes_and_private_hosts() {
         assert!(validate_remote_url("javascript:alert(1)").is_err());
         assert!(validate_remote_url("http://127.0.0.1/image.png").is_err());
         assert!(validate_remote_url("http://10.0.0.4/image.png").is_err());
+        assert!(validate_remote_url("http://[::ffff:127.0.0.1]/image.png").is_err());
+        assert!(validate_remote_url("http://[fe80::1]/image.png").is_err());
+        assert!(validate_remote_url("http://100.64.0.1/image.png").is_err());
         assert!(validate_remote_url("https://example.com/image.png").is_ok());
+    }
+
+    #[test]
+    fn safe_child_rejects_traversal_and_external_symlink_targets() {
+        let workspace = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        fs::write(workspace.path().join("inside.png"), b"ok").unwrap();
+        fs::write(outside.path().join("secret.png"), b"secret").unwrap();
+
+        assert!(safe_child(workspace.path(), "../secret.png").is_err());
+        assert_eq!(
+            safe_child(workspace.path(), "inside.png").unwrap(),
+            workspace.path().join("inside.png").canonicalize().unwrap()
+        );
+
+        let link = workspace.path().join("outside");
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(outside.path(), &link);
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_dir(outside.path(), &link);
+        if linked.is_ok() {
+            assert!(safe_child(workspace.path(), "outside/secret.png").is_err());
+        }
     }
 }

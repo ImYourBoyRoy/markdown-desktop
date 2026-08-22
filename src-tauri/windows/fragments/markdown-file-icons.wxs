@@ -11,7 +11,7 @@
       <Component Id="MarkdownDesktopFileIcon.md" Guid="*">
         <RegistryValue
           Root="HKCU"
-          Key="Software\Classes\Markdown Desktop Viewer-Editor.md\DefaultIcon"
+          Key="Software\Classes\Markdown Desktop.md\DefaultIcon"
           Type="string"
           Value="[INSTALLDIR]markdown-desktop.exe,0"
           KeyPath="yes" />
@@ -19,7 +19,7 @@
       <Component Id="MarkdownDesktopFileIcon.markdown" Guid="*">
         <RegistryValue
           Root="HKCU"
-          Key="Software\Classes\Markdown Desktop Viewer-Editor.markdown\DefaultIcon"
+          Key="Software\Classes\Markdown Desktop.markdown\DefaultIcon"
           Type="string"
           Value="[INSTALLDIR]markdown-desktop.exe,0"
           KeyPath="yes" />
@@ -27,7 +27,7 @@
       <Component Id="MarkdownDesktopFileIcon.mdown" Guid="*">
         <RegistryValue
           Root="HKCU"
-          Key="Software\Classes\Markdown Desktop Viewer-Editor.mdown\DefaultIcon"
+          Key="Software\Classes\Markdown Desktop.mdown\DefaultIcon"
           Type="string"
           Value="[INSTALLDIR]markdown-desktop.exe,0"
           KeyPath="yes" />
@@ -35,7 +35,7 @@
       <Component Id="MarkdownDesktopFileIcon.mkdown" Guid="*">
         <RegistryValue
           Root="HKCU"
-          Key="Software\Classes\Markdown Desktop Viewer-Editor.mkdown\DefaultIcon"
+          Key="Software\Classes\Markdown Desktop.mkdown\DefaultIcon"
           Type="string"
           Value="[INSTALLDIR]markdown-desktop.exe,0"
           KeyPath="yes" />

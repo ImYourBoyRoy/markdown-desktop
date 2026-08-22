@@ -34,13 +34,18 @@ jobs:
             target: ''
             args: ''
             asset_pattern: 'Markdown-Desktop-[version]-Windows-x64[setup][ext]'
+          - name: Windows ARM64
+            os: windows-11-vs2026-arm
+            target: aarch64-pc-windows-msvc
+            args: '--target aarch64-pc-windows-msvc'
+            asset_pattern: 'Markdown-Desktop-[version]-Windows-ARM64[setup][ext]'
           - name: macOS Apple Silicon
             os: macos-latest
             target: aarch64-apple-darwin
             args: '--target aarch64-apple-darwin'
             asset_pattern: 'Markdown-Desktop-[version]-macOS-Apple-Silicon[ext]'
           - name: macOS Intel
-            os: macos-latest
+            os: macos-26-intel
             target: x86_64-apple-darwin
             args: '--target x86_64-apple-darwin'
             asset_pattern: 'Markdown-Desktop-[version]-macOS-Intel[ext]'
@@ -49,10 +54,22 @@ jobs:
             target: ''
             args: ''
             asset_pattern: 'Markdown-Desktop-[version]-Linux-x64[ext]'
+          - name: Linux ARM64
+            os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            args: '--target aarch64-unknown-linux-gnu'
+            asset_pattern: 'Markdown-Desktop-[version]-Linux-ARM64[ext]'
     runs-on: ${{ matrix.os }}
     env:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
@@ -88,9 +105,21 @@ jobs:
         run: |
           node -e "const fs=require('node:fs'); const version=JSON.parse(fs.readFileSync('package.json','utf8')).version; if (process.env.RELEASE_TAG.startsWith('v') && process.env.RELEASE_TAG !== 'v' + version) { console.error('Release tag must match package.json version: expected v' + version + ', got ' + process.env.RELEASE_TAG); process.exit(1); } if (!process.env.TAURI_SIGNING_PRIVATE_KEY?.trim()) { console.error('TAURI_SIGNING_PRIVATE_KEY is required for signed release artifacts.'); process.exit(1); }"
 
-      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+      - name: Verify macOS signing and notarization secrets
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          required=(APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_KEYCHAIN_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID)
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "$name is required for signed and notarized macOS artifacts."
+              exit 1
+            fi
+          done
+
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # Rust 1.98.0
         with:
-          toolchain: stable
+          toolchain: 1.98.0
 
       - name: Install requested Rust target
         if: matrix.target != ''
@@ -124,16 +153,18 @@ jobs:
           projectPath: .
           args: ${{ matrix.args }} --config src-tauri/tauri.release.conf.json
           tagName: v__VERSION__
-          releaseName: Markdown Desktop Viewer-Editor v__VERSION__
+          releaseName: Markdown Desktop v__VERSION__
           releaseBody: |
             ## Download Markdown Desktop
 
             Choose the package for your operating system:
 
-            - **Windows:** `Markdown-Desktop-<version>-Windows-x64-setup.exe` is the recommended installer. Use `...-Windows-x64.msi` for managed Windows Installer deployments or `...-Windows-x64-Portable.exe` without installation.
+            - **Windows x64:** `Markdown-Desktop-<version>-Windows-x64-setup.exe` is the recommended installer. Use `...-Windows-x64.msi` for managed Windows Installer deployments or `...-Windows-x64-Portable.exe` without installation.
+            - **Windows ARM64:** `Markdown-Desktop-<version>-Windows-ARM64-setup.exe` is the native ARM installer. The NSIS installer itself uses Windows compatibility support where needed.
             - **macOS Apple Silicon:** `...-macOS-Apple-Silicon.dmg`
             - **macOS Intel:** `...-macOS-Intel.dmg`
-            - **Linux:** `...-Linux-x64.AppImage` is the portable option; `.deb` is for Debian/Ubuntu-based systems and `.rpm` is for Fedora/openSUSE-based systems.
+            - **Linux x64:** `...-Linux-x64.AppImage` is the portable option; `.deb` is for Debian/Ubuntu-based systems and `.rpm` is for Fedora/openSUSE-based systems.
+            - **Linux ARM64:** `...-Linux-ARM64.AppImage` is the portable option; `.deb` and `.rpm` are also provided.
 
             Files ending in `.sig` and `latest.json` support signed in-app updates and normally do not need to be downloaded manually. GitHub provides the `Source code` archives for the tagged source tree below the release assets.
           releaseDraft: true
@@ -142,22 +173,47 @@ jobs:
           updaterJsonPreferNsis: true
           assetNamePattern: ${{ matrix.asset_pattern }}
 
+      - name: Verify macOS signature, Gatekeeper assessment, and notarization ticket
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          search_root="src-tauri/target"
+          if [[ -n "${{ matrix.target }}" ]]; then
+            search_root="src-tauri/target/${{ matrix.target }}"
+          fi
+          app_path="$(find "$search_root" -type d -name '*.app' -path '*/bundle/macos/*' -print -quit)"
+          if [[ -z "$app_path" ]]; then
+            echo 'No macOS .app bundle was found for signature verification.'
+            exit 1
+          fi
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+          spctl --assess --type execute --verbose=2 "$app_path"
+          xcrun stapler validate "$app_path"
+
       - name: Upload Windows portable executable
         if: runner.os == 'Windows'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ github.ref_name }}
         shell: pwsh
         run: |
           $version = (Get-Content -Raw -LiteralPath 'package.json' | ConvertFrom-Json).version
-          $binary = Join-Path $env:GITHUB_WORKSPACE 'src-tauri/target/release/markdown-desktop.exe'
+          $releaseTag = if ('${{ github.ref_type }}' -eq 'tag') { '${{ github.ref_name }}' } else { "v$version" }
+          $target = '${{ matrix.target }}'
+          $releaseRoot = if ([string]::IsNullOrWhiteSpace($target)) {
+            Join-Path $env:GITHUB_WORKSPACE 'src-tauri/target/release'
+          } else {
+            Join-Path $env:GITHUB_WORKSPACE "src-tauri/target/$target/release"
+          }
+          $binary = Join-Path $releaseRoot 'markdown-desktop.exe'
           if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) {
             throw "Release binary was not built: $binary"
           }
-          $assetName = "Markdown-Desktop-$version-Windows-x64-Portable.exe"
+          $architecture = if ($target -eq 'aarch64-pc-windows-msvc') { 'ARM64' } else { 'x64' }
+          $assetName = "Markdown-Desktop-$version-Windows-$architecture-Portable.exe"
           $staged = Join-Path $env:RUNNER_TEMP $assetName
           Copy-Item -LiteralPath $binary -Destination $staged -Force
-          gh release upload $env:RELEASE_TAG $staged --repo $env:GITHUB_REPOSITORY --clobber
+          gh release upload $releaseTag $staged --repo $env:GITHUB_REPOSITORY --clobber
 
   publish:
     name: Publish and verify release
@@ -171,6 +227,10 @@ jobs:
         with:
           fetch-depth: 1
 
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
       - name: Resolve release tag
         id: release
         shell: bash
@@ -183,13 +243,7 @@ jobs:
           fi
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
 
-      - name: Publish release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ steps.release.outputs.tag }}
-        run: gh release edit "$RELEASE_TAG" --draft=false --latest
-
-      - name: Verify published assets and source archives
+      - name: Fetch release metadata for verification
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
@@ -197,8 +251,11 @@ jobs:
           gh release view "$RELEASE_TAG" --json isDraft,assets,tarballUrl,zipballUrl > release.json
           mkdir -p release-assets
           gh release download "$RELEASE_TAG" --pattern latest.json --dir release-assets --clobber
-          latest_tag="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name)"
-          export LATEST_TAG="$latest_tag"
+
+      - name: Verify release assets before publication
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
           node --input-type=module <<'NODE'
           import { readFileSync } from 'node:fs';
 
@@ -206,10 +263,14 @@ jobs:
           const names = release.assets.map((asset) => asset.name);
           const latest = JSON.parse(readFileSync('release-assets/latest.json', 'utf8'));
           const version = process.env.RELEASE_TAG.replace(/^v/, '');
+          const expectedDownloadPrefix = `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/${process.env.RELEASE_TAG}/`;
           const expected = {
             windowsSetup: `Markdown-Desktop-${version}-Windows-x64-setup.exe`,
             windowsMsi: `Markdown-Desktop-${version}-Windows-x64.msi`,
             windowsPortable: `Markdown-Desktop-${version}-Windows-x64-Portable.exe`,
+            windowsArmSetup: `Markdown-Desktop-${version}-Windows-ARM64-setup.exe`,
+            windowsArmMsi: `Markdown-Desktop-${version}-Windows-ARM64.msi`,
+            windowsArmPortable: `Markdown-Desktop-${version}-Windows-ARM64-Portable.exe`,
             macAppleDmg: `Markdown-Desktop-${version}-macOS-Apple-Silicon.dmg`,
             macIntelDmg: `Markdown-Desktop-${version}-macOS-Intel.dmg`,
             macAppleArchive: `Markdown-Desktop-${version}-macOS-Apple-Silicon.app.tar.gz`,
@@ -217,20 +278,22 @@ jobs:
             linuxAppImage: `Markdown-Desktop-${version}-Linux-x64.AppImage`,
             linuxDeb: `Markdown-Desktop-${version}-Linux-x64.deb`,
             linuxRpm: `Markdown-Desktop-${version}-Linux-x64.rpm`,
+            linuxArmAppImage: `Markdown-Desktop-${version}-Linux-ARM64.AppImage`,
+            linuxArmDeb: `Markdown-Desktop-${version}-Linux-ARM64.deb`,
+            linuxArmRpm: `Markdown-Desktop-${version}-Linux-ARM64.rpm`,
           };
           const has = (predicate) => names.some(predicate);
           const failures = [];
 
-          if (release.isDraft) failures.push('release is still a draft');
-          if (process.env.LATEST_TAG !== process.env.RELEASE_TAG) failures.push(`release is not marked latest: ${process.env.LATEST_TAG ?? 'unknown'}`);
           if (!release.tarballUrl || !release.zipballUrl) failures.push('GitHub source archives are missing');
           for (const [label, name] of Object.entries(expected)) {
             if (!names.includes(name)) failures.push(`${label} is missing: ${name}`);
           }
-          for (const name of [expected.windowsSetup, expected.windowsMsi, expected.macAppleArchive, expected.macIntelArchive, expected.linuxAppImage, expected.linuxDeb, expected.linuxRpm]) {
+          for (const name of [expected.windowsSetup, expected.windowsMsi, expected.windowsArmSetup, expected.windowsArmMsi, expected.macAppleArchive, expected.macIntelArchive, expected.linuxAppImage, expected.linuxDeb, expected.linuxRpm, expected.linuxArmAppImage, expected.linuxArmDeb, expected.linuxArmRpm]) {
             if (!names.includes(`${name}.sig`)) failures.push(`signed companion is missing: ${name}.sig`);
           }
           if (!has((name) => name === 'latest.json')) failures.push('latest.json updater metadata is missing');
+          if (String(latest.version ?? '').replace(/^v/, '') !== version) failures.push(`latest.json version does not match release: ${latest.version ?? 'missing'}`);
 
           const updaterPlatforms = Object.entries(latest.platforms ?? {});
           if (updaterPlatforms.length === 0) failures.push('latest.json contains no updater platforms');
@@ -239,9 +302,31 @@ jobs:
               failures.push(`latest.json platform is incomplete: ${platform}`);
               continue;
             }
+            if (!data.url.startsWith(expectedDownloadPrefix)) failures.push(`latest.json platform uses a non-canonical release URL: ${platform} -> ${data.url}`);
             const assetName = decodeURIComponent(new URL(data.url).pathname.split('/').pop() ?? '');
             if (!names.includes(assetName)) failures.push(`latest.json URL does not point to a release asset: ${platform} -> ${assetName}`);
             if (!names.includes(`${assetName}.sig`)) failures.push(`latest.json asset has no signed companion: ${assetName}.sig`);
+          }
+          const expectedUpdaterAssets = {
+            'windows-x86_64': expected.windowsSetup,
+            'windows-aarch64': expected.windowsArmSetup,
+            'darwin-aarch64': expected.macAppleArchive,
+            'darwin-x86_64': expected.macIntelArchive,
+            'linux-x86_64': expected.linuxAppImage,
+            'linux-aarch64': expected.linuxArmAppImage,
+          };
+          for (const [platform, expectedAsset] of Object.entries(expectedUpdaterAssets)) {
+            const data = latest.platforms?.[platform];
+            if (!data) {
+              failures.push(`latest.json is missing required updater platform: ${platform}`);
+              continue;
+            }
+            if (!data.url) {
+              failures.push(`latest.json required updater platform has no URL: ${platform}`);
+              continue;
+            }
+            const assetName = decodeURIComponent(new URL(data.url).pathname.split('/').pop() ?? '');
+            if (assetName !== expectedAsset) failures.push(`latest.json platform points to the wrong asset: ${platform} -> ${assetName}; expected ${expectedAsset}`);
           }
 
           console.log(JSON.stringify({ tag: process.env.RELEASE_TAG, assets: names, updaterPlatforms: Object.fromEntries(updaterPlatforms.map(([platform, data]) => [platform, data.url])), sourceArchives: { tarball: release.tarballUrl, zipball: release.zipballUrl } }, null, 2));
@@ -250,3 +335,20 @@ jobs:
             process.exit(1);
           }
           NODE
+
+      - name: Publish release
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.verify_only }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: gh release edit "$RELEASE_TAG" --draft=false --latest
+
+      - name: Verify published release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          gh release view "$RELEASE_TAG" --json isDraft > release-published.json
+          latest_tag="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name)"
+          export LATEST_TAG="$latest_tag"
+          node -e "const fs=require('node:fs'); const release=JSON.parse(fs.readFileSync('release-published.json','utf8')); const latest=process.env.LATEST_TAG; if (release.isDraft) { console.error('release is still a draft'); process.exit(1); } if (latest !== process.env.RELEASE_TAG) { console.error('release is not marked latest: ' + (latest || 'unknown')); process.exit(1); }"

@@ -1,6 +1,12 @@
 export type ViewMode = 'rendered' | 'source' | 'split';
 export type Theme = 'system' | 'light' | 'dark';
 export type MarkdownProfile = 'github' | 'extended' | 'commonmarkStrict';
+export type PathGrantKind = 'document' | 'workspace' | 'import' | 'save';
+
+export interface PathGrant {
+  token: string;
+  kind: PathGrantKind;
+}
 
 export interface Heading {
   level: number;
@@ -109,6 +115,7 @@ export interface AssetResult {
 export interface SearchResult {
   documentId: string;
   path: string;
+  relativePath: string;
   title: string;
   snippet: string;
   line: number;

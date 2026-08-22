@@ -124,6 +124,7 @@ function purgeCaches() {
     '.vite',
     'node_modules/.vite',
     '.wcag-audit-results',
+    'src-tauri/gen',
     'src-tauri/target',
   ]) removeProjectPath(path);
   if (includeApps) removeProjectPath('Apps');

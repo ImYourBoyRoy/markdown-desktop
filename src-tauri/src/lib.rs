@@ -1,3 +1,4 @@
+mod default_app;
 mod markdown;
 mod model;
 mod security;
@@ -6,14 +7,11 @@ mod store;
 mod workspace_scan;
 
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 #[tauri::command]
-fn startup_paths() -> Vec<String> {
-    std::env::args()
-        .skip(1)
-        .filter(|arg| !arg.starts_with('-'))
-        .collect()
+fn startup_paths(state: State<'_, store::SharedState>) -> Vec<store::PathGrant> {
+    store::startup_path_grants(state.inner(), std::env::args().skip(1))
 }
 
 fn build_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
@@ -58,6 +56,8 @@ fn build_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
         .item(&MenuItemBuilder::with_id("settings", "Settings").build(app)?)
         .build()?;
     let help = SubmenuBuilder::new(app, "Help")
+        .item(&MenuItemBuilder::with_id("check-for-updates", "Check for Updates…").build(app)?)
+        .separator()
         .item(&MenuItemBuilder::with_id("about", "About Markdown Desktop").build(app)?)
         .build()?;
     MenuBuilder::new(app)
@@ -79,7 +79,9 @@ pub fn run() {
                 .into_iter()
                 .filter(|arg| !arg.starts_with('-'))
                 .collect::<Vec<_>>();
-            let _ = app.emit("startup-paths", paths);
+            let state = app.state::<store::SharedState>();
+            let grants = store::startup_path_grants(state.inner(), paths);
+            let _ = app.emit("startup-paths", grants);
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
                 let _ = window.set_focus();
@@ -105,14 +107,20 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             startup_paths,
-            store::open_path,
+            default_app::request_default_markdown_app,
+            store::pick_markdown_path,
+            store::pick_workspace_path,
+            store::pick_import_path,
+            store::pick_save_path,
+            store::open_document_grant,
+            store::open_workspace_grant,
+            store::read_import_grant,
             store::open_workspace_document,
+            store::open_document_link,
             store::read_document,
             store::render_source,
-            store::read_import_file,
             store::save_document,
             store::check_document_revision,
-            store::open_workspace,
             store::search_workspace,
             store::resolve_asset,
             store::fetch_remote_asset,
@@ -130,5 +138,5 @@ pub fn run() {
             store::save_clipboard_image
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Markdown Desktop Viewer-Editor");
+        .expect("error while running Markdown Desktop");
 }

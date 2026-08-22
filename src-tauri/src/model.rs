@@ -152,6 +152,7 @@ pub struct AssetResult {
 pub struct SearchResult {
     pub document_id: String,
     pub path: String,
+    pub relative_path: String,
     pub title: String,
     pub snippet: String,
     pub line: usize,

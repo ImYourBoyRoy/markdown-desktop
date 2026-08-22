@@ -1,8 +1,8 @@
 [package]
 name = "markdown-desktop"
-version = "1.0.0"
+version = "1.0.1"
 description = "A desktop viewer and editor for Markdown files"
-authors = ["Markdown Desktop Viewer-Editor contributors"]
+authors = ["Roy Dawson IV"]
 license = "MIT"
 edition = "2024"
 rust-version = "1.98.0"
@@ -50,3 +50,4 @@ tauri-plugin-store = "^2.4.4"
 tauri-plugin-updater = "^2.10.1"
 tauri-plugin-window-state = "^2.4.1"
 base64 = "^0.23.1"
+uuid = { version = "^1.24.1", features = ["v4"] }

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Markdown Desktop Viewer-Editor",
-  "version": "1.0.0",
+  "productName": "Markdown Desktop",
+  "version": "1.0.1",
   "identifier": "com.markdownnative.desktop",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Markdown Desktop Viewer-Editor",
+        "title": "Markdown Desktop",
         "width": 1440,
         "height": 920,
         "minWidth": 920,
@@ -37,7 +37,14 @@
   },
   "bundle": {
     "active": true,
+    "category": "Productivity",
+    "copyright": "Copyright © 2026 Roy Dawson IV",
     "createUpdaterArtifacts": false,
+    "homepage": "https://github.com/ImYourBoyRoy/markdown-desktop",
+    "license": "MIT",
+    "longDescription": "A focused desktop viewer and editor for ordinary Markdown files.",
+    "publisher": "Roy Dawson IV",
+    "shortDescription": "Read and edit Markdown files.",
     "targets": "all",
     "fileAssociations": [
       {
@@ -47,7 +54,7 @@
         "description": "Markdown source document",
         "role": "Editor",
         "rank": "Default",
-        "contentTypes": ["net.daringfireball.markdown", "public.plain-text"],
+        "contentTypes": ["net.daringfireball.markdown"],
         "exportedType": {
           "identifier": "com.markdownnative.desktop.markdown",
           "conformsTo": ["public.plain-text", "public.text"]
@@ -64,6 +71,7 @@
     ],
     "windows": {
       "nsis": {
+        "installMode": "both",
         "installerIcon": "icons/icon.ico",
         "uninstallerIcon": "icons/icon.ico",
         "installerHooks": "./windows/hooks.nsh"
@@ -71,14 +79,16 @@
       "wix": {
         "fragmentPaths": [
           "./windows/fragments/app-data-cleanup.wxs",
-          "./windows/fragments/markdown-file-icons.wxs"
+          "./windows/fragments/markdown-file-icons.wxs",
+          "./windows/fragments/default-apps.wxs"
         ],
         "componentRefs": [
           "MarkdownDesktopAppDataCleanup",
           "MarkdownDesktopFileIcon.md",
           "MarkdownDesktopFileIcon.markdown",
           "MarkdownDesktopFileIcon.mdown",
-          "MarkdownDesktopFileIcon.mkdown"
+          "MarkdownDesktopFileIcon.mkdown",
+          "MarkdownDesktopDefaultApps"
         ]
       }
     }
