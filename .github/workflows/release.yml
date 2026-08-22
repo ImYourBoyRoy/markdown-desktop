@@ -121,6 +121,9 @@ jobs:
         with:
           toolchain: 1.98.0
 
+      - name: Verify Rust toolchain
+        run: node -e "const cp=require('node:child_process'); for (const command of ['rustc','cargo']) { const version=cp.execFileSync(command,['--version'],{encoding:'utf8'}).trim(); console.log(version); if (!version.includes('1.98.0')) process.exit(1); }"
+
       - name: Install requested Rust target
         if: matrix.target != ''
         run: rustup target add ${{ matrix.target }}
