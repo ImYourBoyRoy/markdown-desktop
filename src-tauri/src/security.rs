@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, anyhow};
-use std::net::{IpAddr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use url::Url;
 
@@ -57,11 +57,24 @@ pub fn validate_remote_url(raw: &str) -> Result<Url> {
         .host_str()
         .ok_or_else(|| anyhow!("remote URL has no host"))?;
     if host.eq_ignore_ascii_case("localhost")
+        || host.eq_ignore_ascii_case("local")
         || host.ends_with(".localhost")
         || host.ends_with(".local")
     {
         return Err(anyhow!("local network targets are blocked"));
     }
+    resolve_public_host(&parsed)?;
+    Ok(parsed)
+}
+
+/// Resolve a remote host once and fail closed if any returned address is private.
+/// Callers that make the request should pin this result with reqwest's resolver
+/// override so a later DNS answer cannot redirect the connection into a private
+/// network.
+pub fn resolve_public_host(parsed: &Url) -> Result<SocketAddr> {
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| anyhow!("remote URL has no host"))?;
     let port = parsed
         .port_or_known_default()
         .ok_or_else(|| anyhow!("URL has no port"))?;
@@ -69,12 +82,23 @@ pub fn validate_remote_url(raw: &str) -> Result<Url> {
         if is_private_ip(ip) {
             return Err(anyhow!("private and loopback targets are blocked"));
         }
-    } else if let Ok(addresses) = (host, port).to_socket_addrs()
-        && addresses.into_iter().any(|addr| is_private_ip(addr.ip()))
-    {
+        return Ok(SocketAddr::new(ip, port));
+    }
+
+    let addresses = (host, port)
+        .to_socket_addrs()
+        .map_err(|error| anyhow!("remote hostname could not be resolved: {error}"))?
+        .collect::<Vec<_>>();
+    if addresses.is_empty() {
+        return Err(anyhow!("remote hostname has no addresses"));
+    }
+    if addresses.iter().any(|address| is_private_ip(address.ip())) {
         return Err(anyhow!("remote hostname resolves to a private target"));
     }
-    Ok(parsed)
+    addresses
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow!("remote hostname has no usable address"))
 }
 
 fn is_private_ip(ip: IpAddr) -> bool {
@@ -95,9 +119,20 @@ fn is_private_ip(ip: IpAddr) -> bool {
                 || ip.is_unique_local()
                 || ip.is_multicast()
                 || (ip.segments()[0] & 0xffc0) == 0xfe80
-                || ip
-                    .to_ipv4()
-                    .is_some_and(|mapped| is_private_ip(IpAddr::V4(mapped)))
+                || {
+                    let segments = ip.segments();
+                    if segments[..5] == [0; 5] && matches!(segments[5], 0 | 0xffff) {
+                        let mapped = Ipv4Addr::new(
+                            (segments[6] >> 8) as u8,
+                            segments[6] as u8,
+                            (segments[7] >> 8) as u8,
+                            segments[7] as u8,
+                        );
+                        is_private_ip(IpAddr::V4(mapped))
+                    } else {
+                        false
+                    }
+                }
         }
     }
 }

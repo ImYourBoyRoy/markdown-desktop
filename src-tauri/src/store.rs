@@ -815,18 +815,19 @@ pub fn resolve_asset(
 #[tauri::command]
 pub fn fetch_remote_asset(url: String) -> Result<AssetResult, CommandError> {
     let parsed = security::validate_remote_url(&url)?;
-    let client = Client::builder()
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| CommandError::Message("remote URL has no host".into()))?;
+    let pinned_address = security::resolve_public_host(&parsed)?;
+    let mut client_builder = Client::builder()
         .timeout(std::time::Duration::from_secs(8))
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            if attempt.previous().len() >= 3 {
-                return attempt.stop();
-            }
-            if security::validate_remote_url(attempt.url().as_str()).is_ok() {
-                attempt.follow()
-            } else {
-                attempt.stop()
-            }
-        }))
+        // Redirects would require a fresh validated-and-pinned client for every
+        // hop. Refuse them so a remote asset cannot escape the initial boundary.
+        .redirect(reqwest::redirect::Policy::none());
+    if host.parse::<std::net::IpAddr>().is_err() {
+        client_builder = client_builder.resolve(host, pinned_address);
+    }
+    let client = client_builder
         .build()
         .map_err(|e| CommandError::Message(e.to_string()))?;
     let mut response = client

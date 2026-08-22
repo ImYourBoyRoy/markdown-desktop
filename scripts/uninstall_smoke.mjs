@@ -20,12 +20,12 @@ const nsisInstaller = readdirSync(join(installerDir, 'nsis')).find((name) => nam
 const msiInstaller = readdirSync(join(installerDir, 'msi')).find((name) => name.endsWith('.msi'));
 if (!nsisInstaller || !msiInstaller) throw new Error('Windows installer smoke requires both NSIS and MSI outputs.');
 
-// CI-only uninstall smoke. Install into an isolated temp directory via /D=
-// so the check never touches Program Files or the developer's real install
-// path. Interactive NSIS installs use installMode "both" (current user →
-// %LOCALAPPDATA%\Markdown Desktop, all users → Program Files\Markdown Desktop).
+// CI-only uninstall smoke. Tauri's multi-user NSIS template resets $INSTDIR
+// after parsing /D=, so use the documented /CurrentUser mode and its clean
+// runner default (%LOCALAPPDATA%\Programs\Markdown Desktop). A clean CI
+// runner makes this deterministic without touching Program Files.
 const smokeRoot = mkdtempSync(join(tmpdir(), 'markdown-desktop-uninstall-'));
-const installDir = join(smokeRoot, 'installed');
+const installDir = join(process.env.LOCALAPPDATA, 'Programs', 'Markdown Desktop');
 const nsisLogPath = join(smokeRoot, 'nsis-install.log');
 const appDataDir = join(process.env.APPDATA, 'com.markdownnative.desktop');
 const localDataDir = join(process.env.LOCALAPPDATA, 'com.markdownnative.desktop');
@@ -38,6 +38,9 @@ const beforeStartMenuLinks = new Set(startMenuRoots.flatMap((root) => findFiles(
   (name) => /^Markdown Desktop.*\.lnk$/i.test(name),
 )));
 let nsisInstalled = false;
+if (existsSync(installDir)) {
+  throw new Error(`NSIS smoke install path already exists on the clean runner: ${installDir}`);
+}
 
 function run(file, args) {
   const isWindowsExecutable = process.platform === 'win32' && file.toLowerCase().endsWith('.exe');
@@ -143,9 +146,7 @@ function readUninstallEntries() {
 }
 
 try {
-  // NSIS requires /D=... to be the final installer argument. Keep the log
-  // switch before it or the silent install may fall back to its default path.
-  run(join(installerDir, 'nsis', nsisInstaller), ['/S', '/currentuser', `/LOG=${nsisLogPath}`, `/D=${installDir}`]);
+  run(join(installerDir, 'nsis', nsisInstaller), ['/S', '/CurrentUser', `/LOG=${nsisLogPath}`]);
   nsisInstalled = true;
   try {
     await waitForPath('NSIS installer', join(installDir, 'uninstall.exe'));
