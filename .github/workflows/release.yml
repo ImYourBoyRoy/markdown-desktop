@@ -10,6 +10,11 @@ on:
         required: false
         type: boolean
         default: false
+      publish_existing:
+        description: Publish an existing verified draft without rebuilding artifacts
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -20,7 +25,7 @@ env:
 
 jobs:
   release:
-    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.verify_only }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.verify_only && !inputs.publish_existing) }}
     name: Build ${{ matrix.name }}
     strategy:
       fail-fast: false
@@ -308,7 +313,7 @@ jobs:
   publish:
     name: Publish and verify release
     needs: release
-    if: ${{ always() && (needs.release.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.verify_only)) }}
+    if: ${{ always() && (needs.release.result == 'success' || (github.event_name == 'workflow_dispatch' && (inputs.verify_only || inputs.publish_existing))) }}
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -451,7 +456,7 @@ jobs:
           NODE
 
       - name: Publish release
-        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.verify_only }}
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.verify_only || inputs.publish_existing }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
