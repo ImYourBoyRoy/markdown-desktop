@@ -10,9 +10,14 @@ Do not include documents, credentials, signing keys, private paths, or other sen
 
 ## Dependency audit status
 
-Verified 2026-09-13: the configured JavaScript high-severity audit gate passed.
+Verified 2026-09-14: the configured JavaScript high-severity audit gate passed.
 `cargo audit --json` reports seven upstream maintenance/unsoundness warnings;
 they remain visible and are not hidden with an advisory allowlist:
+
+The `RUSTSEC-2026-0285` `rustls` finding observed in CI on 2026-09-14 was
+resolved by updating the locked `rustls` line from `0.23.44` to `0.23.45`.
+The current audit has zero vulnerabilities; the seven upstream
+maintenance/unsoundness warnings listed below remain.
 
 | Advisory | Package | Root cause | Remediation boundary |
 | --- | --- | --- | --- |

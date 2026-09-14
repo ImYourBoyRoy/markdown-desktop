@@ -7,19 +7,22 @@ clone or handoff.
 
 Updated: 2026-09-14
 
-## Release candidate preparation (2026-09-14)
+## Release v1.0.2 publication and CI follow-up (2026-09-14)
 
-- The next release target is `1.0.2`, aligned across `package.json`,
-  `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, and
-  `src-tauri/tauri.conf.json`. The existing published `v1.0.1` tag is not
-  reused.
+- The `v1.0.2` release is published at
+  [GitHub Releases](https://github.com/ImYourBoyRoy/markdown-desktop/releases/tag/v1.0.2),
+  with the six platform families and signed updater metadata verified by
+  publication run `34870524308`.
 - CI and release workflows use the non-exact pnpm `12` channel while the
   project toolchain check enforces the `12.3.4+` floor.
-- Local release-candidate verification on Windows passed toolchain checks,
-  architecture inventory, Svelte diagnostics, the full frontend suite,
-  production build, Rust formatting/check/Clippy/tests, dependency/security
-  verification, renderer smoke, accessibility source audit, and updater
-  configuration audit. Cross-platform signing/publication remains a CI gate.
+- A Windows CI failure exposed that bare `pnpm <script>` shorthand was a
+  no-op in the native Windows jobs, leaving `Apps/**` absent. Native CI and
+  release smoke steps now use explicit `pnpm run ...` invocation so the
+  build, artifact, and uninstall checks execute on every runner.
+- The CI-discovered `RUSTSEC-2026-0285` `rustls 0.23.44` vulnerability was
+  resolved by locking `rustls 0.23.45`; the current cargo audit has zero
+  vulnerabilities and seven documented upstream maintenance/unsoundness
+  warnings. The post-fix CI rerun remains the final cross-platform gate.
 
 ## Architecture boundary (2026-09-13)
 

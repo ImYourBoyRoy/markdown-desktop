@@ -197,7 +197,7 @@ file sizes; lines are logical source lines with a terminal newline excluded.
 Refresh it after source or documentation changes so cold models can trust the
 routing table below.
 
-Inventory totals: 244 files / 49,569 lines / 2,001,862 B. Runtime (excluding this generator): 152 files / 29,469 lines / 1,216,866 B. Tests/benchmarks: 68 files / 6,028 lines / 240,956 B.
+Inventory totals: 245 files / 49,768 lines / 2,012,420 B. Runtime (excluding this generator): 152 files / 29,469 lines / 1,216,866 B. Tests/benchmarks: 68 files / 6,028 lines / 240,956 B.
 
 ### Read first
 
@@ -382,7 +382,7 @@ Use these scripts through the package commands documented in `README.md`; they a
 | --- | ---: | ---: | --- |
 | `scripts/accessibility_audit.mjs` | 118 | 4,346 B | Static accessibility and capability audit used by verification. |
 | `scripts/align-typescript.mjs` | 14 | 971 B | Keeps supported TypeScript package lines aligned with the Svelte toolchain. |
-| `scripts/architecture_inventory.mjs` | 377 | 27,542 B | Generates and checks this architecture file inventory from the current tree. |
+| `scripts/architecture_inventory.mjs` | 379 | 27,664 B | Generates and checks this architecture file inventory from the current tree. |
 | `scripts/build_app.mjs` | 144 | 6,309 B | Stages platform-specific portable and installable application artifacts. |
 | `scripts/build_optional_renderers.mjs` | 47 | 1,656 B | Builds Mermaid and other optional renderer assets outside the startup graph. |
 | `scripts/full_upgrade.mjs` | 90 | 5,516 B | Runs the explicit reversible stable dependency/toolchain/CI upgrade workflow. |
@@ -489,17 +489,18 @@ These files define toolchains, dependency graphs, packaging, permissions, CI, an
 
 | File | Lines | Bytes | Summary |
 | --- | ---: | ---: | --- |
-| `.github/workflows/ci.yml` | 156 | 4,378 B | Quality, security, cross-platform build, and test automation. |
-| `.github/workflows/release.yml` | 443 | 23,230 B | Signed six-family release build, publication, and post-publication verification. |
+| `.github/workflows/ci.yml` | 156 | 4,394 B | Quality, security, cross-platform build, and test automation. |
+| `.github/workflows/release.yml` | 473 | 24,727 B | Signed six-family release build, publication, and post-publication verification. |
 | `.gitignore` | 81 | 1,061 B | Generated output, local credentials, runtime state, and continuity-file boundaries. |
 | `AGENTS.md` | 86 | 6,931 B | Repository operating contract, invariants, required workflows, and safety boundaries. |
-| `IMPLEMENTATION_STATUS.md` | 722 | 55,974 B | Current implementation checkpoint and evidence summary. |
+| `IMPLEMENTATION_STATUS.md` | 725 | 56,225 B | Current implementation checkpoint and evidence summary. |
 | `LICENSE` | 21 | 1,086 B | MIT license text. |
-| `MEMORY.md` | 654 | 78,756 B | Local continuity record of architecture decisions, validation, risks, and next actions. |
-| `README.md` | 391 | 26,449 B | Published user/developer guide for installation, usage, commands, releases, and limitations. |
-| `SECURITY.md` | 47 | 3,300 B | Security model, audit findings, upstream advisories, and unresolved platform boundaries. |
+| `MEMORY.md` | 665 | 79,915 B | Local continuity record of architecture decisions, validation, risks, and next actions. |
+| `README.md` | 391 | 26,461 B | Published user/developer guide for installation, usage, commands, releases, and limitations. |
+| `SECURITY.md` | 52 | 3,567 B | Security model, audit findings, upstream advisories, and unresolved platform boundaries. |
 | `docs/PHASE-0-PERFORMANCE.md` | 137 | 6,049 B | Phase 0 performance matrix, baseline, budgets, and evidence limits. |
 | `docs/PHASE-1-PERFORMANCE.md` | 122 | 6,830 B | Phase 1 optimization results, deltas, and remaining packaged gates. |
+| `mobile_todo.md` | 148 | 7,234 B | Android/mobile product contract, workstreams, non-goals, and acceptance gates. |
 | `package.json` | 107 | 4,464 B | Frontend package metadata, dependency versions, and maintenance/build scripts. |
 | `pnpm-lock.yaml` | 4,045 | 133,883 B | Resolved JavaScript dependency graph. |
 | `pnpm-workspace.yaml` | 4 | 70 B | pnpm workspace and build-approval configuration. |

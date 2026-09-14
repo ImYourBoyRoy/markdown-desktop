@@ -9,6 +9,7 @@ const generatedEnd = '<!-- END GENERATED FILE INVENTORY -->';
 const sourceRoots = ['src', 'src-tauri/src', 'scripts'];
 const keyFiles = [
   'README.md',
+  'mobile_todo.md',
   'AGENTS.md',
   'IMPLEMENTATION_STATUS.md',
   'MEMORY.md',
@@ -192,6 +193,7 @@ const summaries = new Map(Object.entries({
   'scripts/workflow-comments.mjs': 'Maintains stable comments and metadata in GitHub workflows.',
 
   'README.md': 'Published user/developer guide for installation, usage, commands, releases, and limitations.',
+  'mobile_todo.md': 'Android/mobile product contract, workstreams, non-goals, and acceptance gates.',
   'AGENTS.md': 'Repository operating contract, invariants, required workflows, and safety boundaries.',
   'IMPLEMENTATION_STATUS.md': 'Current implementation checkpoint and evidence summary.',
   'MEMORY.md': 'Local continuity record of architecture decisions, validation, risks, and next actions.',

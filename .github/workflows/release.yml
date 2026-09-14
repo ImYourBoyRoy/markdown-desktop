@@ -178,7 +178,7 @@ jobs:
           if-no-files-found: error
 
       - name: Verify staged platform artifacts
-        run: pnpm smoke:native ${{ matrix.args }}
+        run: pnpm run smoke:native -- ${{ matrix.args }}
 
       - name: Build and upload release bundles
         if: runner.os != 'macOS' || env.MACOS_SIGNING_CONFIGURED != 'true'

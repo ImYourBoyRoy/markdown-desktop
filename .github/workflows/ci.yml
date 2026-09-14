@@ -72,7 +72,7 @@ jobs:
           cargo install cargo-deny --locked
 
       - name: Run complete verification
-        run: pnpm verify:dependencies
+        run: pnpm run verify:dependencies
 
   native-smoke:
     name: Native smoke (${{ matrix.name }})
@@ -138,14 +138,14 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build and stage native release artifacts
-        run: pnpm build:app
+        run: pnpm run build:app
 
       - name: Verify native artifact and branding
-        run: pnpm smoke:native
+        run: pnpm run smoke:native
 
       - name: Smoke test Windows uninstall cleanup
         if: runner.os == 'Windows'
-        run: pnpm smoke:uninstall
+        run: pnpm run smoke:uninstall
 
       - name: Upload native smoke artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
