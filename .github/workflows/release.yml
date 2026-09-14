@@ -350,10 +350,14 @@ jobs:
           import { readFileSync } from 'node:fs';
 
           const release = JSON.parse(readFileSync('release.json', 'utf8'));
-          const names = release.assets.map((asset) => asset.name);
+          const assets = release.assets ?? [];
+          const names = assets.map((asset) => asset.name);
+          const assetsByName = new Map(assets.map((asset) => [asset.name, asset]));
+          const assetsByApiUrl = new Map(assets.map((asset) => [asset.apiUrl, asset]));
           const latest = JSON.parse(readFileSync('release-assets/latest.json', 'utf8'));
           const version = process.env.RELEASE_TAG.replace(/^v/, '');
-          const expectedDownloadPrefix = `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/${process.env.RELEASE_TAG}/`;
+          const expectedDownloadBase = `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/`;
+          const expectedApiAssetBase = `https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/releases/assets/`;
           const expected = {
             windowsSetup: `Markdown-Desktop-${version}-Windows-x64-setup.exe`,
             windowsMsi: `Markdown-Desktop-${version}-Windows-x64.msi`,
@@ -384,6 +388,24 @@ jobs:
           if (!has((name) => name === 'latest.json')) failures.push('latest.json updater metadata is missing');
           if (String(latest.version ?? '').replace(/^v/, '') !== version) failures.push(`latest.json version does not match release: ${latest.version ?? 'missing'}`);
 
+          const resolveReleaseAsset = (url) => {
+            try {
+              const parsed = new URL(url);
+              const normalizedUrl = `${parsed.origin}${parsed.pathname}`;
+              if (normalizedUrl.startsWith(expectedApiAssetBase)) {
+                const asset = assetsByApiUrl.get(normalizedUrl);
+                return { asset, name: asset?.name ?? '', kind: 'api' };
+              }
+              if (normalizedUrl.startsWith(expectedDownloadBase)) {
+                const name = decodeURIComponent(parsed.pathname.split('/').pop() ?? '');
+                return { asset: assetsByName.get(name), name, kind: 'browser' };
+              }
+            } catch {
+              // The caller reports malformed or unsupported updater URLs.
+            }
+            return { asset: undefined, name: '', kind: 'unsupported' };
+          };
+
           const updaterPlatforms = Object.entries(latest.platforms ?? {});
           if (updaterPlatforms.length === 0) failures.push('latest.json contains no updater platforms');
           for (const [platform, data] of updaterPlatforms) {
@@ -391,10 +413,13 @@ jobs:
               failures.push(`latest.json platform is incomplete: ${platform}`);
               continue;
             }
-            if (!data.url.startsWith(expectedDownloadPrefix)) failures.push(`latest.json platform uses a non-canonical release URL: ${platform} -> ${data.url}`);
-            const assetName = decodeURIComponent(new URL(data.url).pathname.split('/').pop() ?? '');
-            if (!names.includes(assetName)) failures.push(`latest.json URL does not point to a release asset: ${platform} -> ${assetName}`);
-            if (!names.includes(`${assetName}.sig`)) failures.push(`latest.json asset has no signed companion: ${assetName}.sig`);
+            const resolved = resolveReleaseAsset(data.url);
+            if (!resolved.asset) {
+              failures.push(`latest.json URL does not point to an uploaded release asset: ${platform} -> ${resolved.name || data.url}`);
+              continue;
+            }
+            if (resolved.asset.state && resolved.asset.state !== 'uploaded') failures.push(`latest.json asset is not uploaded: ${platform} -> ${resolved.name} (${resolved.asset.state})`);
+            if (!assetsByName.has(`${resolved.name}.sig`)) failures.push(`latest.json asset has no signed companion: ${resolved.name}.sig`);
           }
           const expectedUpdaterAssets = {
             'windows-x86_64': expected.windowsSetup,
@@ -414,8 +439,8 @@ jobs:
               failures.push(`latest.json required updater platform has no URL: ${platform}`);
               continue;
             }
-            const assetName = decodeURIComponent(new URL(data.url).pathname.split('/').pop() ?? '');
-            if (assetName !== expectedAsset) failures.push(`latest.json platform points to the wrong asset: ${platform} -> ${assetName}; expected ${expectedAsset}`);
+            const resolved = resolveReleaseAsset(data.url);
+            if (resolved.name !== expectedAsset) failures.push(`latest.json platform points to the wrong asset: ${platform} -> ${resolved.name || data.url}; expected ${expectedAsset}`);
           }
 
           console.log(JSON.stringify({ tag: process.env.RELEASE_TAG, assets: names, updaterPlatforms: Object.fromEntries(updaterPlatforms.map(([platform, data]) => [platform, data.url])), sourceArchives: { tarball: release.tarballUrl, zipball: release.zipballUrl } }, null, 2));
