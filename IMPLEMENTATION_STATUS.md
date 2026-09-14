@@ -27,6 +27,13 @@ Updated: 2026-09-14
   [`34897036643`](https://github.com/ImYourBoyRoy/markdown-desktop/actions/runs/34897036643)
   passed quality/security plus native smoke and artifact verification on
   Windows x64/ARM64, macOS Intel/Apple Silicon, and Linux x64/ARM64.
+- The four partial Actions artifacts from cancelled pre-fix run `34896063607`
+  were explicitly deleted. Release verification run
+  [`34908604168`](https://github.com/ImYourBoyRoy/markdown-desktop/actions/runs/34908604168)
+  passed against the published release without rebuilding or republishing.
+  The final live audit found 29/29 uploaded assets, no duplicate names, all 18
+  updater platforms resolved to uploaded assets with signed companions, and
+  HTTP 200 for every public asset endpoint.
 
 ## Architecture boundary (2026-09-13)
 
