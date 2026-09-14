@@ -202,7 +202,7 @@ on demand rather than during startup.
 
 Installers and portable builds are on the [Releases](https://github.com/ImYourBoyRoy/markdown-desktop/releases) page. Every downloadable build follows the same pattern: `Markdown-Desktop-<version>-<platform>-<architecture>...`.
 
-The checked-in release workflow targets all six platform families in the table below. The source currently targets the next backward-compatible patch release, `v1.0.2`; the published `v1.0.1` release contains the verified six-family asset set and signed updater metadata. The macOS packages are intentionally unsigned because Apple Developer signing/notarization is not configured and may show an unidentified-developer warning. Release CI run `32577269717` and its matching CI verification run `32577245685` passed the release checks for `v1.0.1`, including the published asset set and updater manifest. This does not substitute for target-OS desktop-session integration, Gatekeeper approval, or live-updater relaunch evidence.
+The checked-in release workflow targets all six platform families in the table below. The published [`v1.0.2` release](https://github.com/ImYourBoyRoy/markdown-desktop/releases/tag/v1.0.2) contains the verified six-family asset set and signed updater metadata. The macOS packages are intentionally unsigned because Apple Developer signing/notarization is not configured and may show an unidentified-developer warning. Release publication and updater verification run [34870524308](https://github.com/ImYourBoyRoy/markdown-desktop/actions/runs/34870524308) passed after the release asset and manifest checks completed. This does not substitute for target-OS desktop-session integration, Gatekeeper approval, or live-updater relaunch evidence.
 
 | Platform | Installer | Other packages |
 | --- | --- | --- |
@@ -223,7 +223,7 @@ Run the x64 or ARM64 `-setup.exe` that matches your Windows device, or use the m
 
 ### macOS
 
-For a signed and notarized build, open the corresponding `.dmg` from a verified release, then drag **Markdown Desktop** into Applications. For the intentionally unsigned `v1.0.1` path, open only a trusted release asset: macOS may report an unidentified developer, so use the Finder context menu → **Open** after verifying the download. macOS then exposes the app through Finder and Launchpad like any other installed app. Apple signing, notarization, stapling, and Gatekeeper approval are not claimed until Apple Developer credentials are provisioned.
+For a signed and notarized build, open the corresponding `.dmg` from a verified release, then drag **Markdown Desktop** into Applications. For the intentionally unsigned `v1.0.2` path, open only a trusted release asset: macOS may report an unidentified developer, so use the Finder context menu → **Open** after verifying the download. macOS then exposes the app through Finder and Launchpad like any other installed app. Apple signing, notarization, stapling, and Gatekeeper approval are not claimed until Apple Developer credentials are provisioned.
 
 ### Linux
 
