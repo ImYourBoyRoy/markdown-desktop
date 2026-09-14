@@ -151,7 +151,7 @@ jobs:
 
       - name: Build and stage portable/installable layout
         if: runner.os != 'macOS' || env.MACOS_SIGNING_CONFIGURED != 'true'
-        run: pnpm run build:app -- ${{ matrix.args }} --config src-tauri/tauri.release.conf.json
+        run: node scripts/build_app.mjs ${{ matrix.args }} --config src-tauri/tauri.release.conf.json
 
       - name: Build and stage portable/installable layout (signed macOS)
         if: runner.os == 'macOS' && env.MACOS_SIGNING_CONFIGURED == 'true'
@@ -163,7 +163,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: pnpm run build:app -- ${{ matrix.args }} --config src-tauri/tauri.release.conf.json
+        run: node scripts/build_app.mjs ${{ matrix.args }} --config src-tauri/tauri.release.conf.json
 
       - name: Upload staged platform artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
