@@ -1,7 +1,6 @@
 [toolchain]
-# Keep every Cargo invocation on the contract toolchain. CI installs this
-# exact channel; using the moving stable alias here would allow a runner's
-# older stable toolchain to override the CI action and fail rust-version.
-channel = "1.98.0"
+# Full upgrades refresh stable; Cargo.toml records the minimum Rust version.
+# check:toolchains detects an installed compiler older than that floor.
+channel = "stable"
 profile = "minimal"
 components = ["rustfmt", "clippy"]

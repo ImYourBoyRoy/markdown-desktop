@@ -4,7 +4,7 @@ A focused desktop viewer and editor for ordinary Markdown files.
 
 <p align="center">
   <a href="https://github.com/ImYourBoyRoy/markdown-desktop/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/ImYourBoyRoy/markdown-desktop/actions/workflows/ci.yml/badge.svg?branch=main" /></a>
-  <a href="https://github.com/ImYourBoyRoy/markdown-desktop/releases"><img alt="Version 1.0.1" src="https://img.shields.io/badge/version-1.0.1-b7833f?style=flat-square" /></a>
+  <a href="https://github.com/ImYourBoyRoy/markdown-desktop/releases"><img alt="Version 1.0.2" src="https://img.shields.io/badge/version-1.0.2-b7833f?style=flat-square" /></a>
   <a href="./LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-6b6158?style=flat-square" /></a>
 </p>
 
@@ -22,7 +22,7 @@ A focused desktop viewer and editor for ordinary Markdown files.
   <a href="./LICENSE">MIT license</a>
 </p>
 
-Open a file or folder, read the rendered document, switch to source when you need to edit, and save back to the same path on disk. There is no proprietary library, sync service, or document conversion step — the Markdown you already keep is the source of truth.
+Open a file or folder, read the rendered document, edit supported Markdown directly in the visual surface or source drawer, and save back to the same path on disk. There is no proprietary library, sync service, or document conversion step — the Markdown you already keep is the source of truth.
 
 <p align="center">
   <img src="./docs/media/workspace-dark.png" alt="Markdown Desktop in the dark theme with the Files and Inspect sidebars visible" width="1600" height="903" />
@@ -30,12 +30,21 @@ Open a file or folder, read the rendered document, switch to source when you nee
 
 ## Features
 
-- **Rendered, Source, and Split** views, with rendered reading as the default
-- Workspace file tree, full-text search, tabs, outline, and link/issue panels
+- **Rendered, Source, and Split** views, with rendered reading as the default; Edit mode can collapse the source drawer without leaving visual editing
+- Source-authoritative visual editing for safe headings, paragraphs, list items, simple table cells, and supported inline marks/links, plus plain-text details summaries, with source-range undo/redo
+- Visual edits support plain-text and sanitized rich-HTML paste, including Word-style list cleanup, multiline paragraph hard breaks, and IME composition guards so Save, Undo, navigation, and leaving Edit cannot discard an unfinished composition or an unblurred block edit
+- Source-map hover and selection synchronization between the visual and CodeMirror panes, including mapped fences, tables, images, links, and diagrams
+- Rendered text drags preserve the exact UTF-16 source interval across mapped blocks, while block-handle pointer drags reorder only safe source ranges and retain keyboard movement as a fallback
+- App-owned in-document **Ctrl+F / Cmd+F** with synchronized source and visual highlights; workspace search remains a separate file/content search
+- Tabbed editing ribbon, slash-command insertion (including a source-preserving heading-linked `/toc`), contextual block properties, fence-language editing and code copy, table row/column tools, sequential block movement, secure reveal of local image assets, native image replacement, keyboard- or pointer-open context menus, modifier-click link opening in both panes, and context-menu copying that respects rendered selection, source selection, or the complete active source
+- Workspace file tree, full-text search, tabs, outline, link/issue panels, and compatibility-profile selection (`github`, `commonmarkStrict`, or `extended`)
 - Atomic saves that keep the file’s encoding, BOM, line endings, and final newline
 - Recovery snapshots and conflict handling when a file changes outside the app
-- Sanitized Markdown rendering with constrained local and remote assets
+- Sanitized Markdown rendering with constrained local and remote assets, safe SVG preview sanitization for image references, profile-aware semantic HTML marks/details, drag/drop image import, editable document-relative asset folders, safe image destinations/titles, and image consolidation
+- Bounded native reads for image/import handling and workspace indexing, with clear local limits that protect responsiveness without replacing GitHub compatibility diagnostics
+- GitHub-oriented Issues with source-mapped lint findings, Graphviz portability advisories, missing local-reference checks, unsafe-path checks, and calm README/object-size warnings with official guidance links; a separate GitHub README indicator keeps this check advisory and non-blocking
 - Native menus, file associations, keyboard shortcuts, and light/dark themes
+- Assistant integration is intentionally parked for a later milestone; the current minimum editor ships without an Assistant panel or provider calls
 
 <table>
   <tr>
@@ -48,11 +57,152 @@ Open a file or folder, read the rendered document, switch to source when you nee
   <img src="./docs/media/interface-tour.webp" alt="Animated tour of the welcome screen, Files sidebar, and Inspect sidebar" width="1600" height="1000" />
 </p>
 
+## Editing workflow
+
+Markdown remains the authoritative document format. In **Edit** mode, click a
+mapped heading, paragraph, list item, or simple table cell to edit it in place;
+the app patches only that source range and rerenders the document. In supported
+paragraphs and list items, **Enter** splits at the source-aware caret,
+**Backspace** joins compatible adjacent blocks, and **Tab** / **Shift+Tab**
+adjusts list indentation through the same bounded source transaction. Blocks
+whose syntax cannot be safely serialized through a bounded edit remain
+read-only in the visual pane and offer **Edit in source**.
+
+Use **Ctrl+F** (or **Cmd+F** on macOS) for the current document. The Find bar
+searches raw Markdown and highlights the corresponding source and visual owners.
+It can also replace the current match or all matches through bounded source
+patches, with the operation included in the shared undo history. The
+left-sidebar workspace search remains dedicated to finding files and
+content across a workspace. The ribbon is available in visual editing and
+contains Home, Insert, Layout, Block, and Review tabs; a compact Tabs disclosure
+keeps every ribbon tab reachable when the window is narrow. The source drawer can be
+shown or hidden from Layout or with **Ctrl+Alt+S**. The themed context menu can
+be opened with the standard **ContextMenu** key or **Shift+F10** when a mapped
+visual block or source selection has focus.
+
+Hold **Ctrl** (or **Cmd** on macOS) and click a mapped hyperlink in either the
+rendered pane or source editor to open it. Right-clicking a mapped link exposes
+Open link and Copy link URL actions. External URLs use the system's default
+browser; relative Markdown links remain document navigation. **Reload from
+Disk** is available from File and asks for confirmation before discarding
+unsaved edits. **Save As** refuses to replace a file already open in another
+tab and preserves newer edits if the native file operation races with typing;
+same-path saves update the disk baseline without duplicating the tab.
+
+Use **File → Open Recent…** or choose **Open Recent** from the command palette
+to reopen up to five recently opened Markdown files. The list shows each
+file's full path, is validated natively against the current filesystem when
+opened, and removes entries that no longer exist or are no longer Markdown
+files. Recent history is local app settings; it does not copy or upload the
+documents.
+
+The default `github` editor profile favors GitHub-healthy Markdown: relative
+asset paths, GFM tables, documented marks, footnotes, dollar-delimited math,
+and GitHub alert syntax. Settings also has a separate **Check against** lens,
+which defaults to **GitHub README (advisory)**. The document header shows one
+quiet status chip for that lens; selecting it opens the Issues pane filtered to
+the current document's GitHub-relevant findings. The lens never changes the
+rendered preview, source map, editing affordances, or save behavior. Choose
+**None** when you do not want the compatibility lens; general safety and
+editor-profile diagnostics remain available in the unfiltered Issues view.
+
+Source typing updates the in-memory Markdown immediately. The rendered preview
+and source map refresh after a short pause in typing, so the visual surface does
+not rebuild on every keystroke; the last valid preview remains visible while
+that refresh is in progress. When a source-range formatting or structure edit
+does require a new render, the active visual selection is captured and restored
+against the new map whenever the mapping remains exact. Source and rendered
+selection also reveal the corresponding location in the other pane; history
+actions restore a bounded previously rendered revision immediately when one is
+available, then confirm it with the guarded native render.
+Rendered text selection is pointer-aware: the post-drag click cannot replace a
+precise cross-block range with a whole-block selection, and releasing outside
+the rendered pane still completes the gesture. Block handles use the same
+pointer path with visible before/after drop feedback; source movement refuses
+only the opaque content actually crossed by the move.
+Selecting text in the source editor paints the matching visible text in the
+rendered pane, including editable paragraphs and inline formatting. Browser
+range highlights preserve the editable HTML and caret; older webviews without
+that API retain block outlines for editable content. Markdown delimiters and
+non-text objects remain represented by their mapped owner.
+Opening a disk document reads, decodes, renders, and builds its source map in a
+native blocking worker. Workspace filesystem-reference lint is deferred until
+the first idle window, so the document can become interactive before the slower
+project-wide checks finish. Rendering and source-map construction keep the Tauri
+command/UI path responsive. Optional math enhancement continues in the
+background, and resolved images use a bounded per-view cache so a redraw does
+not repeatedly fetch the same asset. Raw HTML anchors and images are also
+associated with their source block for hover, selection, Issues, and Links
+navigation. The left Files panel also shows the five most recent Markdown paths
+when no workspace is open, and action feedback settles back to Ready after a
+short quiet period. The bottom status bar reports source lines and Unicode
+character count for the active document.
+Mermaid fences are supported by the GitHub profile; Graphviz/DOT remains an
+explicit Extended-profile local preview and is warned as non-portable in the
+GitHub and CommonMark profiles. Existing source is preserved, but GitHub may
+show that fence as ordinary code rather than rendering a diagram.
+The Mermaid and Graphviz runtimes stay out of the startup JavaScript graph:
+they are staged as on-demand renderer assets, and `pnpm smoke:renderers`
+verifies both packaged-style assets produce SVG output.
+Mermaid is intentionally kept on the compatible 11.x line for the current
+cross-platform desktop baseline. The renderer explicitly uses the classic
+look and Dagre layout so a future reviewed upgrade cannot silently reflow or
+recolor existing diagrams. Mermaid 12 is a separate browser-compatibility and
+visual migration; `full:upgrade` fails closed if it tries to move this project
+to that major. See Mermaid's [configuration](https://mermaid.js.org/config/configuration)
+and [flowchart](https://mermaid.js.org/syntax/flowchart.html) documentation
+before approving that migration.
+The 500 KiB rendering advisory is shown for README-named files only; general
+Markdown files still receive applicable Git object-size guidance. GitHub
+rendering guidance and repository object limits are based on GitHub's
+published documentation: [README limits](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-readmes),
+[repository limits](https://docs.github.com/en/repositories/creating-and-managing-repositories/repository-limits),
+and [large files](https://docs.github.com/en/repositories/working-with-files/managing-large-files/about-large-files-on-github).
+
+Pasting formatted content in either the source editor or a supported visual
+block converts semantic HTML to Markdown. Word-style list paragraphs and
+literal clipboard bullet lists are normalized; CSS, event handlers, embedded
+documents, and unsafe link/image destinations are removed. Ambiguous visual
+positions remain source-only rather than risking an incorrect source patch.
+
+Side-by-side persisted block layouts remain disabled pending compatibility
+fixtures. Assistant integration is parked until the visual-editor acceptance
+gate is complete; the current minimum editor makes no provider calls. The
+isolated later design covers Ollama discovery, explicit bounded context, and
+read-only feedback first, with generic HTTPS providers, proposed source
+patches, model pull/delete, app-scoped tools, and context compression deferred.
+
+The durable local implementation checkpoint is [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md).
+The stable ownership and data-flow map is [ARCHITECTURE.md](./ARCHITECTURE.md).
+The detailed execution work order is intentionally kept in the ignored local
+`Tasks/` folder.
+
+## Performance validation
+
+Phase 0 has a repeatable correctness and performance baseline. Run
+`pnpm phase0:selection` for the source/render selection contract probes and
+`pnpm phase0:baseline` for the frontend/jsdom and native Markdown/workspace
+timing probes. The detailed fixture matrix, captured baseline, proposed
+budgets, and local-versus-packaged evidence boundary are in
+[docs/PHASE-0-PERFORMANCE.md](./docs/PHASE-0-PERFORMANCE.md). The baseline
+command does not write a report or mutate project documents, and does not claim
+target-OS or packaged latency; those require a release-like desktop run.
+Phase 1 uses the same deterministic harness through `pnpm phase1:baseline`;
+its optimization deltas and remaining packaged-WebView gates are recorded in
+[docs/PHASE-1-PERFORMANCE.md](./docs/PHASE-1-PERFORMANCE.md).
+
+Cached blocks are reused only when resolved Markdown semantics and source
+coordinates match. Raw HTML, footnotes, and generated heading-ID state use
+whole-document rendering. Partial DOM commits require evidence that all other
+blocks are unchanged; ambiguous edits fall back to a full refresh. Filesystem
+diagnostics run separately from rendering, and rich clipboard conversion loads
+on demand rather than during startup.
+
 ## Download
 
 Installers and portable builds are on the [Releases](https://github.com/ImYourBoyRoy/markdown-desktop/releases) page. Every downloadable build follows the same pattern: `Markdown-Desktop-<version>-<platform>-<architecture>...`.
 
-The checked-in release workflow targets all six platform families in the table below. Availability is release-specific: the published `v1.0.0` release predates the ARM64 assets. The intended `v1.0.1` release must not be announced until its complete asset list, updater metadata, and signatures have been verified. Apple Developer signing/notarization is intentionally deferred for this release because no Apple Developer account is configured; macOS packages must therefore be treated as unsigned and may show an unidentified-developer warning. CI preparation run `32545608162` passed native packaging checks for all six architecture families and Windows NSIS/MSI install/uninstall smoke; remote Linux DEB install/purge and unsigned macOS Intel DMG copy/remove also pass. This does not substitute for published asset/signature metadata, Gatekeeper, desktop-session integration, or live updater evidence.
+The checked-in release workflow targets all six platform families in the table below. The source currently targets the next backward-compatible patch release, `v1.0.2`; the published `v1.0.1` release contains the verified six-family asset set and signed updater metadata. The macOS packages are intentionally unsigned because Apple Developer signing/notarization is not configured and may show an unidentified-developer warning. Release CI run `32577269717` and its matching CI verification run `32577245685` passed the release checks for `v1.0.1`, including the published asset set and updater manifest. This does not substitute for target-OS desktop-session integration, Gatekeeper approval, or live-updater relaunch evidence.
 
 | Platform | Installer | Other packages |
 | --- | --- | --- |
@@ -122,7 +272,7 @@ rm -rf -- \
 
 ## Development
 
-Requires Node.js 26.x, pnpm 11, Rust stable, and the [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/).
+Requires Node.js 26.x, pnpm 12.3.4 or newer, Rust stable meeting the manifest minimum, and the [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/).
 
 ```bash
 pnpm install --frozen-lockfile
@@ -132,15 +282,105 @@ pnpm tauri dev
 ```bash
 pnpm check
 pnpm test
+pnpm smoke:visual
+pnpm smoke:renderers
+pnpm architecture:check
 pnpm verify:dependencies
 pnpm tauri build
 ```
+
+`pnpm smoke:visual` runs the curated visual-editor acceptance suites (revision ownership, visual draft history, rendered-pane contract, and MarkdownView interaction paths). `pnpm smoke:packaged` launches the built desktop binary with `MARKDOWN_DESKTOP_ACCEPTANCE=1` to exercise synthetic DOM input, undo/redo, Save/reload, Find, exact rendered text and cross-block selection, pointer block dragging, composition handlers, and split-mode latency. Save and close existing application instances first: the harness refuses to terminate them. Composition must reach source and preview; the five-edit split probe waits for rendering and animation frames, with a 150 ms average budget. These synthetic checks are not physical keyboard, pointer, OS IME, screen-reader, or compositor-presentation evidence. `pnpm oracle:github-readme` validates the GitHub-host fixture oracle in Rust.
+`pnpm architecture:check` verifies that `ARCHITECTURE.md` contains current
+file sizes, line counts, and curated summaries. Run `pnpm architecture:refresh`
+after adding, removing, renaming, or materially resizing a maintained file.
 
 `pnpm build:app` stages unsigned portable and installable outputs under `Apps/`. Signed release builds need `TAURI_SIGNING_PRIVATE_KEY` (or `TAURI_SIGNING_PRIVATE_KEY_PATH`) and `pnpm build:release`.
 
 ## Privacy and updates
 
-Documents stay on your machine. The app does not upload file contents. Rendered Markdown is sanitized, and filesystem and remote asset access are restricted in the Rust host.
+### Upgrade the development stack
+
+```text
+pnpm full:upgrade --dry-run
+pnpm full:upgrade
+```
+
+`full:upgrade` is the explicit major-upgrade operation, separate from
+`purge:fresh`. It updates pnpm, stable Rust/Cargo and rustfmt/Clippy, the
+Cargo edit/audit/deny tools, direct JavaScript and Rust dependency ranges,
+resolvable transitive dependencies, Git-sourced JavaScript dependencies, and
+GitHub Actions (retaining immutable action hashes). It raises the Rust
+manifest minimum to the updated stable compiler before resolving crates.
+Thus a direct dependency such as Comrak can move beyond an old `0.x` range.
+
+The project requires **pnpm >=12.3.4**, with no exact package-manager pin;
+CI installs `latest` and checks the minimum. Node remains on the supported
+26.x line; Node installers, OS SDKs and system packages are not changed.
+There are no Git submodules in this repository. If introduced later, nested
+checkouts require separate review; the command refuses to overwrite them.
+
+Save and close Markdown Desktop first. Before mutation, the command snapshots
+the current manifests, lockfiles and workflows—including uncommitted edits—to
+ignored `.upgrade-backups/run-ID/`. It retains the previous `node_modules` tree
+in the snapshot, preserves shared/build caches, and runs the
+security, test, accessibility, native packaging and synthetic packaged-input
+gates. A failure exits nonzero, retaining the candidate changes and a step
+report for inspection; it does **not** mean the upgrade is release-ready.
+Restore only the saved project metadata with:
+
+```text
+pnpm full:upgrade --restore run-ID
+pnpm install --frozen-lockfile
+```
+
+Replace `run-ID` with the printed snapshot name. Global tools and generated
+build outputs are not rolled back. Do not edit upgrade-owned files while the
+command runs. An interrupted process may leave `.upgrade-backups/upgrade.lock`;
+remove that single lock only after confirming no upgrade is running.
+
+Some transitive versions remain constrained by upstream parents. The command
+prints remaining Rust duplicate dependency paths and direct-upgrade availability;
+it never forces incompatible transitive overrides or enables prereleases.
+Review any necessary source/API migrations before committing. Dry-run shows
+the command plan without network, installation, or deletion.
+
+The JavaScript TypeScript package follows the installed `svelte-check` peer
+contract; the native TypeScript alias can independently track its newest
+version. This prevents a blanket major update from breaking Svelte's compiler
+API integration. Unknown peer-range syntax fails for review rather than being
+guessed. Peer-dependency checks are part of the verification gate.
+
+`purge:fresh` still refreshes only within existing manifest ranges and checks
+toolchain compatibility **before** deleting caches or lockfiles. It is not a
+replacement for `full:upgrade`.
+
+### Linux GTK/GLib compatibility boundary
+
+The remaining GLib advisory is upstream of the application. Tauri's current
+Linux host uses GTK3 and WebKitGTK; its Debian package and prerequisite
+documentation describe that stack. The [RustSec advisory](https://rustsec.org/advisories/RUSTSEC-2024-0429.html)
+records the affected `glib`
+`VariantStrIter` unsoundness and identifies `glib >=0.20` as the patched line.
+This project cannot safely force that crate version because the GTK3 Rust
+bindings and FFI graph are coupled to the older GLib API/ABI. The verified
+dependency path is `tauri` -> `wry`/`webkit2gtk` -> `gtk` -> `glib` on Linux.
+
+Forcing a transitive override, replacing Tauri with a different desktop
+backend, or adopting a prerelease Tauri major would trade one visible advisory
+for an unverified build/runtime defect. The safe resolution is a reviewed
+stable Tauri/Wry migration to the GTK4/WebKitGTK6 stack when that upstream
+support is released, followed by native Linux runtime testing. Until then the
+warning remains documented in [SECURITY.md](./SECURITY.md), visible in
+`cargo audit`, and is not mislabeled as fixed. See the [Tauri Linux packaging
+requirements](https://v2.tauri.app/distribute/debian/) and [WebView version
+matrix](https://v2.tauri.app/reference/webview-versions/) for the platform
+boundary.
+
+Documents stay on your machine in the current minimum editor; no provider call
+is made by opening the app. The later Assistant milestone will require an
+explicit provider and explicit bounded context before any Markdown leaves the
+machine. Rendered Markdown is sanitized, and filesystem and remote asset
+access are restricted in the Rust host.
 
 **Help → Check for Updates** (or **About**) checks a signed update manifest from GitHub Releases. A quiet check may run after launch to notify you in the status bar; updates are never downloaded or installed until you confirm. The signing private key is a maintainer secret and is not stored in this repository.
 

@@ -69,6 +69,8 @@ desktop.ini
 /V1_IMPLEMENTATION_MATRIX.md
 /findings_and_corrections.md
 /icon-source-fuchsia.png
+/Tasks/
+/.upgrade-backups/
 
 # Local application state and databases
 *.db

@@ -1,0 +1,11 @@
+.editor-host { height: 100%; min-height: 0; }
+.cm-editor { height: 100%; background: transparent; color: var(--text); font: 14px/1.65 var(--font-mono); }
+.cm-scroller { overflow: auto; padding: 20px 18px 80px; }
+.cm-gutters { background: transparent; color: var(--muted); border: 0; min-width: 38px; }
+.cm-activeLine, .cm-activeLineGutter { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.cm-selectionBackground, .cm-focused .cm-selectionBackground { background: color-mix(in srgb, var(--accent) 34%, transparent) !important; }
+.cm-content { caret-color: var(--accent-strong); }
+.cm-cursor { border-left-color: var(--accent-strong); }
+.cm-find-match { background: color-mix(in srgb, var(--accent) 18%, transparent); border-bottom: 2px dashed color-mix(in srgb, var(--accent) 74%, transparent); }
+.cm-find-match-active { background: color-mix(in srgb, var(--warning, #f0b429) 58%, transparent); border-bottom: 2px solid var(--warning, #f0b429); }
+.cm-map-hover { background: color-mix(in srgb, var(--accent) 14%, transparent); border-bottom: 2px dotted color-mix(in srgb, var(--accent-strong) 78%, transparent); }

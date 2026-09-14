@@ -3,9 +3,13 @@
 import { spawnSync } from 'node:child_process';
 
 const commands = [
+  ['pnpm', ['check:toolchains']],
+  ['pnpm', ['test:upgrade']],
+  ['pnpm', ['peers', 'check']],
   ['pnpm', ['check']],
   ['pnpm', ['test']],
   ['pnpm', ['build']],
+  ['pnpm', ['smoke:renderers']],
   ['pnpm', ['accessibility:audit']],
   ['pnpm', ['audit:updater']],
   ['pnpm', ['audit', '--audit-level', 'high']],

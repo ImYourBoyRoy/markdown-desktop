@@ -3,18 +3,23 @@
 //! errors, and unsupported-only folders. Depth is caller-controlled.
 
 use crate::model::{FileNode, SearchResult, WorkspaceWarning};
+use crate::performance;
 use crate::security;
 use crate::source_format::decode_bytes;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use rusqlite::{Connection, params};
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 pub const DEFAULT_SCAN_DEPTH: usize = 3;
 pub const MAX_SCAN_DEPTH: usize = 12;
 pub const MAX_TREE_NODES: usize = 5000;
+/// Keep background indexing/search from reading arbitrarily large files into
+/// memory. Opening a document uses the same application import ceiling.
+pub const MAX_INDEX_FILE_BYTES: u64 = 30 * 1024 * 1024;
 
 pub fn clamp_scan_depth(value: Option<u32>) -> usize {
     value
@@ -165,31 +170,38 @@ pub fn build_tree(
     }
 }
 
-pub fn count_markdown_files(
-    root: &Path,
-    max_depth: usize,
-    warnings: &mut Vec<WorkspaceWarning>,
-) -> usize {
-    bounded_markdown_walk(root, max_depth, warnings)
-        .into_iter()
-        .filter(|path| security::is_markdown(path))
-        .count()
+/// Count the supported files already present in a rendered tree. This keeps
+/// workspace opening on one bounded filesystem walk: `build_tree` has already
+/// filtered ignored, symlinked, unsupported, and truncated entries.
+pub fn count_markdown_tree(node: &FileNode) -> usize {
+    if !node.is_directory {
+        return 1;
+    }
+    node.children.iter().map(count_markdown_tree).sum()
 }
 
 pub fn index_workspace(db_path: &Path, root: &Path, max_depth: usize) -> Result<(), anyhow::Error> {
+    let started = std::time::Instant::now();
     if let Some(parent) = db_path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let connection = Connection::open(db_path)?;
-    connection.execute_batch(
+    let mut connection = Connection::open(db_path)?;
+    // An index is a rebuildable cache. Keep the replacement table and all
+    // inserts in one transaction so SQLite does not fsync every tiny document
+    // separately. A failed rebuild rolls back to the previous usable index.
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
         "DROP TABLE IF EXISTS markdown_fts; CREATE VIRTUAL TABLE markdown_fts USING fts5(document_id UNINDEXED, path UNINDEXED, title, source, tokenize='unicode61');",
+    )?;
+    let mut insert = transaction.prepare_cached(
+        "INSERT INTO markdown_fts(document_id, path, title, source) VALUES (?1, ?2, ?3, ?4)",
     )?;
     let mut warnings = Vec::new();
     for path in bounded_markdown_walk(root, max_depth, &mut warnings) {
         if !security::is_markdown(&path) {
             continue;
         }
-        let bytes = match fs::read(&path) {
+        let bytes = match read_bounded_markdown(&path) {
             Ok(bytes) => bytes,
             Err(_) => continue,
         };
@@ -200,20 +212,21 @@ pub fn index_workspace(db_path: &Path, root: &Path, max_depth: usize) -> Result<
             .file_stem()
             .and_then(|value| value.to_str())
             .unwrap_or_default();
-        let _ = connection.execute(
-            "INSERT INTO markdown_fts(document_id, path, title, source) VALUES (?1, ?2, ?3, ?4)",
-            params![
-                stable_id(&path.to_string_lossy()),
-                path.to_string_lossy(),
-                title,
-                source
-            ],
-        );
+        insert.execute(params![
+            stable_id(&path.to_string_lossy()),
+            path.to_string_lossy(),
+            title,
+            source
+        ])?;
     }
+    drop(insert);
+    transaction.commit()?;
+    performance::record("workspace.index", started.elapsed(), 0, None, None);
     Ok(())
 }
 
 pub fn search_files(root: &Path, query: &str, max_depth: usize) -> Vec<SearchResult> {
+    let started = std::time::Instant::now();
     let terms = query
         .split_whitespace()
         .map(str::to_ascii_lowercase)
@@ -223,13 +236,13 @@ pub fn search_files(root: &Path, query: &str, max_depth: usize) -> Vec<SearchRes
         return Vec::new();
     }
     let mut warnings = Vec::new();
-    bounded_markdown_walk(root, max_depth, &mut warnings)
+    let results = bounded_markdown_walk(root, max_depth, &mut warnings)
         .into_iter()
         .filter_map(|path| {
             if !security::is_markdown(&path) {
                 return None;
             }
-            let bytes = fs::read(&path).ok()?;
+            let bytes = read_bounded_markdown(&path).ok()?;
             let (source, _, _, _, _, _) = decode_bytes(&bytes, &path).ok()?;
             let line = source.lines().enumerate().find(|(_, line)| {
                 let lower = line.to_ascii_lowercase();
@@ -249,7 +262,15 @@ pub fn search_files(root: &Path, query: &str, max_depth: usize) -> Vec<SearchRes
             })
         })
         .take(50)
-        .collect()
+        .collect::<Vec<_>>();
+    performance::record(
+        "workspace.search",
+        started.elapsed(),
+        0,
+        None,
+        Some(results.len()),
+    );
+    results
 }
 
 fn bounded_markdown_walk(
@@ -281,6 +302,27 @@ fn bounded_markdown_walk(
         }
     }
     files
+}
+
+fn read_bounded_markdown(path: &Path) -> std::io::Result<Vec<u8>> {
+    let file = fs::File::open(path)?;
+    let length = file.metadata()?.len();
+    if length > MAX_INDEX_FILE_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Markdown file exceeds the 30 MB indexing limit",
+        ));
+    }
+    let mut bytes = Vec::with_capacity(length.min(MAX_INDEX_FILE_BYTES) as usize);
+    file.take(MAX_INDEX_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_INDEX_FILE_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Markdown file exceeds the 30 MB indexing limit",
+        ));
+    }
+    Ok(bytes)
 }
 
 fn permission_kind(error: &std::io::Error) -> String {
@@ -320,7 +362,7 @@ mod tests {
         assert_eq!(tree.children.len(), 1);
         assert_eq!(tree.children[0].children.len(), 1);
         assert_eq!(tree.children[0].children[0].name, "keep.md");
-        assert_eq!(count_markdown_files(dir.path(), 8, &mut Vec::new()), 1);
+        assert_eq!(count_markdown_tree(&tree), 1);
     }
 
     #[test]
@@ -342,6 +384,39 @@ mod tests {
     }
 
     #[test]
+    fn tree_count_uses_only_visible_supported_files() {
+        let tree = FileNode {
+            id: "root".into(),
+            name: "root".into(),
+            relative_path: "".into(),
+            is_directory: true,
+            children: vec![
+                FileNode {
+                    id: "one".into(),
+                    name: "one.md".into(),
+                    relative_path: "one.md".into(),
+                    is_directory: false,
+                    children: Vec::new(),
+                },
+                FileNode {
+                    id: "nested".into(),
+                    name: "nested".into(),
+                    relative_path: "nested".into(),
+                    is_directory: true,
+                    children: vec![FileNode {
+                        id: "two".into(),
+                        name: "two.markdown".into(),
+                        relative_path: "nested/two.markdown".into(),
+                        is_directory: false,
+                        children: Vec::new(),
+                    }],
+                },
+            ],
+        };
+        assert_eq!(count_markdown_tree(&tree), 2);
+    }
+
+    #[test]
     fn index_skips_undecodable_markdown_and_continues() {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("ok.md"), b"# Ok").unwrap();
@@ -353,6 +428,17 @@ mod tests {
             .query_row("SELECT count(*) FROM markdown_fts", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn bounded_index_reader_rejects_oversized_markdown_before_loading_it() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("large.md");
+        let file = fs::File::create(&path).unwrap();
+        file.set_len(MAX_INDEX_FILE_BYTES + 1).unwrap();
+
+        let error = read_bounded_markdown(&path).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     }
 
     #[test]

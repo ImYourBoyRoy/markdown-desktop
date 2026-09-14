@@ -137,6 +137,17 @@ fn is_private_ip(ip: IpAddr) -> bool {
     }
 }
 
+/// Returns whether an address is an explicitly local backend target. This is
+/// deliberately narrower than the image URL policy: Ollama may run on
+/// loopback or a private LAN, but link-local, multicast, unspecified, and
+/// public addresses are not accepted by the local-backend policy.
+pub fn is_allowed_local_backend_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => ip.is_loopback() || ip.is_private(),
+        IpAddr::V6(ip) => ip.is_loopback() || ip.is_unique_local(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,6 +163,16 @@ mod tests {
         assert!(validate_remote_url("http://[fe80::1]/image.png").is_err());
         assert!(validate_remote_url("http://100.64.0.1/image.png").is_err());
         assert!(validate_remote_url("https://example.com/image.png").is_ok());
+    }
+
+    #[test]
+    fn local_backend_policy_allows_loopback_and_private_lan_only() {
+        assert!(is_allowed_local_backend_ip("127.0.0.1".parse().unwrap()));
+        assert!(is_allowed_local_backend_ip("192.168.1.21".parse().unwrap()));
+        assert!(is_allowed_local_backend_ip("fd00::21".parse().unwrap()));
+        assert!(!is_allowed_local_backend_ip("169.254.1.1".parse().unwrap()));
+        assert!(!is_allowed_local_backend_ip("100.64.0.1".parse().unwrap()));
+        assert!(!is_allowed_local_backend_ip("8.8.8.8".parse().unwrap()));
     }
 
     #[test]

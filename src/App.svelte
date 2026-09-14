@@ -2,12 +2,27 @@
   import { onMount, tick } from 'svelte';
   import { openUrl } from '@tauri-apps/plugin-opener';
   import type { Update as TauriUpdate } from '@tauri-apps/plugin-updater';
-  import FileTree from './components/FileTree.svelte';
   import EditorRibbon from './components/EditorRibbon.svelte';
-  import MarkdownEditor from './components/MarkdownEditor.svelte';
-  import MarkdownView from './components/MarkdownView.svelte';
+  import DocumentSurface from './components/DocumentSurface.svelte';
   import UpdateBanner from './components/UpdateBanner.svelte';
-  import type { EditResult } from './lib/formatting';
+  import AppToolbar from './components/AppToolbar.svelte';
+  import DocumentTabs from './components/DocumentTabs.svelte';
+  import RecentDocuments from './components/RecentDocuments.svelte';
+  import WorkspaceSidebar from './components/WorkspaceSidebar.svelte';
+  import InspectorSidebar from './components/InspectorSidebar.svelte';
+  import ContextMenu from './components/ContextMenu.svelte';
+  import CommandPalette from './components/CommandPalette.svelte';
+  import SettingsModal from './components/SettingsModal.svelte';
+  import { runAcceptanceProbeIfEnabled } from './lib/acceptance-app';
+  import { mergeFilesystemIssues } from './lib/document-diagnostics';
+  import { applyFormatting, type EditResult, type FormatAction, type TextSelection } from './lib/formatting';
+  import { applyHeadingLevel, insertImage, markdownLineEnding, updateImage, type InsertKind } from './lib/inserts';
+  import {
+    findMatches,
+    visualMapIdsForMatches,
+    visualMapIdsForMappedId,
+    visualMapIdsForSelection,
+  } from './lib/find';
   import {
     isTauri,
     onAppEvent,
@@ -17,12 +32,24 @@
     readDocument,
     readImportGrant,
     pickImportPath,
+    pickImagePath,
     pickMarkdownPath,
     pickSavePath,
     pickWorkspacePath,
+    issueRecentDocumentGrant,
+    validateRecentDocumentPaths,
     openDocumentLink,
     renderSource,
+    lintDocumentReferences,
     saveClipboardImage,
+    copyDroppedImage,
+    copySelectedImage,
+    commitStagedAsset,
+    discardStagedAsset,
+    inspectDroppedImage,
+    linkDroppedImage,
+    discardDroppedImage,
+    consolidateReferencedImages as consolidateImages,
     saveDocument,
     saveDocumentAs,
     saveRecovery,
@@ -33,14 +60,60 @@
     searchWorkspace,
     startupPaths,
     closeDocument,
+    createUntitledDocument,
     inspectDocument,
     adoptDiskRevision,
     refreshWorkspace,
     requestDefaultMarkdownApp,
+    revealAsset,
   } from './lib/ipc';
-  import type { DocumentMeta, FileNode, MarkdownProfile, OpenedDocument, PathGrant, RecoveryInfo, SearchResult, Theme, ViewMode, WorkspaceInfo } from './lib/types';
-  import { htmlToMarkdown, plainTextPaste } from './lib/paste';
-  import { escapeHtml } from './lib/app-utils';
+  import type { CompatibilityTarget, DroppedImageInfo, FileNode, Issue, LinkInfo, MarkdownProfile, PathGrant, RecoveryInfo, RenderedSource, SearchResult, SourceMap, Theme, ViewMode, WorkspaceInfo } from './lib/types';
+  import { htmlToMarkdown, plainTextPaste } from './lib/clipboard';
+  import { applySourceDocumentChanges, type SourceDocumentChange } from './lib/source-sync';
+  import { escapeHtml, isUntitledDocumentId } from './lib/app-utils';
+  import { renderedSelectionForSource, sourceSelectionMapResolution } from './lib/selection-bridge';
+  import { buildSourceSelectionIndex, type SourceSelectionIndex } from './lib/source-selection-index';
+  import { sourceContextTargetAtPosition, sourceMapIdAtPosition, type SourceContextTarget } from './lib/source-context';
+  import { applyMappedSourcePatch, applySourcePatches, isValidSourceRange } from './lib/source-patch';
+  import { applyVisualDraftPatch } from './lib/visual-draft';
+  import {
+    mappingSourceFor,
+    nextDraftState,
+    sourceMapIsCurrentFor,
+    type VisualDraftState,
+  } from './lib/document-revision';
+  import {
+    applyTabSourceUpdate,
+    tabDirtyAfterSourceChange,
+    visualDraftHistoryCommit,
+  } from './lib/document-tab-revision';
+  import {
+    cacheRenderedSnapshot as cacheRenderedSnapshotInCache,
+    renderedSnapshotFor as renderedSnapshotForCache,
+    restoreRenderedSnapshot as restoreRenderedSnapshotInCache,
+  } from './lib/rendered-snapshot-cache';
+  import { editGfmTable, editGfmTableCell, tableSelectionContext, type TableEditAction } from './lib/table-edit';
+  import { isMovableRootBlockKind, mappedBlockMoveTargets, moveMappedBlock, type BlockMovePosition } from './lib/block-move';
+  import { EMPTY_VISUAL_MAP_ID, markdownForSimpleVisualBlock, type SimpleVisualBlockKind } from './lib/visual-edit';
+  import { detailsSummaryPatch } from './lib/details-edit';
+  import { fencedCodeBody } from './lib/fence';
+  import { insertSlashCommand, slashCommandAvailable, slashCommandInsertKind, type SlashCommand } from './lib/slash';
+  import { diagramInsertAvailable, diagramInsertUnavailableMessage } from './lib/markdown-profile';
+  import { assetFolderSetting } from './lib/asset-path';
+  import { appendSourceHistory, type SourceHistoryEntry } from './lib/source-history';
+  import type { VisualStructurePatch } from './lib/visual-structure';
+  import { persistAssetFolderSetting, persistCompatibilityTarget, persistEditingEnabledSetting, persistRecentDocumentPaths, readAssetFolderSetting, readCompatibilityTarget, readEditingEnabledSetting, readRecentDocumentPaths } from './lib/app-settings';
+  import { compatibilityStatus, issuesForCompatibilityTarget } from './lib/compatibility';
+  import { readBrowserSetting, writeBrowserSetting } from './lib/browser-settings';
+  import { syncSplitPaneScroll } from './lib/pane-scroll-sync';
+  import { normalizeRecentDocumentPaths, rememberRecentDocument } from './lib/recent-documents';
+  import { removeTabFromHistory, replaceTabInHistory } from './lib/tab-history';
+  import { contextCopyText } from './lib/context-copy';
+  import { planAssetDrop } from './lib/asset-drop';
+  import { documentMetrics } from './lib/document-metrics';
+  import { performanceCount, performanceSpan } from './lib/performance';
+  import { createRenderController } from './lib/render-controller';
+  import { effectiveViewModeForState, sourceViewVisibleForState } from './lib/view-mode';
   import { clampScanDepth, invokeErrorMessage, parseInvokeError } from './lib/invoke-error';
   import {
     aboutUpdateCopy,
@@ -53,30 +126,70 @@
     shouldShowUpdateBanner,
     type UpdateUiState,
   } from './lib/updater';
-
-  type Tab = OpenedDocument & { dirty: boolean; savedSource: string };
-  type RightPanel = 'outline' | 'links' | 'backlinks' | 'issues' | 'properties';
-  type ContextMenuState = { x: number; y: number };
+  import {
+    asOpenTab,
+    currentPatchHash,
+    mappedSelectionFor,
+    type AssetDropEvent,
+    type ConflictState,
+    type ContextMenuState,
+    type PendingAssetDrop,
+    type RenderedSnapshot,
+    type RightPanel,
+    type RibbonTab,
+    type Tab,
+  } from './lib/app-shell';
 
   let tabs = $state<Tab[]>([]);
   let activeId = $state<string | undefined>();
   let workspace = $state<WorkspaceInfo | null>(null);
-  const storedMode = localStorage.getItem('markdown-native-mode');
-  let mode = $state<ViewMode>(storedMode === 'source' || storedMode === 'split' ? storedMode : 'rendered');
-  let theme = $state<Theme>((localStorage.getItem('markdown-native-theme') as Theme) || 'system');
-  const storedProfile = localStorage.getItem('markdown-native-profile');
+  const storedMode = readBrowserSetting('markdown-native-mode');
+  const initialMode: ViewMode = storedMode === 'source' || storedMode === 'split' ? storedMode : 'rendered';
+  const initialSourceDrawerVisible = readBrowserSetting('markdown-native-source-drawer') === 'true';
+  let mode = $state<ViewMode>(initialMode);
+  // `mode` is the user's preferred view arrangement. `sourceVisible` is the
+  // independently collapsible source drawer used while editing in Render.
+  // Keeping these separate lets the UI report an actual split view without
+  // overloading `mode === 'source'`.
+  let sourceVisible = $state(initialSourceDrawerVisible);
+  let theme = $state<Theme>((readBrowserSetting('markdown-native-theme') as Theme) || 'system');
+  const storedProfile = readBrowserSetting('markdown-native-profile');
   let markdownProfile = $state<MarkdownProfile>(storedProfile === 'extended' || storedProfile === 'commonmarkStrict' ? storedProfile : 'github');
-  let remoteImagesEnabled = $state(localStorage.getItem('markdown-native-remote-images') !== 'false');
+  const storedCompatibilityTarget = readBrowserSetting('markdown-native-compatibility-target');
+  let compatibilityTarget = $state<CompatibilityTarget>(storedCompatibilityTarget === 'none' ? 'none' : 'githubReadme');
+  let remoteImagesEnabled = $state(readBrowserSetting('markdown-native-remote-images') !== 'false');
+  let assetFolder = $state(assetFolderSetting(readBrowserSetting('markdown-native-asset-folder')));
+  // Native preferences load asynchronously from the app-data store. Keep
+  // the initial legacy value usable until that read finishes, but do not
+  // write it back over a newer native preference.
+  let appSettingsReady = $state(!isTauri);
+  let consolidatingAssets = $state(false);
+  let pendingAssetDrop = $state<PendingAssetDrop | null>(null);
   let leftCollapsed = $state(true);
   let rightCollapsed = $state(true);
   let leftPanel = $state<'files' | 'search'>('files');
   let rightPanel = $state<RightPanel>('outline');
+  let issueFilter = $state<'all' | 'compatibility'>('all');
   let searchQuery = $state('');
   let searchResults = $state<SearchResult[]>([]);
+  let showFind = $state(false);
+  let editing = $state(readBrowserSetting('markdown-native-editing') !== 'false');
+  // Keep the source editor lazy on first rendered view, but once opened treat
+  // the drawer as a collapsed pane rather than destroying CodeMirror state.
+  let sourceEditorMounted = $state(initialMode !== 'rendered' || initialSourceDrawerVisible);
+  let findQuery = $state('');
+  let findReplacement = $state('');
+  let findCaseSensitive = $state(false);
+  let findIndex = $state(0);
   let showPalette = $state(false);
+  let showRecent = $state(false);
+  let recentDocuments = $state<string[]>([]);
+  let openingRecentPath = $state<string | undefined>();
   let showSettings = $state(false);
   let showAbout = $state(false);
   let showDefaultAppConfirm = $state(false);
+  let showReloadConfirm = $state(false);
+  let pendingReloadTabId = $state<string | undefined>();
   let pendingCloseTabId = $state<string | undefined>();
   let showUpdateConfirm = $state(false);
   let showUpdateDirtyWarn = $state(false);
@@ -87,32 +200,82 @@
   let showUpdateBanner = $state(false);
   let showWelcome = $state(true);
   let statusMessage = $state('Ready');
-  let conflict = $state<{ tabId: string; diskSource: string; currentRevision: string; diskMeta: DocumentMeta } | null>(null);
+  let statusResetTimer: number | undefined;
+  const STATUS_RESET_MS = 6500;
+  let conflict = $state<ConflictState | null>(null);
   let editorSelection = $state({ from: 0, to: 0 });
+  let sourceSelectionActive = $state(false);
   let searchTimer: number | undefined;
-  let recoveryTimer: number | undefined;
   let quietUpdateTimer: number | undefined;
+  const SOURCE_RENDER_DEBOUNCE_MS = 32;
+  const FAST_RENDER_SOURCE_BYTES = 48_000;
   let paletteQuery = $state('');
   let paletteIndex = $state(0);
   let backHistory = $state<string[]>([]);
   let forwardHistory = $state<string[]>([]);
-  let paletteInput = $state<HTMLInputElement | undefined>();
-  let settingsCloseButton = $state<HTMLButtonElement | undefined>();
   let aboutCloseButton = $state<HTMLButtonElement | undefined>();
   let defaultAppConfirmButton = $state<HTMLButtonElement | undefined>();
+  let reloadConfirmButton = $state<HTMLButtonElement | undefined>();
   let recoveryPrimaryButton = $state<HTMLButtonElement | undefined>();
   let closeConfirmButton = $state<HTMLButtonElement | undefined>();
   let updateConfirmButton = $state<HTMLButtonElement | undefined>();
   let conflictPrimaryButton = $state<HTMLButtonElement | undefined>();
-  let renderedPane = $state<HTMLDivElement | undefined>();
   let contextMenu = $state<ContextMenuState | null>(null);
-  let contextMenuFirstItem = $state<HTMLButtonElement | undefined>();
+  let contextMenuReturnFocus = $state<HTMLElement | undefined>();
+  let ribbonFocusTab = $state<RibbonTab | undefined>();
   let workspaceLoading = $state(false);
   let treeScanning = $state(false);
-  let scanDepth = $state(clampScanDepth(Number(localStorage.getItem('markdown-native-scan-depth') || '3')));
+  let scanDepth = $state(clampScanDepth(Number(readBrowserSetting('markdown-native-scan-depth') || '3')));
   let recoveryItems = $state<RecoveryInfo[]>([]);
   let selectedRecoveryId = $state<string | undefined>();
   let activeHeadingSlug = $state<string | undefined>();
+  let hoveredMapId = $state<string | undefined>();
+  let selectedMapId = $state<string | undefined>();
+  let selectedVisualSourceSelection = $state<TextSelection | undefined>();
+  let pendingPaneScrollSync: { anchorOffset: number; origin: 'source' | 'rendered'; source: string } | undefined;
+  let paneScrollSyncFrame: number | undefined;
+  let paneScrollSyncSecondFrame: number | undefined;
+  // History actions replace the rendered DOM immediately. Normal typing does
+  // not change this token, so the expensive view remount remains out of the
+  // keystroke path.
+  let visualResetToken = $state(0);
+  let incrementalCommitMapId = $state<string | undefined>();
+  let incrementalCommitSourceRange = $state<TextSelection | undefined>();
+  let insertDialogRequest = $state<{ kind: InsertKind; token: number } | null>(null);
+  let insertDialogToken = 0;
+  // Native opens, workspace scans, and searches can outlive the UI action
+  // that started them.  These generations make the latest user intent the
+  // only one allowed to publish a result into the current shell.
+  let documentNavigationGeneration = 0;
+  let workspaceOperationGeneration = 0;
+  let searchGeneration = 0;
+  const filesystemLintTimers = new Map<string, number>();
+  const FILESYSTEM_LINT_IDLE_MS = 450;
+  const sourceHistory = new Map<string, SourceHistoryEntry[]>();
+  const sourceRedoHistory = new Map<string, SourceHistoryEntry[]>();
+  const renderedSnapshots = new Map<string, RenderedSnapshot[]>();
+  const MAX_RENDERED_SNAPSHOTS_PER_TAB = 6;
+  const MAX_RENDERED_SNAPSHOT_HTML_CHARS = 8 * 1024 * 1024;
+  const recoveryTimers = new Map<string, number>();
+  const externalChangeGenerations = new Map<string, number>();
+  let cachedSourceSelection: { source: string; sourceMap: SourceMap; index: SourceSelectionIndex } | undefined;
+  const renderController = createRenderController({
+    getTabs: () => tabs,
+    setTabs: (nextTabs) => { tabs = nextTabs; },
+    getActiveId: () => activeId,
+    getProfile: () => markdownProfile,
+    getCompatibilityTarget: () => compatibilityTarget,
+    getIncrementalCommit: () => ({ mapId: incrementalCommitMapId, sourceRange: incrementalCommitSourceRange }),
+    renderSource,
+    cacheSnapshot: cacheRenderedSnapshot,
+    setIncrementalCommit: (mapId, sourceRange) => {
+      incrementalCommitMapId = mapId;
+      incrementalCommitSourceRange = sourceRange;
+    },
+    scheduleFilesystemLintRefresh,
+    scheduleRecoverySnapshot,
+    setStatusMessage: (message) => { statusMessage = message; },
+  });
 
   const platformModifier = typeof navigator !== 'undefined' && /Mac/i.test(`${navigator.platform} ${navigator.userAgent}`) ? '⌘' : 'Ctrl';
   const platformOpenShortcut = platformModifier === '⌘' ? '⌘O' : 'Ctrl+O';
@@ -120,19 +283,206 @@
   const platformCommandsShortcut = platformModifier === '⌘' ? '⌘⇧P' : 'Ctrl+Shift+P';
   const platformPaletteShortcut = platformModifier === '⌘' ? '⌘K' : 'Ctrl+K';
 
+  function renderedPaneElement(): HTMLDivElement | null {
+    return document.querySelector<HTMLDivElement>('.rendered-pane');
+  }
+
+  function sourcePaneElement(): HTMLDivElement | null {
+    return document.querySelector<HTMLDivElement>('.source-pane');
+  }
+
+  function schedulePaneScrollSync(anchorOffset: number, origin: 'source' | 'rendered') {
+    if (!splitViewVisible || !active) return;
+    performanceCount('pane-scroll.requested');
+    const sourceText = active.source;
+    pendingPaneScrollSync = { anchorOffset, origin, source: sourceText };
+    if (paneScrollSyncFrame !== undefined || paneScrollSyncSecondFrame !== undefined) return;
+    paneScrollSyncFrame = requestAnimationFrame(() => {
+      paneScrollSyncFrame = undefined;
+      paneScrollSyncSecondFrame = requestAnimationFrame(() => {
+        paneScrollSyncSecondFrame = undefined;
+        const pending = pendingPaneScrollSync;
+        pendingPaneScrollSync = undefined;
+        if (!pending) return;
+        const finish = performanceSpan('pane-scroll.sync', {
+          origin: pending.origin,
+          sourceBytes: pending.source.length,
+        });
+        syncSplitPaneScroll({
+          sourcePane: sourcePaneElement(),
+          renderedPane: renderedPaneElement(),
+          source: pending.source,
+          anchorOffset: pending.anchorOffset,
+          origin: pending.origin,
+        });
+        finish();
+      });
+    });
+  }
+
+  function cacheRenderedSnapshot(tabId: string, source: string, rendered: RenderedSource) {
+    cacheRenderedSnapshotInCache(
+      renderedSnapshots,
+      tabId,
+      source,
+      rendered,
+      markdownProfile,
+      compatibilityTarget,
+      {
+        maxSnapshotsPerTab: MAX_RENDERED_SNAPSHOTS_PER_TAB,
+        maxHtmlChars: MAX_RENDERED_SNAPSHOT_HTML_CHARS,
+      },
+    );
+  }
+
+  function renderedSnapshotFor(tabId: string, source: string): RenderedSnapshot | undefined {
+    return renderedSnapshotForCache(renderedSnapshots, tabId, source, markdownProfile, compatibilityTarget);
+  }
+
+  function restoreRenderedSnapshot(tabId: string, snapshot: RenderedSnapshot | undefined): boolean {
+    if (!snapshot) return false;
+    tabs = restoreRenderedSnapshotInCache(tabs, tabId, snapshot);
+    return true;
+  }
+
   let active = $derived(tabs.find((tab) => tab.id === activeId));
+  let activeDocumentMetrics = $derived(active ? documentMetrics(active.source) : undefined);
+  let activeMapping = $derived(active ? mappingSourceFor(active) : null);
+  function sourceSelectionIndexFor(source: string, sourceMap: SourceMap, sourceHash: string): SourceSelectionIndex {
+    if (!cachedSourceSelection
+      || cachedSourceSelection.source !== source
+      || cachedSourceSelection.sourceMap !== sourceMap) {
+      cachedSourceSelection = {
+        source,
+        sourceMap,
+        index: buildSourceSelectionIndex(source, sourceMap, sourceHash),
+      };
+    }
+    return cachedSourceSelection.index;
+  }
+  let activeSourceSelectionIndex = $derived(active && activeMapping
+    ? sourceSelectionIndexFor(activeMapping.source, activeMapping.sourceMap, activeMapping.sourceHash)
+    : undefined);
+  let renderedViewVisible = $derived(mode !== 'source');
+  let sourceViewVisible = $derived(sourceViewVisibleForState(mode, editing, sourceVisible));
+  let effectiveViewMode = $derived(effectiveViewModeForState(mode, editing, sourceVisible));
+  let splitViewVisible = $derived(renderedViewVisible && sourceViewVisible);
+  let activeCompatibilityIssues = $derived(active
+    ? issuesForCompatibilityTarget(active.issues, compatibilityTarget)
+    : []);
+  let compatibilitySummary = $derived(compatibilityStatus(activeCompatibilityIssues, compatibilityTarget));
+  let visibleIssues = $derived(active
+    ? issueFilter === 'compatibility' ? activeCompatibilityIssues : active.issues
+    : []);
+  let documentFindMatches = $derived(active && showFind
+    ? findMatches(active.source, findQuery, { caseSensitive: findCaseSensitive })
+    : []);
+  let activeFindIndex = $derived(documentFindMatches.length ? Math.min(findIndex, documentFindMatches.length - 1) : 0);
+  let activeFindMatch = $derived(documentFindMatches[activeFindIndex] ?? null);
+  let findMapIds = $derived(active && activeMapping && activeFindMatch
+    ? visualMapIdsForMatches(
+      activeMapping.source,
+      activeMapping.sourceMap,
+      documentFindMatches,
+      activeMapping.sourceHash,
+      activeSourceSelectionIndex,
+    )
+    : []);
+  let activeFindMapIds = $derived(active && activeMapping && activeFindMatch
+    ? visualMapIdsForMatches(
+      activeMapping.source,
+      activeMapping.sourceMap,
+      documentFindMatches.slice(activeFindIndex, activeFindIndex + 1),
+      activeMapping.sourceHash,
+      activeSourceSelectionIndex,
+    )
+    : []);
+  let hoveredMapIds = $derived.by(() => {
+    if (!active || !activeMapping || !hoveredMapId) return [];
+    const related = visualMapIdsForMappedId(
+      activeMapping.source,
+      activeMapping.sourceMap,
+      hoveredMapId,
+      activeMapping.sourceHash,
+      activeSourceSelectionIndex,
+    );
+    return related.length ? related : [hoveredMapId];
+  });
+  let selectedMapIds = $derived.by(() => {
+    if (!active || !activeMapping) return [];
+    const sourceSelection = selectedVisualSourceSelection
+      ?? (sourceSelectionActive && editorSelection.from < editorSelection.to ? editorSelection : null);
+    if (!sourceSelection) return selectedMapId ? [selectedMapId] : [];
+    if (!sourceMapIsCurrentFor(active) && !selectedVisualSourceSelection) return selectedMapId ? [selectedMapId] : [];
+    const selectedSourceMapIds = visualMapIdsForSelection(
+      activeMapping.source,
+      activeMapping.sourceMap,
+      sourceSelection,
+      activeMapping.sourceHash,
+      activeSourceSelectionIndex,
+    );
+    return selectedSourceMapIds.length
+      ? selectedSourceMapIds
+      : selectedVisualSourceSelection && selectedMapId
+        ? visualMapIdsForMappedId(
+          activeMapping.source,
+          activeMapping.sourceMap,
+          selectedMapId,
+          activeMapping.sourceHash,
+          activeSourceSelectionIndex,
+        )
+      : selectedMapId
+        ? [selectedMapId]
+        : [];
+  });
+  let hoveredSourceSelection = $derived(active && hoveredMapId
+    ? activeSourceSelectionIndex?.byMapId.get(hoveredMapId) ?? null
+    : null);
+  let selectedSpan = $derived(active && selectedMapId
+    ? activeSourceSelectionIndex?.spansByMapId.get(selectedMapId)
+    : undefined);
+  let selectedBlockMoveTargets = $derived(active && activeMapping && selectedSpan && isMovableRootBlockKind(selectedSpan.kind)
+    ? mappedBlockMoveTargets(activeMapping.source, activeMapping.sourceMap, selectedSpan.mapId, activeSourceSelectionIndex)
+    : { up: null, down: null });
+  let selectedBlockMoveUpTarget = $derived(selectedBlockMoveTargets.up);
+  let selectedBlockMoveDownTarget = $derived(selectedBlockMoveTargets.down);
+  let selectedBlockSelection = $derived(active && selectedSpan
+    ? activeSourceSelectionIndex?.byMapId.get(selectedSpan.mapId) ?? null
+    : null);
+  let contextSpan = $derived(active && contextMenu?.mapId
+    ? activeSourceSelectionIndex?.spansByMapId.get(contextMenu.mapId)
+    : undefined);
+  let selectedTableContext = $derived(active && activeMapping && selectedMapId
+    ? tableSelectionContext(activeMapping.source, activeMapping.sourceMap, selectedMapId, activeSourceSelectionIndex)
+    : null);
+  let selectedTableSpan = $derived(selectedTableContext?.table);
+  let selectedTableSelection = $derived(selectedTableContext?.tableSelection ?? null);
+  let selectedTableRowIndex = $derived(selectedTableContext?.rowIndex);
+  let selectedTableColumnIndex = $derived(selectedTableContext?.columnIndex);
+  let selectedTableBodyRowCount = $derived(selectedTableContext?.bodyRowCount);
+  let selectedTableColumnCount = $derived(selectedTableContext?.columnCount);
+  // Only selections originating in the rendered pane (or Find) should be
+  // pushed into CodeMirror. Source-originated selections must not be replaced
+  // by the whole containing block on the next reactive update.
+  let externalSourceSelection = $derived(activeFindMatch
+    ?? selectedVisualSourceSelection
+    ?? (sourceSelectionActive && editorSelection.from < editorSelection.to ? editorSelection : null));
   let paletteCommands = $derived([
+    ['New Document', () => void newDocument()],
     ['Open File', openFile],
+    ['Open Recent', () => void openRecentDialog()],
     ['Open Folder', openFolder],
     ['Quick Open', () => revealFiles()],
     ['Toggle Left Sidebar', () => (leftCollapsed = !leftCollapsed)],
     ['Toggle Right Sidebar', () => (rightCollapsed = !rightCollapsed)],
-    ['Rendered View', () => (mode = 'rendered')],
-    ['Source View', () => (mode = 'source')],
-    ['Split View', () => (mode = 'split')],
+    ['Rendered View', () => setViewMode('rendered')],
+    ['Source View', () => setViewMode('source')],
+    ['Split View', () => setViewMode('split')],
     ['Save Document', saveActive],
     ['Save As…', () => void saveActiveAs()],
-    ['Check Links', () => revealInspect('issues')],
+    ['Reload from Disk', () => requestReloadActive()],
+    ['Find in Document', openFind],
+    ['Check Links', () => revealIssues('all')],
     ['Settings', () => (showSettings = true)],
     ['Check for updates', () => void runUpdateCheck({ manual: true })],
     ['Import HTML', () => void importDocument('html')],
@@ -145,35 +495,72 @@
 
   $effect(() => {
     document.documentElement.dataset.theme = theme;
-    localStorage.setItem('markdown-native-theme', theme);
+    writeBrowserSetting('markdown-native-theme', theme);
   });
 
   $effect(() => {
-    localStorage.setItem('markdown-native-mode', mode);
+    writeBrowserSetting('markdown-native-mode', mode);
   });
 
   $effect(() => {
-    localStorage.setItem('markdown-native-profile', markdownProfile);
+    writeBrowserSetting('markdown-native-source-drawer', String(sourceVisible));
+  });
+
+  $effect(() => {
+    writeBrowserSetting('markdown-native-profile', markdownProfile);
     const tab = active;
     if (tab && tab.meta.profile !== markdownProfile) void rerenderActiveDocument(tab.id, tab.source, markdownProfile);
   });
 
   $effect(() => {
-    localStorage.setItem('markdown-native-remote-images', String(remoteImagesEnabled));
+    if (!appSettingsReady) return;
+    persistCompatibilityTarget(compatibilityTarget);
   });
 
   $effect(() => {
-    localStorage.setItem('markdown-native-scan-depth', String(scanDepth));
+    writeBrowserSetting('markdown-native-remote-images', String(remoteImagesEnabled));
   });
 
   $effect(() => {
-    if (showPalette || showSettings || showAbout || showDefaultAppConfirm || pendingCloseTabId || showUpdateConfirm || showUpdateDirtyWarn || recoveryItems.length || conflict) {
+    if (!appSettingsReady) return;
+    persistAssetFolderSetting(assetFolder);
+  });
+
+  $effect(() => {
+    writeBrowserSetting('markdown-native-scan-depth', String(scanDepth));
+  });
+
+  // Action feedback should settle back to the neutral Ready state instead of
+  // permanently occupying the status bar. Busy messages use an ellipsis and
+  // stay visible until their operation publishes a completion or error.
+  $effect(() => {
+    const message = statusMessage;
+    if (statusResetTimer !== undefined) {
+      window.clearTimeout(statusResetTimer);
+      statusResetTimer = undefined;
+    }
+    if (message === 'Ready' || message.endsWith('…')) return;
+    statusResetTimer = window.setTimeout(() => {
+      if (statusMessage === message) statusMessage = 'Ready';
+    }, STATUS_RESET_MS);
+    return () => {
+      if (statusResetTimer !== undefined) {
+        window.clearTimeout(statusResetTimer);
+        statusResetTimer = undefined;
+      }
+    };
+  });
+
+  $effect(() => {
+    if (showPalette || showRecent || showSettings || showAbout || showDefaultAppConfirm || showReloadConfirm || pendingCloseTabId || showUpdateConfirm || showUpdateDirtyWarn || recoveryItems.length || conflict) {
       void tick().then(() => {
-        if (showPalette) { paletteIndex = 0; paletteInput?.focus(); }
+        if (showPalette) { paletteIndex = 0; document.getElementById('palette-input')?.focus(); }
+        else if (showRecent) document.getElementById('recent-close')?.focus();
         else if (showUpdateConfirm || showUpdateDirtyWarn) updateConfirmButton?.focus();
         else if (showDefaultAppConfirm) defaultAppConfirmButton?.focus();
+        else if (showReloadConfirm) reloadConfirmButton?.focus();
         else if (pendingCloseTabId) closeConfirmButton?.focus();
-        else if (showSettings) settingsCloseButton?.focus();
+        else if (showSettings) document.getElementById('settings-close')?.focus();
         else if (showAbout) aboutCloseButton?.focus();
         else if (recoveryItems.length) recoveryPrimaryButton?.focus();
         else conflictPrimaryButton?.focus();
@@ -181,38 +568,164 @@
     }
   });
 
+  // Context-menu actions should return keyboard focus to the control that was
+  // active before the menu opened. Pointer-only openings commonly have BODY
+  // focused, so in that case there is intentionally no synthetic focus target.
+  $effect(() => {
+    const menuOpen = contextMenu !== null;
+    const returnFocus = contextMenuReturnFocus;
+    if (menuOpen || !returnFocus) return;
+    contextMenuReturnFocus = undefined;
+    if (returnFocus.isConnected) {
+      void tick().then(() => {
+        if (!contextMenu && returnFocus.isConnected) returnFocus.focus();
+      });
+    }
+  });
+
   onMount(() => {
     const cleanup: (() => void)[] = [];
+    let disposed = false;
+    const registerAppEvent = async <T>(
+      name: string,
+      handler: (payload: T) => void,
+    ): Promise<boolean> => {
+      if (disposed) return false;
+      const dispose = await onAppEvent<T>(name, handler);
+      if (disposed) {
+        dispose();
+        return false;
+      }
+      cleanup.push(dispose);
+      return true;
+    };
+    const finishStartup = performanceSpan('app.startup');
     void (async () => {
-      cleanup.push(await onAppEvent<PathGrant[]>('startup-paths', (grants) => void openStartupPaths(grants)));
-      cleanup.push(await onAppEvent<{ workspaceId: string; ok: boolean }>('workspace-indexed', (event) => {
-        if (workspace?.id !== event.workspaceId) return;
-        workspace = { ...workspace, indexing: false };
-        statusMessage = event.ok ? 'Workspace index ready' : 'Workspace index unavailable; live search remains available';
-      }));
-      cleanup.push(await onAppEvent<string>('document-changed', (documentId) => {
-        void handleExternalChange(documentId);
-      }));
-      cleanup.push(await onAppEvent<string>('menu-action', (action) => void handleMenuAction(action)));
-      if (isTauri) {
-        try {
-          appVersion = await getAppVersion();
-          const grants = await startupPaths();
-          await openStartupPaths(grants);
-          recoveryItems = await listRecovery();
-          selectedRecoveryId = recoveryItems[0]?.documentId;
-        } catch {
-          statusMessage = 'Native bridge unavailable';
+      try {
+        if (!await registerAppEvent<PathGrant[]>('startup-paths', (grants) => void openStartupPaths(grants))) return;
+        if (!await registerAppEvent<{ workspaceId: string; ok: boolean; indexing: boolean }>('workspace-indexed', (event) => {
+          if (workspace?.id !== event.workspaceId) return;
+          workspace = { ...workspace, indexing: event.indexing };
+          if (!event.indexing) {
+            statusMessage = event.ok ? 'Workspace index ready' : 'Workspace index unavailable; live search remains available';
+          }
+        })) return;
+        if (!await registerAppEvent<string>('document-changed', (documentId) => {
+          void handleExternalChange(documentId);
+        })) return;
+        if (!await registerAppEvent<string>('menu-action', (action) => void handleMenuAction(action))) return;
+        if (!await registerAppEvent<AssetDropEvent>('asset-drop', (event) => {
+          void handleNativeAssetDrop(event.grants, event.position);
+        })) return;
+        const [savedAssetFolder, savedCompatibilityTarget, savedRecentDocuments, savedEditingEnabled] = await Promise.all([
+          readAssetFolderSetting(),
+          readCompatibilityTarget(),
+          readRecentDocumentPaths(),
+          readEditingEnabledSetting(),
+        ]);
+        if (disposed) return;
+        assetFolder = savedAssetFolder;
+        compatibilityTarget = savedCompatibilityTarget;
+        const normalizedRecentDocuments = normalizeRecentDocumentPaths(savedRecentDocuments);
+        if (isTauri && normalizedRecentDocuments.length) {
+          try {
+            recentDocuments = normalizeRecentDocumentPaths(await validateRecentDocumentPaths(normalizedRecentDocuments));
+          } catch {
+            // Recent history is optional; retain the last saved list if a native
+            // validation call is unavailable during startup.
+            recentDocuments = normalizedRecentDocuments;
+          }
+        } else {
+          recentDocuments = normalizedRecentDocuments;
         }
-        quietUpdateTimer = window.setTimeout(() => {
-          void runUpdateCheck({ quiet: true });
-        }, 4000);
-      } else {
-        appVersion = '0.0.0';
+        persistRecentDocumentPaths(recentDocuments);
+        if (typeof savedEditingEnabled === 'boolean') {
+          editing = savedEditingEnabled;
+          writeBrowserSetting('markdown-native-editing', savedEditingEnabled ? 'true' : 'false');
+        }
+        if (showWelcome && recentDocuments.length > 0) leftCollapsed = false;
+        appSettingsReady = true;
+        if (isTauri) {
+          try {
+            appVersion = await getAppVersion();
+            if (disposed) return;
+            const grants = await startupPaths();
+            if (disposed) return;
+            await openStartupPaths(grants);
+            if (disposed) return;
+            await runAcceptanceProbeIfEnabled({
+            isTauri,
+            getActiveTab: () => tabs.find((item) => item.id === activeId),
+            waitForActiveTab: async (timeoutMs = 30_000) => {
+              const started = Date.now();
+              while (Date.now() - started < timeoutMs) {
+                const tab = tabs.find((item) => item.id === activeId);
+                if (tab?.source.includes('PACKAGED_VISUAL_PROBE')) return tab;
+                await tick();
+                await new Promise((resolve) => window.setTimeout(resolve, 50));
+              }
+              throw new Error('Timed out waiting for the acceptance fixture tab');
+            },
+            enableEditing: async () => {
+              if (!editing) toggleEditing();
+              await tick();
+            },
+            setViewMode: async (mode) => {
+              setViewMode(mode);
+              await tick();
+              await new Promise((resolve) => window.setTimeout(resolve, 200));
+            },
+            getStatusMessage: () => statusMessage,
+            flushPendingVisualEdit,
+            commitVisualDraft: completeVisualDraft,
+            undoVisualChange,
+            redoVisualChange,
+            saveActive: async () => { await saveActive(); },
+            reloadTab,
+            openFind: async (query) => {
+              findQuery = query;
+              openFind();
+              await tick();
+            },
+            closeFind: async () => {
+              closeFind();
+              await tick();
+            },
+            getRenderedPane: renderedPaneElement,
+            applyVisualDraftEdit,
+            getEditorSelection: () => editorSelection,
+            selectSourceRange: (from, to) => updateSelection(from, to),
+            });
+            if (disposed) return;
+            recoveryItems = await listRecovery();
+            if (disposed) return;
+            selectedRecoveryId = recoveryItems[0]?.documentId;
+          } catch {
+            statusMessage = 'Native bridge unavailable';
+          }
+          quietUpdateTimer = window.setTimeout(() => {
+            void runUpdateCheck({ quiet: true });
+          }, 4000);
+        } else {
+          appVersion = '0.0.0';
+        }
+      } finally {
+        finishStartup();
       }
     })();
     return () => {
+      disposed = true;
       if (quietUpdateTimer !== undefined) window.clearTimeout(quietUpdateTimer);
+      recoveryTimers.forEach((timer) => window.clearTimeout(timer));
+      recoveryTimers.clear();
+      renderController.dispose();
+      if (paneScrollSyncFrame !== undefined) window.cancelAnimationFrame(paneScrollSyncFrame);
+      if (paneScrollSyncSecondFrame !== undefined) window.cancelAnimationFrame(paneScrollSyncSecondFrame);
+      paneScrollSyncFrame = undefined;
+      paneScrollSyncSecondFrame = undefined;
+      pendingPaneScrollSync = undefined;
+      filesystemLintTimers.forEach((timer) => window.clearTimeout(timer));
+      filesystemLintTimers.clear();
       if (pendingUpdate) void pendingUpdate.close().catch(() => undefined);
       cleanup.forEach((dispose) => dispose());
     };
@@ -235,6 +748,32 @@
     if (selected) await openDocumentPath(selected.token);
   }
 
+  async function newDocument() {
+    if (!isTauri) return (statusMessage = 'New documents are available in the desktop build');
+    if (!flushPendingVisualEdit()) return;
+    const operation = ++documentNavigationGeneration;
+    statusMessage = 'Creating document…';
+    try {
+      const document = await createUntitledDocument(markdownProfile, compatibilityTarget);
+      if (operation !== documentNavigationGeneration) return;
+      if (showWelcome && !active) {
+        leftCollapsed = false;
+        rightCollapsed = false;
+      }
+      if (activeId) backHistory = [...backHistory, activeId];
+      cacheRenderedSnapshot(document.id, document.source, document);
+      tabs = [...tabs, asOpenTab(document)];
+      activeId = document.id;
+      showWelcome = false;
+      editing = true;
+      statusMessage = 'Untitled document';
+    } catch (error) {
+      if (operation === documentNavigationGeneration) {
+        statusMessage = `Could not create document: ${invokeErrorMessage(error)}`;
+      }
+    }
+  }
+
   async function openFolder() {
     if (!isTauri) return (statusMessage = 'Folder dialogs are available in the desktop build');
     const selected = await pickWorkspacePath();
@@ -243,31 +782,100 @@
 
   async function openDocumentPath(token: string) {
     if (!isTauri) return;
+    if (!flushPendingVisualEdit()) return;
+    performanceCount('document-open.requested');
+    const finishOpen = performanceSpan('document-open.total');
+    const operation = ++documentNavigationGeneration;
     statusMessage = 'Opening document…';
-    const document = await openDocumentGrant(token, markdownProfile);
-    if (showWelcome && !active) {
-      leftCollapsed = false;
-      rightCollapsed = false;
+    try {
+      const document = await openDocumentGrant(token, markdownProfile, compatibilityTarget);
+      if (operation !== documentNavigationGeneration) return;
+      if (showWelcome && !active) {
+        leftCollapsed = false;
+        rightCollapsed = false;
+      }
+      const existing = tabs.find((tab) => tab.id === document.id);
+      if (activeId && activeId !== document.id) clearPaneSelection();
+      if (existing) {
+        activeId = existing.id;
+      } else {
+        if (activeId) backHistory = [...backHistory, activeId];
+        cacheRenderedSnapshot(document.id, document.source, document);
+        tabs = [...tabs, asOpenTab(document)];
+        activeId = document.id;
+      }
+      showWelcome = false;
+      editing = true;
+      rememberOpenedDocument(document.meta.path);
+      scheduleFilesystemLintRefresh(document.id);
+      statusMessage = 'Rendered from the current source';
+    } catch (error) {
+      if (operation === documentNavigationGeneration) statusMessage = `Could not open document: ${invokeErrorMessage(error)}`;
+    } finally {
+      finishOpen();
     }
-    const existing = tabs.find((tab) => tab.id === document.id);
-    if (existing) {
-      activeId = existing.id;
-    } else {
-      if (activeId) backHistory = [...backHistory, activeId];
-      tabs = [...tabs, { ...document, dirty: false, savedSource: document.source }];
-      activeId = document.id;
+  }
+
+  function rememberOpenedDocument(path: string) {
+    const next = rememberRecentDocument(recentDocuments, path);
+    recentDocuments = next;
+    persistRecentDocumentPaths(next);
+  }
+
+  async function openRecentDialog() {
+    showRecent = true;
+    if (!isTauri || !recentDocuments.length) return;
+    try {
+      recentDocuments = normalizeRecentDocumentPaths(await validateRecentDocumentPaths(recentDocuments));
+      persistRecentDocumentPaths(recentDocuments);
+    } catch {
+      // Recent history is optional; the existing list remains usable if the
+      // native validation call is temporarily unavailable.
     }
-    showWelcome = false;
-    statusMessage = 'Rendered from the current source';
+  }
+
+  function removeRecentDocument(path: string) {
+    recentDocuments = recentDocuments.filter((candidate) => candidate !== path);
+    persistRecentDocumentPaths(recentDocuments);
+  }
+
+  async function openRecent(path: string) {
+    if (!isTauri) {
+      statusMessage = 'Recent files are available in the desktop build';
+      return;
+    }
+    if (!recentDocuments.includes(path)) return;
+    if (!flushPendingVisualEdit()) return;
+    openingRecentPath = path;
+    try {
+      const grant = await issueRecentDocumentGrant(path);
+      if (!grant) {
+        removeRecentDocument(path);
+        statusMessage = 'That recent Markdown file is no longer available';
+        return;
+      }
+      await openDocumentPath(grant.token);
+      showRecent = false;
+    } catch (error) {
+      statusMessage = `Could not open recent document: ${invokeErrorMessage(error)}`;
+    } finally {
+      openingRecentPath = undefined;
+    }
   }
 
   async function openWorkspacePath(token: string) {
     if (!isTauri) return;
-    statusMessage = `Scanning workspace to depth ${scanDepth}…`;
+    if (!flushPendingVisualEdit()) return;
+    const operation = ++workspaceOperationGeneration;
+    const requestedDepth = scanDepth;
+    searchGeneration += 1;
+    searchResults = [];
+    statusMessage = `Scanning workspace to depth ${requestedDepth}…`;
     workspaceLoading = true;
     treeScanning = true;
     try {
-      const nextWorkspace = await openWorkspaceGrant(token, scanDepth);
+      const nextWorkspace = await openWorkspaceGrant(token, requestedDepth);
+      if (operation !== workspaceOperationGeneration) return;
       if (showWelcome && !active) {
         leftCollapsed = false;
         rightCollapsed = false;
@@ -276,10 +884,12 @@
       showWelcome = false;
       applyWorkspaceScanStatus(nextWorkspace);
     } catch (error) {
-      statusMessage = `Could not open workspace: ${invokeErrorMessage(error)}`;
+      if (operation === workspaceOperationGeneration) statusMessage = `Could not open workspace: ${invokeErrorMessage(error)}`;
     } finally {
-      workspaceLoading = false;
-      treeScanning = false;
+      if (operation === workspaceOperationGeneration) {
+        workspaceLoading = false;
+        treeScanning = false;
+      }
     }
   }
 
@@ -294,18 +904,24 @@
   }
 
   async function changeScanDepth(next: number) {
-    scanDepth = clampScanDepth(next);
-    if (!workspace || !isTauri) return;
+    const requestedDepth = clampScanDepth(next);
+    scanDepth = requestedDepth;
+    const requestedWorkspace = workspace;
+    if (!requestedWorkspace || !isTauri) return;
+    const operation = ++workspaceOperationGeneration;
+    searchGeneration += 1;
+    searchResults = [];
     treeScanning = true;
-    statusMessage = `Rescanning to depth ${scanDepth}…`;
+    statusMessage = `Rescanning to depth ${requestedDepth}…`;
     try {
-      const nextWorkspace = await refreshWorkspace(workspace.id, scanDepth);
+      const nextWorkspace = await refreshWorkspace(requestedWorkspace.id, requestedDepth);
+      if (operation !== workspaceOperationGeneration || workspace?.id !== requestedWorkspace.id) return;
       workspace = nextWorkspace;
       applyWorkspaceScanStatus(nextWorkspace);
     } catch (error) {
-      statusMessage = `Could not rescan workspace: ${invokeErrorMessage(error)}`;
+      if (operation === workspaceOperationGeneration) statusMessage = `Could not rescan workspace: ${invokeErrorMessage(error)}`;
     } finally {
-      treeScanning = false;
+      if (operation === workspaceOperationGeneration) treeScanning = false;
     }
   }
 
@@ -319,13 +935,38 @@
     rightPanel = panel;
   }
 
+  function revealIssues(filter: 'all' | 'compatibility' = 'all') {
+    issueFilter = filter;
+    revealInspect('issues');
+  }
+
+  function changeCompatibilityTarget(nextTarget: CompatibilityTarget) {
+    if (nextTarget === compatibilityTarget) return;
+    compatibilityTarget = nextTarget;
+    if (nextTarget === 'none') issueFilter = 'all';
+    // The target changes diagnostics only. Refresh each open tab once so the
+    // status chip and filtered Issues view never describe an older target.
+    for (const tab of tabs) {
+      void rerenderActiveDocument(tab.id, tab.source, markdownProfile);
+    }
+  }
+
   async function handleExternalChange(documentId: string) {
-    const tab = tabs.find((item) => item.id === documentId);
-    if (!tab || !isTauri) return;
+    const observed = tabs.find((item) => item.id === documentId);
+    if (!observed || !isTauri) return;
+    const generation = (externalChangeGenerations.get(documentId) ?? 0) + 1;
+    externalChangeGenerations.set(documentId, generation);
     try {
       const inspection = await inspectDocument(documentId);
-      if (inspection.currentRevision === tab.revision) return;
-      if (tab.dirty) {
+      // Re-read tab state after the native inspection. The user may have
+      // typed, saved, or switched tabs while the filesystem check was in
+      // flight; the original object is no longer authoritative.
+      if (externalChangeGenerations.get(documentId) !== generation) return;
+      const tab = tabs.find((item) => item.id === documentId);
+      if (!tab || inspection.currentRevision === tab.revision) return;
+      const pendingVisualEdit = documentId === activeId
+        && Boolean(renderedPaneElement()?.querySelector('[data-visual-dirty="true"]'));
+      if (tab.dirty || pendingVisualEdit) {
         conflict = {
           tabId: tab.id,
           diskSource: inspection.diskSource,
@@ -334,7 +975,9 @@
         };
         statusMessage = 'File changed on disk — your unsaved edits are protected';
       } else {
-        await reloadTab(tab.id);
+        // reloadTab resolves the same tab by ID and therefore cannot reload
+        // another document if the active tab changed during the inspection.
+        await reloadTab(tab.id, generation);
       }
     } catch (error) {
       statusMessage = invokeErrorMessage(error);
@@ -342,134 +985,1216 @@
   }
 
   async function openTreeNode(node: FileNode) {
-    if (!workspace || node.isDirectory) return;
-    const document = await openWorkspaceDocument(workspace.id, node.relativePath, markdownProfile);
-    const existing = tabs.find((tab) => tab.id === document.id);
-    if (existing) activeId = existing.id;
-    else tabs = [...tabs, { ...document, dirty: false, savedSource: document.source }], activeId = document.id;
-    showWelcome = false;
+    const requestedWorkspace = workspace;
+    if (!requestedWorkspace || node.isDirectory) return;
+    if (!flushPendingVisualEdit()) return;
+    const operation = ++documentNavigationGeneration;
+    try {
+      const document = await openWorkspaceDocument(requestedWorkspace.id, node.relativePath, markdownProfile, compatibilityTarget);
+      if (operation !== documentNavigationGeneration || workspace?.id !== requestedWorkspace.id) return;
+      const existing = tabs.find((tab) => tab.id === document.id);
+      if (activeId && activeId !== document.id) clearPaneSelection();
+      if (existing) activeId = existing.id;
+      else {
+        cacheRenderedSnapshot(document.id, document.source, document);
+        tabs = [...tabs, asOpenTab(document)];
+        activeId = document.id;
+      }
+      showWelcome = false;
+      rememberOpenedDocument(document.meta.path);
+      scheduleFilesystemLintRefresh(document.id);
+    } catch (error) {
+      if (operation === documentNavigationGeneration) statusMessage = `Could not open document: ${invokeErrorMessage(error)}`;
+    }
   }
 
-  async function updateSource(source: string) {
-    if (!active) return;
-    const tabId = active.id;
-    tabs = tabs.map((tab) => (tab.id === tabId ? { ...tab, source, dirty: source !== tab.savedSource } : tab));
+  function clearSourceRenderTimer(tabId: string) {
+    renderController.clearTimer(tabId);
+  }
+
+  function clearFilesystemLintTimer(tabId: string) {
+    const timer = filesystemLintTimers.get(tabId);
+    if (timer !== undefined) window.clearTimeout(timer);
+    filesystemLintTimers.delete(tabId);
+  }
+
+  /** Release all per-tab async/cache state without changing visible tabs. */
+  function releaseTabRuntimeState(tabId: string) {
+    clearFilesystemLintTimer(tabId);
+    const recoveryTimer = recoveryTimers.get(tabId);
+    if (recoveryTimer !== undefined) window.clearTimeout(recoveryTimer);
+    recoveryTimers.delete(tabId);
+    renderController.releaseTab(tabId);
+    sourceHistory.delete(tabId);
+    sourceRedoHistory.delete(tabId);
+    externalChangeGenerations.delete(tabId);
+    renderedSnapshots.delete(tabId);
+    if (activeId === tabId) incrementalCommitSourceRange = undefined;
+  }
+
+  function scheduleRecoverySnapshot(tabId: string, source: string) {
     const current = tabs.find((tab) => tab.id === tabId);
-    if (!current) return;
-    try {
-      const rendered = await renderSource(source, markdownProfile);
-      tabs = tabs.map((tab) => (tab.id === tabId && tab.source === source ? { ...tab, ...rendered } : tab));
-    } catch {
-      statusMessage = 'Preview refresh is available in the desktop build';
-    }
-    window.clearTimeout(recoveryTimer);
+    if (!current || current.source !== source) return;
+    const existingRecoveryTimer = recoveryTimers.get(tabId);
+    if (existingRecoveryTimer !== undefined) window.clearTimeout(existingRecoveryTimer);
+    recoveryTimers.delete(tabId);
     if (source === current.savedSource) {
       if (isTauri) void clearRecovery(tabId);
       return;
     }
-    recoveryTimer = window.setTimeout(() => {
-      if (isTauri) void saveRecovery(tabId, source, current.revision);
+    const recoveryTimer = window.setTimeout(() => {
+      recoveryTimers.delete(tabId);
+      const latest = tabs.find((item) => item.id === tabId);
+      if (!latest || latest.source !== source || latest.savedSource === source) return;
+      if (isTauri) void saveRecovery(tabId, source, latest.revision);
     }, 750);
+    recoveryTimers.set(tabId, recoveryTimer);
   }
 
-  async function rerenderActiveDocument(tabId: string, source: string, profile: MarkdownProfile) {
+  function renderUpdatedSource(
+    tabId: string,
+    source: string,
+    renderGeneration: number,
+    options?: { skipFilesystemLint?: boolean },
+  ) {
+    renderController.enqueue(tabId, source, renderGeneration, options);
+  }
+
+  function scheduleFilesystemLintRefresh(tabId: string) {
+    if (!isTauri) return;
+    const existing = filesystemLintTimers.get(tabId);
+    if (existing !== undefined) window.clearTimeout(existing);
+    filesystemLintTimers.set(tabId, window.setTimeout(() => {
+      filesystemLintTimers.delete(tabId);
+      void refreshFilesystemIssues(tabId);
+    }, FILESYSTEM_LINT_IDLE_MS));
+  }
+
+  async function refreshFilesystemIssues(tabId: string) {
+    const tab = tabs.find((entry) => entry.id === tabId);
+    if (!tab || tab.renderedSource !== tab.source || tab.sourceMap.version !== 1) return;
+    const profile = markdownProfile;
+    const target = compatibilityTarget;
+    const sourceHash = tab.sourceMap.sourceHash;
+    const finishLint = performanceSpan('filesystem-lint.refresh', { sourceBytes: tab.source.length });
     try {
-      const rendered = await renderSource(source, profile);
-      tabs = tabs.map((tab) => tab.id === tabId && tab.source === source
-        ? { ...tab, ...rendered, meta: { ...tab.meta, profile } }
-        : tab);
+      const issues = await lintDocumentReferences(tabId, tab.sourceMap, profile, target);
+      const current = tabs.find((entry) => entry.id === tabId);
+      if (!current || current.source !== tab.source || current.sourceMap.sourceHash !== sourceHash
+        || markdownProfile !== profile || compatibilityTarget !== target) return;
+      tabs = tabs.map((entry) => entry.id === tabId
+        ? { ...entry, issues: mergeFilesystemIssues(entry.issues, issues) }
+        : entry);
     } catch {
-      statusMessage = 'Preview refresh is available in the desktop build';
+      // Filesystem lint refresh is best-effort and must not block editing.
+    } finally {
+      finishLint();
     }
   }
 
+  function updateSource(
+    source: string,
+    preserveHistory = false,
+    targetTabId?: string,
+    options?: {
+      render?: 'immediate' | 'debounced' | 'none';
+      preserveRenderedMap?: boolean;
+      draft?: VisualDraftState | null;
+    },
+  ) {
+    const tabId = targetTabId ?? active?.id;
+    if (!tabId || !tabs.some((tab) => tab.id === tabId)) return;
+    performanceCount('source-change.requested');
+    if (!preserveHistory) {
+      sourceHistory.delete(tabId);
+      sourceRedoHistory.delete(tabId);
+    }
+    const renderGeneration = nextRenderGeneration(tabId);
+    // Every DOM map ID and source selection belongs to the previous revision.
+    // Clear them before the asynchronous render so a coincidental map ID or
+    // stale range cannot be projected onto the new source.
+    if (activeId === tabId && !options?.preserveRenderedMap) {
+      hoveredMapId = undefined;
+      selectedMapId = undefined;
+      selectedVisualSourceSelection = undefined;
+    }
+    tabs = tabs.map((tab) => {
+      if (tab.id !== tabId) return tab;
+      return {
+        ...applyTabSourceUpdate(tab, source, options),
+        dirty: tabDirtyAfterSourceChange(tab, source),
+      };
+    });
+    clearSourceRenderTimer(tabId);
+    if (options?.render === 'none') {
+      performanceCount('source-change.render-suppressed');
+      // Visual drafts deliberately wait to rerender until the block loses
+      // focus, but crash recovery must not wait for that blur event.
+      scheduleRecoverySnapshot(tabId, source);
+      return;
+    }
+    if (options?.render === 'debounced') {
+      performanceCount('source-change.render-debounced');
+      const runDebouncedRender = () => {
+        renderUpdatedSource(tabId, source, renderGeneration, { skipFilesystemLint: true });
+      };
+      if (source.length <= FAST_RENDER_SOURCE_BYTES) {
+        runDebouncedRender();
+        return;
+      }
+      renderController.scheduleDebounced(tabId, SOURCE_RENDER_DEBOUNCE_MS, runDebouncedRender);
+      return;
+    }
+    renderUpdatedSource(tabId, source, renderGeneration);
+  }
+
+  async function rerenderActiveDocument(tabId: string, source: string, profile: MarkdownProfile) {
+    await renderController.rerender(tabId, source, profile);
+  }
+
   function updateSelection(from: number, to: number) {
+    performanceCount('source-selection.updated');
     editorSelection = { from, to };
+    const mirroredVisualSelection = selectedVisualSourceSelection
+      && selectedVisualSourceSelection.from === from
+      && selectedVisualSourceSelection.to === to;
+    if (!mirroredVisualSelection) {
+      selectedVisualSourceSelection = undefined;
+      sourceSelectionActive = true;
+    }
+    if (!active) return;
+    const mapped = mappingSourceFor(active);
+    if (!mapped || mapped.source !== active.source) {
+      if (!mirroredVisualSelection) {
+        selectedMapId = undefined;
+      }
+      return;
+    }
+    const resolution = sourceSelectionMapResolution(mapped, from, to, activeSourceSelectionIndex);
+    selectedMapId = resolution?.mapId;
+    if (resolution?.fallback && from !== to) statusMessage = 'Selected containing Markdown block';
+    // A collapsed source caret changes on every keystroke. It does not identify
+    // a rendered block, so avoid scheduling a two-frame cross-pane sync for it.
+    if (from !== to) schedulePaneScrollSync(Math.floor((from + to) / 2), 'source');
+  }
+
+  function updateSourceHover(from: number | null, to: number | null) {
+    if (!active || from === null || to === null) {
+      if (hoveredMapId !== undefined) hoveredMapId = undefined;
+      return;
+    }
+    const mapped = mappingSourceFor(active);
+    if (!mapped || mapped.source !== active.source) {
+      if (hoveredMapId !== undefined) hoveredMapId = undefined;
+      return;
+    }
+    const nextMapId = sourceSelectionMapResolution(mapped, from, to, activeSourceSelectionIndex)?.mapId;
+    // CodeMirror pointermove is sampled once per animation frame, but the
+    // pointer can still move many times inside one mapped block. Avoid
+    // needlessly invalidating the entire ribbon/preview state in that case.
+    if ((nextMapId ?? undefined) !== hoveredMapId) hoveredMapId = nextMapId;
+  }
+
+  let hoverFrame: number | undefined;
+  let pendingHoverMapId: string | undefined;
+  function updateVisualHover(mapId: string | null) {
+    pendingHoverMapId = mapId ?? undefined;
+    if (hoverFrame !== undefined) return;
+    hoverFrame = requestAnimationFrame(() => {
+      hoverFrame = undefined;
+      hoveredMapId = pendingHoverMapId;
+    });
+  }
+
+  function updateVisualSelection(mapId: string | null, sourceSelection?: TextSelection) {
+    selectedMapId = mapId ?? undefined;
+    const resolvedSelection = active
+      ? renderedSelectionForSource(active, activeSourceSelectionIndex, mapId, sourceSelection)
+      : sourceSelection;
+    selectedVisualSourceSelection = resolvedSelection;
+    sourceSelectionActive = false;
+    if (resolvedSelection) {
+      editorSelection = resolvedSelection;
+      schedulePaneScrollSync(Math.floor((resolvedSelection.from + resolvedSelection.to) / 2), 'rendered');
+    }
+  }
+
+  function handleSlashCommand(mapId: string, command: SlashCommand) {
+    if (!active) return;
+    if (!slashCommandAvailable(command, markdownProfile)) {
+      statusMessage = `/${command.replaceAll('-', ' ')} is unavailable in the ${markdownProfile} profile`;
+      return;
+    }
+    const selection = mapId === EMPTY_VISUAL_MAP_ID
+      ? { from: active.source.length, to: active.source.length }
+      : mappedSelectionFor(active, mapId);
+    if (!selection) {
+      statusMessage = 'This visual block is stale; refresh it before inserting';
+      return;
+    }
+    selectedMapId = mapId;
+    selectedVisualSourceSelection = selection;
+    editorSelection = selection;
+    const dialogKind = slashCommandInsertKind(command);
+    if (dialogKind) {
+      requestInsertDialog(dialogKind);
+      return;
+    }
+    const result = insertSlashCommand(active.source, selection, command);
+    if (!result) return;
+    recordSourceChange(active.id, active.source, result.source, selection, result.selection);
+    editorSelection = result.selection;
+    selectedVisualSourceSelection = result.selection;
+    void updateSource(result.source, true);
+    statusMessage = `Inserted ${command.replaceAll('-', ' ')}`;
+  }
+
+  function requestInsertDialog(kind: InsertKind) {
+    insertDialogToken += 1;
+    insertDialogRequest = { kind, token: insertDialogToken };
+  }
+
+  function handleSourceSlashCommand(command: SlashCommand, selection: TextSelection) {
+    if (!active || selection.from < 0 || selection.to < selection.from || selection.to > active.source.length) return;
+    if (!slashCommandAvailable(command, markdownProfile)) {
+      statusMessage = `/${command.replaceAll('-', ' ')} is unavailable in the ${markdownProfile} profile`;
+      return;
+    }
+    const typedCommand = active.source.slice(selection.from, selection.to);
+    if (!/^\/[a-z-]*$/i.test(typedCommand)) return;
+
+    const dialogKind = slashCommandInsertKind(command);
+    if (dialogKind) {
+      const cleared = applyVisualDraftPatch(active.source, selection, typedCommand, '');
+      if (!cleared) {
+        statusMessage = 'The source changed before the slash command could be applied';
+        return;
+      }
+      recordSourceChange(active.id, active.source, cleared.source, selection, cleared.selection);
+      editorSelection = cleared.selection;
+      selectedVisualSourceSelection = undefined;
+      void updateSource(cleared.source, true);
+      requestInsertDialog(dialogKind);
+      statusMessage = 'Choose the details for this Markdown insert';
+      return;
+    }
+
+    const result = insertSlashCommand(active.source, selection, command);
+    if (!result) return;
+    recordSourceChange(active.id, active.source, result.source, selection, result.selection);
+    editorSelection = result.selection;
+    selectedVisualSourceSelection = undefined;
+    void updateSource(result.source, true);
+    statusMessage = `Inserted ${command.replaceAll('-', ' ')}`;
+  }
+
+  function revealMapInSource(mapId: string) {
+    if (!active) return;
+    const selection = mappedSelectionFor(active, mapId);
+    if (!selection) {
+      statusMessage = 'This source mapping is stale; refresh the preview before editing';
+      return;
+    }
+    if (!setViewMode('split')) return;
+    selectedMapId = mapId;
+    editorSelection = selection;
+    selectedVisualSourceSelection = selection;
+    statusMessage = 'Selected the block in the Markdown source editor';
+  }
+
+  function revealIssue(issue: Issue) {
+    if (!issue.mapId) {
+      statusMessage = issue.detail;
+      return;
+    }
+    revealMapInSource(issue.mapId);
+  }
+
+  function toggleEditing() {
+    if (editing) {
+      finishEditing();
+      return;
+    }
+    editing = true;
+    writeBrowserSetting('markdown-native-editing', 'true');
+    persistEditingEnabledSetting(true);
+    if (mode === 'source') setViewMode('split');
+    else if (sourceVisible) sourceEditorMounted = true;
+    statusMessage = 'Visual editing enabled';
+  }
+
+  /** Finish visual editing after flushing any focused contentEditable block. */
+  function finishEditing() {
+    if (!editing) return;
+    if (!flushPendingVisualEdit()) return;
+    editing = false;
+    writeBrowserSetting('markdown-native-editing', 'false');
+    persistEditingEnabledSetting(false);
+    setViewMode('rendered');
+    hoveredMapId = undefined;
+    selectedMapId = undefined;
+    selectedVisualSourceSelection = undefined;
+    statusMessage = 'Reading view restored';
+  }
+
+  function setViewMode(next: ViewMode): boolean {
+    // A view switch can remove the rendered pane and therefore destroy a
+    // contentEditable block. Commit its source-range patch before changing
+    // the view, while allowing no-op clicks to leave the active caret alone.
+    if (next !== mode && !flushPendingVisualEdit()) return false;
+    mode = next;
+    if (next !== 'rendered') {
+      sourceEditorMounted = true;
+      sourceVisible = true;
+    }
+    else sourceVisible = false;
+    return true;
+  }
+
+  function toggleSourceDrawer() {
+    if (!active) return;
+    if (mode !== 'rendered') {
+      if (!setViewMode('rendered')) return;
+      void tick().then(() => document.getElementById('toggle-source-drawer')?.focus());
+      return;
+    }
+    const wasVisible = sourceVisible;
+    sourceEditorMounted = true;
+    sourceVisible = !sourceVisible;
+    if (wasVisible) void tick().then(() => document.getElementById('toggle-source-drawer')?.focus());
+  }
+
+  /**
+   * Apply the current visual keystroke as a guarded source-range patch. The
+   * rendered DOM intentionally remains mounted until the edit leaves the
+   * block, while CodeMirror receives the authoritative source immediately.
+   */
+  function applyVisualDraftEdit(
+    mapId: string,
+    selection: TextSelection,
+    expectedMarkdown: string,
+    replacementMarkdown: string,
+  ): TextSelection | null {
+    if (!active) return null;
+    const applied = applyVisualDraftPatch(active.source, selection, expectedMarkdown, replacementMarkdown);
+    if (!applied) {
+      statusMessage = 'The visual edit became stale; refresh the rendered preview before continuing';
+      return null;
+    }
+    editorSelection = applied.selection;
+    if (mapId !== EMPTY_VISUAL_MAP_ID) {
+      selectedMapId = mapId;
+      selectedVisualSourceSelection = applied.selection;
+    }
+    const historyAnchor = active.draft
+      ? undefined
+      : { source: active.source, selection };
+    updateSource(applied.source, true, active.id, {
+      render: 'none',
+      preserveRenderedMap: true,
+      draft: nextDraftState(mapId, selection, replacementMarkdown, active.draft, historyAnchor),
+    });
+    statusMessage = 'Editing Markdown…';
+    return applied.selection;
+  }
+
+  /** Start one render after a visual draft leaves its contenteditable block. */
+  function completeVisualDraft() {
+    const tab = active;
+    if (!tab) return;
+    const historyCommit = visualDraftHistoryCommit(tab.draft, tab.source, editorSelection);
+    if (historyCommit) {
+      recordSourceChange(
+        tab.id,
+        historyCommit.before,
+        historyCommit.after,
+        historyCommit.beforeSelection,
+        historyCommit.afterSelection,
+        historyCommit.group,
+      );
+    }
+    incrementalCommitMapId = tab.draft?.mapId ?? undefined;
+    incrementalCommitSourceRange = tab.draft?.currentRange;
+    updateSource(tab.source, true, tab.id, { render: 'immediate' });
+  }
+
+  function commitVisualBlock(mapId: string, text: string, replacementMarkdown?: string): boolean {
+    if (!active) return false;
+    if (mapId === EMPTY_VISUAL_MAP_ID) {
+      const replacement = replacementMarkdown ?? markdownForSimpleVisualBlock('paragraph', '', text);
+      const applied = applyVisualDraftPatch(active.source, { from: 0, to: 0 }, '', replacement);
+      if (!applied) {
+        statusMessage = 'The empty document became stale; no visual edit was applied';
+        return false;
+      }
+      recordSourceChange(active.id, active.source, applied.source, editorSelection, applied.selection);
+      editorSelection = applied.selection;
+      selectedVisualSourceSelection = undefined;
+      void updateSource(applied.source, true);
+      selectedVisualSourceSelection = applied.selection;
+      statusMessage = 'Started the Markdown document without reserializing it';
+      return true;
+    }
+    const span = active.sourceMap.spans.find((candidate) => candidate.mapId === mapId);
+    if (span?.kind === 'table_cell') {
+      const selection = mappedSelectionFor(active, mapId);
+      if (!selection) {
+        statusMessage = 'This table cell became stale; no visual edit was applied';
+        return false;
+      }
+      const replacement = editGfmTableCell(active.source, selection, text);
+      if (!replacement) {
+        statusMessage = 'This cell contains Markdown syntax and remains source-editable';
+        return false;
+      }
+      recordSourceChange(active.id, active.source, replacement.source, editorSelection, replacement.selection);
+      editorSelection = replacement.selection;
+      void updateSource(replacement.source, true);
+      selectedVisualSourceSelection = replacement.selection;
+      statusMessage = 'Updated the table cell without reserializing the table';
+      return true;
+    }
+    if (span?.kind === 'code_block') {
+      if (span.attrs.fenced !== true || !replacementMarkdown) {
+        statusMessage = 'This code block remains source-editable because its fence is not safe to edit visually';
+        return false;
+      }
+      const selection = mappedSelectionFor(active, mapId);
+      if (!selection) {
+        statusMessage = 'This code block became stale; no visual edit was applied';
+        return false;
+      }
+      const hash = currentPatchHash(active);
+      if (!hash) {
+        statusMessage = 'The code edit became stale; refresh the rendered preview before continuing';
+        return false;
+      }
+      const applied = applyMappedSourcePatch(active.source, hash, active.sourceMap, mapId, replacementMarkdown);
+      if (!applied) {
+        statusMessage = 'The code edit became stale; no source was changed';
+        return false;
+      }
+      recordSourceChange(active.id, active.source, applied.source, editorSelection, applied.selection);
+      editorSelection = applied.selection;
+      void updateSource(applied.source, true);
+      selectedVisualSourceSelection = applied.selection;
+      statusMessage = 'Updated the code block without rewriting the surrounding Markdown';
+      return true;
+    }
+    if (!span || !['heading', 'paragraph', 'list_item', 'task_item'].includes(span.kind)) return false;
+    const selection = mappedSelectionFor(active, mapId);
+    if (!selection) {
+      statusMessage = 'This visual block is stale; refresh it before editing';
+      return false;
+    }
+     const replacement = replacementMarkdown ?? markdownForSimpleVisualBlock(
+       span.kind as SimpleVisualBlockKind,
+      active.source.slice(selection.from, selection.to),
+      text,
+      Number(span.attrs.level),
+    );
+    const hash = currentPatchHash(active);
+    if (!hash) {
+      statusMessage = 'The visual edit became stale; refresh the rendered preview before continuing';
+      return false;
+    }
+    const applied = applyMappedSourcePatch(active.source, hash, active.sourceMap, mapId, replacement);
+    if (!applied) {
+      statusMessage = 'The visual edit became stale; no source was changed';
+      return false;
+    }
+    recordSourceChange(active.id, active.source, applied.source, editorSelection, applied.selection);
+    editorSelection = applied.selection;
+    void updateSource(applied.source, true);
+    selectedVisualSourceSelection = applied.selection;
+    statusMessage = 'Updated the visual block without reserializing the document';
+    return true;
+  }
+
+  function commitVisualStructureEdit(patch: VisualStructurePatch): boolean {
+    if (!active) return false;
+    const before = active.source;
+    const expected = before.slice(patch.from, patch.to);
+    const applied = applyVisualDraftPatch(
+      before,
+      { from: patch.from, to: patch.to },
+      expected,
+      patch.replacement,
+    );
+    if (!applied || !isValidSourceRange(applied.source, patch.selection.from, patch.selection.to)) {
+      statusMessage = 'The visual structure edit became stale; no source was changed';
+      return false;
+    }
+    recordSourceChange(active.id, before, applied.source, editorSelection, patch.selection);
+    editorSelection = patch.selection;
+    selectedVisualSourceSelection = patch.selection;
+    void updateSource(applied.source, true);
+    statusMessage = 'Updated Markdown structure without rewriting the document';
+    return true;
+  }
+
+  function handleVisualFormat(mapId: string, selection: TextSelection, action: FormatAction): boolean {
+    if (!active) return false;
+    if (action === 'underline' && markdownProfile === 'commonmarkStrict') {
+      statusMessage = 'Underline is unavailable in the CommonMark Strict profile';
+      return false;
+    }
+    selectedMapId = mapId;
+    selectedVisualSourceSelection = selection;
+    editorSelection = selection;
+    if (action === 'link') {
+      requestInsertDialog('link');
+      return true;
+    }
+    applySourceEdit((current) => {
+      const result = applyFormatting(current, selection, action);
+      return result;
+    }, true);
+    return true;
+  }
+
+  function commitDetailsSummary(mapId: string, text: string): boolean {
+    if (!active) return false;
+    const selection = mappedSelectionFor(active, mapId);
+    if (!selection) {
+      statusMessage = 'This details block is stale; refresh it before editing';
+      return false;
+    }
+    const patch = detailsSummaryPatch(active.source, selection, text);
+    if (!patch) {
+      statusMessage = 'This summary contains markup and remains source-editable';
+      return false;
+    }
+    const applied = applyVisualDraftPatch(
+      active.source,
+      { from: patch.from, to: patch.to },
+      active.source.slice(patch.from, patch.to),
+      patch.replacement,
+    );
+    if (!applied) {
+      statusMessage = 'The details edit became stale; no source was changed';
+      return false;
+    }
+    recordSourceChange(active.id, active.source, applied.source, editorSelection, applied.selection);
+    editorSelection = applied.selection;
+    selectedMapId = mapId;
+    selectedVisualSourceSelection = applied.selection;
+    void updateSource(applied.source, true);
+    statusMessage = 'Updated the details summary without rewriting its body';
+    return true;
+  }
+
+  function moveBlock(movingMapId: string, targetMapId: string, position: BlockMovePosition): boolean {
+    if (!active) return false;
+    if (!sourceMapIsCurrentFor(active)) {
+      statusMessage = 'Preview is still refreshing; wait before moving this block';
+      return false;
+    }
+    const before = active.source;
+    const result = moveMappedBlock(before, active.sourceMap, movingMapId, targetMapId, position, activeSourceSelectionIndex);
+    if (!result) {
+      statusMessage = 'This block cannot move across unmapped Markdown content';
+      return false;
+    }
+    recordSourceChange(active.id, before, result.source, editorSelection, result.selection);
+    editorSelection = result.selection;
+    selectedMapId = movingMapId;
+    selectedVisualSourceSelection = result.selection;
+    void updateSource(result.source, true);
+    statusMessage = `Moved block ${position} the target without rewriting other content`;
+    return true;
+  }
+
+  function moveBlockBeside(movingMapId: string, targetMapId: string) {
+    // Persisted columns remain disabled until a current GitHub fixture proves
+    // one canonical representation. Keep the drop useful by using the core
+    // sequential transaction and explain the fallback to the user.
+    if (moveBlock(movingMapId, targetMapId, 'after')) {
+      statusMessage = 'Side-by-side Markdown is not enabled for this profile; placed the block sequentially after the target';
+    }
+  }
+
+  function moveSelectedBlock(direction: 'up' | 'down') {
+    if (!selectedSpan) return;
+    const targetMapId = direction === 'up' ? selectedBlockMoveUpTarget : selectedBlockMoveDownTarget;
+    if (!targetMapId) return;
+    moveBlock(selectedSpan.mapId, targetMapId, direction === 'up' ? 'before' : 'after');
+  }
+
+  function recordSourceChange(
+    tabId: string,
+    before: string,
+    after: string,
+    beforeSelection: TextSelection,
+    afterSelection: TextSelection,
+    group?: string,
+  ) {
+    const history = sourceHistory.get(tabId) ?? [];
+    sourceHistory.set(tabId, appendSourceHistory(history, before, after, beforeSelection, afterSelection, group));
+    sourceRedoHistory.delete(tabId);
+  }
+
+  function undoVisualChange() {
+    if (!active) return;
+    if (!flushPendingVisualEdit()) return;
+    const history = sourceHistory.get(active.id) ?? [];
+    const entry = history.at(-1);
+    if (!entry || entry.after !== active.source) {
+      statusMessage = 'No visual edit is available to undo';
+      return;
+    }
+    history.pop();
+    sourceHistory.set(active.id, history);
+    const redo = sourceRedoHistory.get(active.id) ?? [];
+    redo.push(entry);
+    sourceRedoHistory.set(active.id, redo);
+    editorSelection = entry.beforeSelection;
+    selectedVisualSourceSelection = undefined;
+    sourceSelectionActive = true;
+    const restored = restoreRenderedSnapshot(active.id, renderedSnapshotFor(active.id, entry.before));
+    updateSource(entry.before, true, active.id, { render: restored ? 'none' : 'debounced', preserveRenderedMap: restored });
+    statusMessage = 'Undid the last Markdown edit';
+  }
+
+  function redoVisualChange() {
+    if (!active) return;
+    if (!flushPendingVisualEdit()) return;
+    const redo = sourceRedoHistory.get(active.id) ?? [];
+    const entry = redo.at(-1);
+    if (!entry || entry.before !== active.source) {
+      statusMessage = 'No visual edit is available to redo';
+      return;
+    }
+    redo.pop();
+    sourceRedoHistory.set(active.id, redo);
+    const history = sourceHistory.get(active.id) ?? [];
+    history.push(entry);
+    sourceHistory.set(active.id, history);
+    editorSelection = entry.afterSelection;
+    selectedVisualSourceSelection = undefined;
+    sourceSelectionActive = true;
+    const restored = restoreRenderedSnapshot(active.id, renderedSnapshotFor(active.id, entry.after));
+    updateSource(entry.after, true, active.id, { render: restored ? 'none' : 'debounced', preserveRenderedMap: restored });
+    statusMessage = 'Redid the last Markdown edit';
+  }
+
+  function focusedVisualEditor(): HTMLElement | null {
+    const focused = document.activeElement;
+    if (!(focused instanceof HTMLElement)) return null;
+    const editor = focused.closest<HTMLElement>('[data-visual-editable="true"], [data-insertion-zone="true"]');
+    return editor && renderedPaneElement()?.contains(editor) ? editor : null;
+  }
+
+  function visualEditorIsComposing(editor: HTMLElement | null): boolean {
+    return editor?.dataset.visualComposing === 'true';
+  }
+
+  /** Commit a focused visual block before a keyboard or toolbar action reads source. */
+  function flushFocusedVisualEdit(focusTarget?: HTMLElement | null): boolean {
+    const focused = focusTarget ?? document.activeElement;
+    if (!(focused instanceof HTMLElement)) return false;
+    const editor = focused.closest<HTMLElement>('[data-visual-editable="true"], [data-insertion-zone="true"]');
+    if (!editor || !renderedPaneElement()?.contains(editor)) return false;
+    if (visualEditorIsComposing(editor)) {
+      statusMessage = 'Finish the current text composition before leaving visual editing';
+      return false;
+    }
+    editor.blur();
+    return true;
+  }
+
+  /**
+   * Commit any visual block that would otherwise be destroyed by navigation.
+   * Normally a pointer action blurs the block first, but tab switches,
+   * workspace navigation, and native dialogs can race that browser event.
+   * Never force a blur through an active IME composition: the user must finish
+   * the composition so its text remains source-authoritative.
+   */
+  function flushPendingVisualEdit(): boolean {
+    const focused = focusedVisualEditor();
+    const pending = focused?.dataset.visualDirty === 'true'
+      ? focused
+      : renderedPaneElement()?.querySelector<HTMLElement>('[data-visual-dirty="true"]') ?? null;
+    if (!pending) return true;
+    if (visualEditorIsComposing(pending)) {
+      statusMessage = 'Finish the current text composition before navigating';
+      return false;
+    }
+    if (document.activeElement !== pending) pending.focus();
+    pending.blur();
+    return true;
+  }
+
+  function nextRenderGeneration(tabId: string) {
+    return renderController.nextGeneration(tabId);
+  }
+
+  function openFind() {
+    if (!active) return;
+    if (!flushPendingVisualEdit()) return;
+    if (!findQuery && editorSelection.from !== editorSelection.to) {
+      findQuery = active.source.slice(editorSelection.from, editorSelection.to);
+    }
+    showFind = true;
+    findIndex = 0;
+    void tick().then(() => {
+      const input = document.getElementById('document-find');
+      if (input instanceof HTMLInputElement) {
+        input.focus();
+        input.select();
+      }
+      void revealFindMatch();
+    });
+  }
+
+  function closeFind() {
+    showFind = false;
+  }
+
+  function updateFindReplacement(value: string) {
+    findReplacement = value;
+  }
+
+  function updateFindQuery(value: string) {
+    findQuery = value;
+    findIndex = 0;
+    void revealFindMatch();
+  }
+
+  function handleFindKeydown(event: KeyboardEvent) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      moveFindMatch(event.shiftKey ? -1 : 1);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      closeFind();
+    }
+  }
+
+  function handleSourceChange(changes: SourceDocumentChange[]) {
+    if (!active) return;
+    const nextSource = applySourceDocumentChanges(active.source, changes);
+    if (nextSource === null) {
+      statusMessage = 'The source editor became stale; refresh it before continuing';
+      return;
+    }
+    if (nextSource === active.source) return;
+    const tab = active;
+    recordSourceChange(tab.id, tab.source, nextSource, editorSelection, editorSelection, 'source-typing');
+    updateSource(nextSource, true, tab.id, { render: 'debounced' });
+  }
+
+  function moveFindMatch(direction: 1 | -1) {
+    if (!documentFindMatches.length) return;
+    findIndex = (activeFindIndex + direction + documentFindMatches.length) % documentFindMatches.length;
+    void revealFindMatch();
+  }
+
+  function replaceFindMatches(all: boolean) {
+    if (!active || !findQuery || !documentFindMatches.length) return;
+    const tab = active;
+    const selectedMatches = all
+      ? documentFindMatches
+      : [documentFindMatches[activeFindIndex] ?? documentFindMatches[0]];
+    const patches = selectedMatches.map((match) => ({
+      baseSourceHash: 'find-replace',
+      from: match.from,
+      to: match.to,
+      replacement: findReplacement,
+    }));
+    const applied = applySourcePatches(tab.source, 'find-replace', patches);
+    if (!applied) {
+      statusMessage = 'The Find results are stale; refresh the document before replacing';
+      return;
+    }
+    const replacementSelection = applied.selections[0] ?? { from: 0, to: 0 };
+    recordSourceChange(tab.id, tab.source, applied.source, editorSelection, replacementSelection, 'find-replace');
+    editorSelection = replacementSelection;
+    void updateSource(applied.source, true, tab.id, { render: 'debounced' });
+    statusMessage = all
+      ? `Replaced ${selectedMatches.length} ${selectedMatches.length === 1 ? 'match' : 'matches'}`
+      : 'Replaced current match';
+  }
+
+  async function revealFindMatch() {
+    await tick();
+    const mapId = activeFindMapIds[0];
+    const pane = renderedPaneElement();
+    if (!mapId || !pane) return;
+    const element = [...pane.querySelectorAll<HTMLElement>('[data-map-id]')]
+      .find((candidate) => candidate.dataset.mapId === mapId);
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
+    element?.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'center' });
   }
 
   async function handleEditorPaste(event: ClipboardEvent) {
-    if (!active || !event.clipboardData) return;
+    const pasteTab = active;
+    if (!pasteTab || !event.clipboardData) return;
+    const pasteTabId = pasteTab.id;
+    const pasteSource = pasteTab.source;
+    const pasteSelection = { ...editorSelection };
+    const pasteAssetFolder = assetFolder;
     const image = [...event.clipboardData.files].find((file) => file.type.startsWith('image/'));
     if (image && isTauri) {
       event.preventDefault();
       const bytes = [...new Uint8Array(await image.arrayBuffer())];
       const extension = image.type.split('/')[1] || 'png';
-      const relativePath = await saveClipboardImage(active.id, bytes, extension);
-      replaceSelection(`![Pasted image](${relativePath})`);
-      statusMessage = 'Image saved to the document asset folder';
+      const staged = await saveClipboardImage(pasteTabId, bytes, extension, pasteAssetFolder);
+      const applied = replaceSelectionInTab(
+        pasteTabId,
+        pasteSource,
+        pasteSelection,
+        `![Pasted image](${staged.relativePath})`,
+      );
+      if (!applied) {
+        await discardStagedAsset(pasteTabId, staged.cleanupToken).catch(() => undefined);
+        statusMessage = 'The source changed before the pasted image could be linked';
+        return;
+      }
+      await commitStagedAsset(pasteTabId, staged.cleanupToken);
+      statusMessage = `Image saved to ${staged.relativePath}`;
       return;
     }
-    const html = event.clipboardData.getData('text/html');
+    const html = event.clipboardData.types.includes('text/html')
+      ? event.clipboardData.getData('text/html')
+      : '';
     if (html) {
       event.preventDefault();
-      replaceSelection(await htmlToMarkdown(html));
+      replaceSelectionInTab(
+        pasteTabId,
+        pasteSource,
+        pasteSelection,
+        await htmlToMarkdown(html, markdownLineEnding(pasteSource), event.clipboardData.getData('text/plain')),
+      );
       statusMessage = 'Rich clipboard content converted to clean Markdown';
     } else if (event.clipboardData.types.includes('text/plain')) {
       event.preventDefault();
-      replaceSelection(plainTextPaste(event.clipboardData.getData('text/plain')));
+      replaceSelectionInTab(
+        pasteTabId,
+        pasteSource,
+        pasteSelection,
+        plainTextPaste(event.clipboardData.getData('text/plain')),
+      );
     }
   }
 
-  function replaceSelection(insert: string) {
+  async function handleVisualPaste(
+    mapId: string,
+    selection: TextSelection | null,
+    html: string,
+    plainText: string,
+  ) {
+    const pasteTab = active;
+    if (!pasteTab) return;
+    const pasteTabId = pasteTab.id;
+    const pasteSource = pasteTab.source;
+    const pasteSelection = mapId === EMPTY_VISUAL_MAP_ID ? { from: 0, to: 0 } : selection;
+    if (!pasteSelection) {
+      statusMessage = 'This visual position cannot be mapped safely; use the source drawer for this paste';
+      return;
+    }
+
+    const converted = await htmlToMarkdown(html, markdownLineEnding(pasteSource), plainText);
+    const insert = converted.trim() || plainTextPaste(plainText).trim();
+    if (!insert) {
+      statusMessage = 'The clipboard did not contain transferable Markdown content';
+      return;
+    }
+    if (replaceSelectionInTab(pasteTabId, pasteSource, pasteSelection, insert)) {
+      statusMessage = 'Rich clipboard content converted to clean Markdown';
+    }
+  }
+
+  function droppedImageAlt(path: string): string {
+    const name = path.split(/[\\/]/).pop() ?? 'image';
+    const stem = name.replace(/\.[^.]+$/, '').replace(/[\[\]\r\n]/g, '_').trim();
+    return stem || 'image';
+  }
+
+  function sourceSelectionAtDrop(position: { x: number; y: number }): TextSelection {
+    const fallback = editorSelection;
+    const pane = renderedPaneElement();
+    if (!active || !pane) return fallback;
+    // Tauri reports a PhysicalPosition. Convert it to CSS pixels before
+    // asking the webview which mapped object is under the pointer.
+    const scale = window.devicePixelRatio || 1;
+    const element = document.elementFromPoint(position.x / scale, position.y / scale);
+    const mapped = element?.closest<HTMLElement>('[data-map-id]');
+    if (!mapped || !pane.contains(mapped)) return fallback;
+    const mapId = mapped.dataset.mapId;
+    if (!mapId) return fallback;
+    const selection = mappedSelectionFor(active, mapId);
+    return selection ? { from: selection.to, to: selection.to } : fallback;
+  }
+
+  async function handleNativeAssetDrop(grants: { token: string; name: string }[], position: { x: number; y: number }) {
+    const currentActive = active;
+    const plan = planAssetDrop(grants, Boolean(currentActive));
+    if (plan.kind === 'ignore') return;
+    if (plan.kind === 'discard') {
+      await discardUnusedAssetDropGrants(grants);
+      statusMessage = plan.reason === 'no-document'
+        ? 'Open a Markdown document before dropping an image'
+        : 'Drop a PNG, JPEG, GIF, WebP, BMP, or AVIF image';
+      return;
+    }
+    const imageGrant = plan.grant;
+    void discardUnusedAssetDropGrants(plan.discard);
+    if (!currentActive) return;
+    const tabId = currentActive.id;
+    const baseSource = currentActive.source;
+    const dropAssetFolder = assetFolder;
+    const insertion = sourceSelectionAtDrop(position);
+    try {
+      const info = await inspectDroppedImage(tabId, imageGrant.token, dropAssetFolder);
+      if (info.alreadyInAssetFolder) {
+        pendingAssetDrop = { tabId, baseSource, assetFolder: dropAssetFolder, insertion, grant: imageGrant, info };
+        statusMessage = `${info.name} is already inside the asset folder; choose link or copy`;
+        return;
+      }
+      await finishNativeAssetDrop({ tabId, baseSource, assetFolder: dropAssetFolder, insertion, grant: imageGrant, info }, 'copy');
+    } catch (error) {
+      statusMessage = `Could not add dropped image: ${invokeErrorMessage(error)}`;
+    }
+  }
+
+  async function discardUnusedAssetDropGrants(grants: { token: string; name: string }[]) {
+    if (!isTauri) return;
+    await Promise.all(grants.map(async (grant) => {
+      try {
+        await discardDroppedImage(grant.token);
+      } catch {
+        // A one-time grant may already have been consumed or expired.
+      }
+    }));
+  }
+
+  async function finishNativeAssetDrop(pending: PendingAssetDrop, mode: 'copy' | 'link') {
+    const { tabId, baseSource, assetFolder: targetAssetFolder, insertion, grant, info } = pending;
+    let staged: Awaited<ReturnType<typeof copyDroppedImage>> | null = null;
+    try {
+      let relativePath: string;
+      if (mode === 'copy') {
+        staged = await copyDroppedImage(tabId, grant.token, targetAssetFolder);
+        relativePath = staged.relativePath;
+      } else {
+        relativePath = await linkDroppedImage(tabId, grant.token, targetAssetFolder);
+      }
+      const current = tabs.find((tab) => tab.id === tabId);
+      if (!current || current.source !== baseSource) {
+        if (staged) await discardStagedAsset(tabId, staged.cleanupToken).catch(() => undefined);
+        statusMessage = mode === 'copy'
+          ? `Copied ${relativePath}, but the document changed before it could be linked`
+          : `Resolved ${relativePath}, but the document changed before it could be linked`;
+        return;
+      }
+      const result = insertImage(current.source, insertion, droppedImageAlt(info.name), relativePath);
+      recordSourceChange(tabId, current.source, result.source, insertion, result.selection);
+      if (activeId === tabId) {
+        editorSelection = result.selection;
+        selectedVisualSourceSelection = result.selection;
+      }
+      void updateSource(result.source, true, tabId);
+      if (staged) await commitStagedAsset(tabId, staged.cleanupToken);
+      statusMessage = mode === 'link' ? `Linked image ${relativePath}` : `Added image ${relativePath}`;
+    } catch (error) {
+      if (staged) await discardStagedAsset(tabId, staged.cleanupToken).catch(() => undefined);
+      statusMessage = `Could not ${mode === 'link' ? 'link' : 'add'} image: ${invokeErrorMessage(error)}`;
+    }
+  }
+
+  async function cancelNativeAssetDrop() {
+    const pending = pendingAssetDrop;
+    pendingAssetDrop = null;
+    if (!pending || !isTauri) return;
+    try {
+      await discardDroppedImage(pending.grant.token);
+    } catch {
+      // The grant may already have expired; cancellation remains harmless.
+    }
+  }
+
+  async function chooseNativeAssetDrop(mode: 'copy' | 'link') {
+    const pending = pendingAssetDrop;
+    pendingAssetDrop = null;
+    if (!pending) return;
+    await finishNativeAssetDrop(pending, mode);
+  }
+
+  async function consolidateReferencedImages() {
     if (!active) return;
-    const next = `${active.source.slice(0, editorSelection.from)}${insert}${active.source.slice(editorSelection.to)}`;
-    void updateSource(next);
-    const cursor = editorSelection.from + insert.length;
-    editorSelection = { from: cursor, to: cursor };
+    if (!isTauri) {
+      statusMessage = 'Asset consolidation is available in the desktop build';
+      return;
+    }
+    if (consolidatingAssets) return;
+    const tabId = active.id;
+    const baseSource = active.source;
+    const consolidationAssetFolder = assetFolder;
+    const consolidationSelection = { ...editorSelection };
+    consolidatingAssets = true;
+    statusMessage = 'Checking local image references…';
+    try {
+      const result = await consolidateImages(tabId, baseSource, markdownProfile, consolidationAssetFolder);
+      const current = tabs.find((tab) => tab.id === tabId);
+      if (!current || current.source !== baseSource) {
+        statusMessage = result.copied.length
+          ? `Copied ${result.copied.length} image${result.copied.length === 1 ? '' : 's'}, but the document changed before links could be updated`
+          : 'The document changed before image references could be checked';
+        return;
+      }
+      if (result.source !== baseSource) {
+        recordSourceChange(tabId, baseSource, result.source, consolidationSelection, consolidationSelection);
+        void updateSource(result.source, true, tabId);
+      }
+      const parts = [];
+      if (result.copied.length) parts.push(`copied ${result.copied.length}`);
+      if (result.missing.length) parts.push(`${result.missing.length} missing`);
+      if (result.skipped.length) parts.push(`${result.skipped.length} skipped`);
+      statusMessage = parts.length
+        ? `Image consolidation: ${parts.join(', ')}`
+        : 'All local image references already use the asset folder';
+    } catch (error) {
+      statusMessage = `Could not consolidate images: ${invokeErrorMessage(error)}`;
+    } finally {
+      consolidatingAssets = false;
+    }
+  }
+
+  function replaceSelectionInTab(
+    tabId: string,
+    baseSource: string,
+    selection: TextSelection,
+    insert: string,
+  ): boolean {
+    const tab = tabs.find((item) => item.id === tabId);
+    if (!tab || tab.source !== baseSource) {
+      statusMessage = 'The document changed before the edit could be linked';
+      return false;
+    }
+    const before = tab.source;
+    const applied = applyVisualDraftPatch(
+      before,
+      selection,
+      before.slice(selection.from, selection.to),
+      insert,
+    );
+    if (!applied) {
+      statusMessage = 'The current source selection is stale or unsafe; refresh before inserting';
+      return false;
+    }
+    recordSourceChange(tabId, before, applied.source, selection, applied.selection);
+    if (activeId === tabId) editorSelection = applied.selection;
+    void updateSource(applied.source, true, tabId);
+    return true;
+  }
+
+  function replaceSelection(insert: string): boolean {
+    if (!active) return false;
+    return replaceSelectionInTab(active.id, active.source, editorSelection, insert);
   }
 
   function insertBlock(kind: 'mermaid' | 'dot' | 'math') {
+    if (!diagramInsertAvailable(kind, markdownProfile)) {
+      statusMessage = diagramInsertUnavailableMessage(kind, markdownProfile);
+      return;
+    }
     const blocks = {
       mermaid: '\n```mermaid\nflowchart LR\n  A[Start] --> B[Next]\n```\n',
       dot: '\n```dot\ndigraph G {\n  A -> B\n}\n```\n',
       math: '\n$$\nE = mc^2\n$$\n',
     };
+    // Ribbon inserts are source-range edits, not view-navigation commands.
+    // Keep the user's current Render/Source/Split choice; the source drawer
+    // remains available through its own explicit control.
     replaceSelection(blocks[kind]);
-    mode = 'split';
   }
 
   async function importDocument(kind: 'html' | 'docx') {
-    if (!isTauri || !active) {
+    const importTab = active;
+    if (!isTauri || !importTab) {
       statusMessage = 'Open a Markdown document before importing content';
       return;
     }
+    const importTabId = importTab.id;
+    const importSource = importTab.source;
+    const importSelection = { ...editorSelection };
     const selected = await pickImportPath(kind);
     if (!selected) return;
     const bytes = await readImportGrant(selected.token);
     if (kind === 'html') {
       const text = new TextDecoder().decode(new Uint8Array(bytes));
-      replaceSelection(await htmlToMarkdown(text));
-      statusMessage = 'HTML imported as sanitized Markdown';
+      const applied = replaceSelectionInTab(importTabId, importSource, importSelection, await htmlToMarkdown(text, markdownLineEnding(importTab.source)));
+      if (applied) statusMessage = 'HTML imported as sanitized Markdown';
     } else {
       const mammoth = await import('mammoth');
       const result = await mammoth.convertToHtml({ arrayBuffer: new Uint8Array(bytes).buffer });
-      replaceSelection(await htmlToMarkdown(result.value));
-      statusMessage = result.messages.length ? `DOCX imported with ${result.messages.length} adjustments` : 'DOCX imported as semantic Markdown';
+      const applied = replaceSelectionInTab(importTabId, importSource, importSelection, await htmlToMarkdown(result.value, markdownLineEnding(importTab.source)));
+      if (applied) {
+        statusMessage = result.messages.length ? `DOCX imported with ${result.messages.length} adjustments` : 'DOCX imported as semantic Markdown';
+      }
     }
   }
 
-  function applySourceEdit(patch: (source: string) => EditResult) {
+  function applySourceEdit(patch: (source: string) => EditResult, preserveVisualSelection = false) {
     if (!active) return;
-    if (mode === 'rendered') mode = 'split';
-    const result = patch(active.source);
-    void updateSource(result.source);
+    const before = active.source;
+    const result = patch(before);
+    // The returned selection belongs to the edited source, not the pre-edit
+    // source. Insertions at the end commonly place the caret beyond the old
+    // length; validating against `before` would incorrectly reject them.
+    if (!isValidSourceRange(result.source, result.selection.from, result.selection.to)) {
+      statusMessage = 'The edit returned an unsafe source selection and was not applied';
+      return;
+    }
+    recordSourceChange(active.id, before, result.source, editorSelection, result.selection);
+    void updateSource(result.source, true);
     editorSelection = result.selection;
+    if (preserveVisualSelection) selectedVisualSourceSelection = result.selection;
     statusMessage = 'Updated Markdown source without reserializing the document';
   }
 
   async function saveActive() {
-    if (!active) return;
-    if (!active.dirty) return (statusMessage = 'No changes to save');
+    if (!flushPendingVisualEdit()) return;
+    // contentEditable blur invokes the source-range callback synchronously,
+    // but allow Svelte to publish the updated tab before taking the save
+    // snapshot. This prevents Ctrl+S from saving stale DOM-only text.
+    await tick();
+    const tab = active;
+    if (!tab) return;
+    if (!tab.dirty) return (statusMessage = 'No changes to save');
     if (!isTauri) return;
+    if (isUntitledDocumentId(tab.id)) {
+      await saveActiveAs();
+      return;
+    }
+    const tabId = tab.id;
+    const sourceAtSave = tab.source;
+    const revisionAtSave = tab.revision;
     try {
-      const result = await saveDocument(active.id, active.revision, active.source);
-      tabs = tabs.map((tab) => (tab.id === active.id ? { ...tab, revision: result.revision, meta: { ...result.meta, profile: markdownProfile }, dirty: false, savedSource: tab.source } : tab));
-      void clearRecovery(active.id);
+      const result = await saveDocument(tabId, revisionAtSave, sourceAtSave);
+      const latest = tabs.find((item) => item.id === tabId);
+      const stillAtSavedSource = latest?.source === sourceAtSave;
+      if (stillAtSavedSource) {
+        const recoveryTimer = recoveryTimers.get(tabId);
+        if (recoveryTimer !== undefined) window.clearTimeout(recoveryTimer);
+        recoveryTimers.delete(tabId);
+      }
+      tabs = tabs.map((item) => (item.id === tabId
+        ? {
+          ...item,
+          revision: result.revision,
+          meta: { ...result.meta, profile: markdownProfile },
+          dirty: !stillAtSavedSource,
+          savedSource: sourceAtSave,
+        }
+        : item));
+      if (stillAtSavedSource) void clearRecovery(tabId);
       statusMessage = 'Saved atomically';
     } catch (error) {
       const parsed = parseInvokeError(error);
       if (parsed.kind === 'Conflict') {
-        conflict = { tabId: active.id, diskSource: parsed.detail.diskSource, currentRevision: parsed.detail.currentRevision, diskMeta: parsed.detail.diskMeta };
+        conflict = { tabId, diskSource: parsed.detail.diskSource, currentRevision: parsed.detail.currentRevision, diskMeta: parsed.detail.diskMeta };
         statusMessage = 'Save paused to prevent a lost update';
       } else {
         statusMessage = parsed.kind === 'Message' ? parsed.detail : 'Save paused to prevent a lost update';
@@ -478,33 +2203,115 @@
   }
 
   async function saveActiveAs() {
-    if (!active) return;
+    const tab = active;
+    if (!tab) return;
     if (!isTauri) return (statusMessage = 'Save As is available in the desktop build');
-    const selected = await pickSavePath(active.meta.fileName || `${active.title}.md`);
+    if (!flushPendingVisualEdit()) return;
+    const tabId = tab.id;
+    const selected = await pickSavePath(isUntitledDocumentId(tab.id) ? 'Untitled.md' : (tab.meta.fileName || `${tab.title}.md`));
     if (!selected) return;
     try {
-      const document = await saveDocumentAs(active.id, selected.token, active.source, markdownProfile);
-      tabs = tabs.map((tab) => tab.id === active.id ? { ...document, dirty: false, savedSource: document.source } : tab);
+      // The native picker and Save As IPC are both await points. Resolve the
+      // source again after the picker so a tab switch or edit cannot cause an
+      // older snapshot to replace newer in-memory work.
+      const latestBeforeSave = tabs.find((item) => item.id === tabId);
+      if (!latestBeforeSave) return;
+      const sourceAtSave = latestBeforeSave.source;
+      const document = await saveDocumentAs(tabId, selected.token, sourceAtSave, markdownProfile, compatibilityTarget);
+      const latestAfterSave = tabs.find((item) => item.id === tabId);
+      if (!latestAfterSave) {
+        // The tab was closed while native I/O was in flight. Keep the newly
+        // saved document discoverable. A same-path Save As reuses the same
+        // native ID, so closing it here would leave the new tab without a
+        // native document record.
+        if (document.id === tabId) void clearRecovery(tabId);
+        else void closeDocument(tabId);
+        cacheRenderedSnapshot(document.id, document.source, document);
+        tabs = [...tabs, asOpenTab(document)];
+        rememberOpenedDocument(document.meta.path);
+        statusMessage = 'Saved a new Markdown file after the original tab closed';
+        return;
+      }
+      if (latestAfterSave.source !== sourceAtSave) {
+        if (document.id === tabId) {
+          // A same-path Save As wrote the older snapshot to disk while the
+          // user continued editing. Update only the disk baseline and native
+          // revision; never replace the newer in-memory source or duplicate
+          // the tab ID.
+          tabs = tabs.map((item) => item.id === tabId
+            ? { ...item, meta: document.meta, revision: document.revision, savedSource: sourceAtSave, dirty: true }
+            : item);
+          rememberOpenedDocument(document.meta.path);
+          statusMessage = 'Saved the earlier snapshot; newer edits remain in the original tab';
+          return;
+        }
+        // The new file is still a valid user-requested snapshot, but the
+        // original tab changed while native I/O was in flight. Keep both
+        // documents visible instead of clobbering the newer source. The old
+        // runtime state and recovery snapshot remain owned by that tab.
+        cacheRenderedSnapshot(document.id, document.source, document);
+        tabs = [...tabs, asOpenTab(document)];
+        rememberOpenedDocument(document.meta.path);
+        statusMessage = 'Saved a snapshot as a new Markdown file; newer edits remain in the original tab';
+        return;
+      }
+      const previousTabId = tabId;
+      releaseTabRuntimeState(previousTabId);
+      backHistory = replaceTabInHistory(backHistory, previousTabId, document.id);
+      forwardHistory = replaceTabInHistory(forwardHistory, previousTabId, document.id);
+      tabs = tabs.map((item) => item.id === tabId ? asOpenTab(document) : item);
+      clearPaneSelection();
       activeId = document.id;
+      cacheRenderedSnapshot(document.id, document.source, document);
+      rememberOpenedDocument(document.meta.path);
+      void clearRecovery(previousTabId);
+      if (document.id !== previousTabId) void closeDocument(previousTabId);
       statusMessage = 'Saved as a new Markdown file';
     } catch (error) {
       statusMessage = invokeErrorMessage(error);
     }
   }
 
-  async function reloadTab(tabId: string) {
-    const tab = tabs.find((item) => item.id === tabId);
-    if (!tab || !isTauri) return;
-    const fresh = await readDocument(tabId, markdownProfile);
-    tabs = tabs.map((item) => (item.id === tabId ? { ...fresh, dirty: false, savedSource: fresh.source } : item));
-    statusMessage = 'Reloaded the disk version';
+  async function reloadTab(tabId: string, expectedExternalGeneration?: number) {
+    const observed = tabs.find((item) => item.id === tabId);
+    if (!observed || !isTauri) return;
+    try {
+      const fresh = await readDocument(tabId, markdownProfile, compatibilityTarget);
+      const current = tabs.find((item) => item.id === tabId);
+      if (!current || current.source !== observed.source || current.revision !== observed.revision
+        || (expectedExternalGeneration !== undefined && externalChangeGenerations.get(tabId) !== expectedExternalGeneration)) {
+        statusMessage = 'Reload cancelled because the document changed while it was being read';
+        return;
+      }
+      if (activeId === tabId) clearPaneSelection();
+      clearSourceRenderTimer(tabId);
+      nextRenderGeneration(tabId);
+      sourceHistory.delete(tabId);
+      sourceRedoHistory.delete(tabId);
+      renderedSnapshots.delete(tabId);
+      cacheRenderedSnapshot(tabId, fresh.source, fresh);
+      const recoveryTimer = recoveryTimers.get(tabId);
+      if (recoveryTimer !== undefined) window.clearTimeout(recoveryTimer);
+      recoveryTimers.delete(tabId);
+      tabs = tabs.map((item) => (item.id === tabId ? asOpenTab(fresh) : item));
+      void clearRecovery(tabId);
+      statusMessage = 'Reloaded the disk version';
+    } catch (error) {
+      statusMessage = `Could not reload the disk version: ${invokeErrorMessage(error)}`;
+    }
   }
 
   async function keepMine() {
     if (!conflict || !isTauri) return;
     const resolution = conflict;
+    const generation = externalChangeGenerations.get(resolution.tabId);
     try {
       const adopted = await adoptDiskRevision(resolution.tabId);
+      if (!isCurrentConflict(resolution)
+        || (generation !== undefined && externalChangeGenerations.get(resolution.tabId) !== generation)) {
+        statusMessage = 'Conflict resolution cancelled because a newer disk change was detected';
+        return;
+      }
       tabs = tabs.map((tab) => tab.id === resolution.tabId
         ? { ...tab, revision: adopted.revision, meta: { ...adopted.meta, profile: markdownProfile } }
         : tab);
@@ -519,14 +2326,69 @@
     if (!conflict) return;
     const resolution = conflict;
     const id = resolution.tabId;
-    conflict = null;
-    const fresh = await readDocument(id, markdownProfile);
-    tabs = tabs.map((tab) => tab.id === id ? { ...fresh, dirty: false, savedSource: fresh.source } : tab);
+      const observed = tabs.find((tab) => tab.id === id);
+    if (!observed || !isTauri) return;
+    try {
+      const fresh = await readDocument(id, markdownProfile, compatibilityTarget);
+      const current = tabs.find((tab) => tab.id === id);
+      if (!current || current.source !== observed.source || current.revision !== observed.revision || !isCurrentConflict(resolution)) {
+        statusMessage = 'Reload cancelled because newer edits were made while resolving the conflict';
+        return;
+      }
+      conflict = null;
+      if (activeId === id) clearPaneSelection();
+      clearSourceRenderTimer(id);
+      nextRenderGeneration(id);
+      sourceHistory.delete(id);
+      sourceRedoHistory.delete(id);
+      renderedSnapshots.delete(id);
+      cacheRenderedSnapshot(id, fresh.source, fresh);
+      tabs = tabs.map((tab) => tab.id === id ? asOpenTab(fresh) : tab);
+      statusMessage = 'Reloaded the disk version';
+    } catch (error) {
+      statusMessage = `Could not reload the disk version: ${invokeErrorMessage(error)}`;
+    }
+  }
+
+  function requestReloadActive() {
+    const tab = active;
+    if (!tab) {
+      statusMessage = 'Open a Markdown document before reloading';
+      return;
+    }
+    if (!isTauri) {
+      statusMessage = 'Reload from disk is available in the desktop application';
+      return;
+    }
+    if (isUntitledDocumentId(tab.id)) {
+      statusMessage = 'Untitled documents are not on disk yet; use Save As first';
+      return;
+    }
+    if (!flushPendingVisualEdit()) return;
+    if (tab.dirty) {
+      pendingReloadTabId = tab.id;
+      showReloadConfirm = true;
+      return;
+    }
+    void reloadTab(tab.id);
+  }
+
+  async function confirmReload() {
+    const tabId = pendingReloadTabId;
+    pendingReloadTabId = undefined;
+    showReloadConfirm = false;
+    if (tabId) await reloadTab(tabId);
+  }
+
+  function isCurrentConflict(expected: NonNullable<typeof conflict>): boolean {
+    return conflict?.tabId === expected.tabId
+      && conflict.currentRevision === expected.currentRevision
+      && conflict.diskSource === expected.diskSource;
   }
 
   function closeTab(id: string) {
     const tab = tabs.find((item) => item.id === id);
-    if (tab?.dirty) {
+    if (tab?.dirty || hasPendingVisualEdit(id)) {
       pendingCloseTabId = id;
       return;
     }
@@ -535,10 +2397,33 @@
 
   function completeCloseTab(id: string) {
     if (isTauri) void closeDocument(id);
+    clearSourceRenderTimer(id);
+    releaseTabRuntimeState(id);
+    backHistory = removeTabFromHistory(backHistory, id);
+    forwardHistory = removeTabFromHistory(forwardHistory, id);
+    if (conflict?.tabId === id) conflict = null;
+    if (pendingReloadTabId === id) {
+      pendingReloadTabId = undefined;
+      showReloadConfirm = false;
+    }
+    if (selectedRecoveryId === id) selectedRecoveryId = undefined;
+    if (pendingPaneScrollSync && activeId === id) {
+      pendingPaneScrollSync = undefined;
+      if (paneScrollSyncFrame !== undefined) window.cancelAnimationFrame(paneScrollSyncFrame);
+      if (paneScrollSyncSecondFrame !== undefined) window.cancelAnimationFrame(paneScrollSyncSecondFrame);
+      paneScrollSyncFrame = undefined;
+      paneScrollSyncSecondFrame = undefined;
+    }
     const index = tabs.findIndex((item) => item.id === id);
+    const wasActive = activeId === id;
     tabs = tabs.filter((item) => item.id !== id);
     if (activeId === id) activeId = tabs[Math.max(0, index - 1)]?.id;
-    if (!activeId) showWelcome = true;
+    if (!activeId) {
+      clearPaneSelection();
+      showWelcome = true;
+    } else if (wasActive) {
+      clearPaneSelection();
+    }
   }
 
   function confirmCloseTab() {
@@ -548,8 +2433,10 @@
   }
 
   function selectTab(id: string) {
+    if (activeId && activeId !== id && !flushPendingVisualEdit()) return;
     if (activeId && activeId !== id) backHistory = [...backHistory, activeId];
     forwardHistory = [];
+    if (activeId !== id) clearPaneSelection();
     activeId = id;
     showWelcome = false;
   }
@@ -557,63 +2444,139 @@
   function goBack() {
     const id = backHistory.at(-1);
     if (!id) return;
+    if (!flushPendingVisualEdit()) return;
     if (activeId) forwardHistory = [...forwardHistory, activeId];
     backHistory = backHistory.slice(0, -1);
+    clearPaneSelection();
     activeId = id;
   }
 
   function goForward() {
     const id = forwardHistory.at(-1);
     if (!id) return;
+    if (!flushPendingVisualEdit()) return;
     if (activeId) backHistory = [...backHistory, activeId];
     forwardHistory = forwardHistory.slice(0, -1);
+    clearPaneSelection();
     activeId = id;
+  }
+
+  function clearPaneSelection() {
+    editorSelection = { from: 0, to: 0 };
+    sourceSelectionActive = false;
+    hoveredMapId = undefined;
+    selectedMapId = undefined;
+    selectedVisualSourceSelection = undefined;
   }
 
   function handleSearch(value: string) {
     searchQuery = value;
     window.clearTimeout(searchTimer);
-    if (!workspace || !value.trim() || !isTauri) return (searchResults = []);
+    const operation = ++searchGeneration;
+    const requestedWorkspace = workspace;
+    const query = value.trim();
+    if (!requestedWorkspace || !query || !isTauri) return (searchResults = []);
     searchTimer = window.setTimeout(async () => {
-      searchResults = await searchWorkspace(workspace!.id, value.trim());
+      try {
+        const results = await searchWorkspace(requestedWorkspace.id, query);
+        if (operation !== searchGeneration || workspace?.id !== requestedWorkspace.id || searchQuery.trim() !== query) return;
+        searchResults = results;
+      } catch (error) {
+        if (operation === searchGeneration) statusMessage = `Workspace search failed: ${invokeErrorMessage(error)}`;
+      }
     }, 220);
   }
 
   async function openSearchResult(result: SearchResult) {
-    if (!workspace) return;
-    const document = await openWorkspaceDocument(workspace.id, result.relativePath, markdownProfile);
-    const existing = tabs.find((tab) => tab.id === document.id);
-    if (existing) activeId = existing.id;
-    else tabs = [...tabs, { ...document, dirty: false, savedSource: document.source }], activeId = document.id;
-    showWelcome = false;
-    rightPanel = 'outline';
+    const requestedWorkspace = workspace;
+    if (!requestedWorkspace) return;
+    if (!flushPendingVisualEdit()) return;
+    const operation = ++documentNavigationGeneration;
+    try {
+      const document = await openWorkspaceDocument(requestedWorkspace.id, result.relativePath, markdownProfile, compatibilityTarget);
+      if (operation !== documentNavigationGeneration || workspace?.id !== requestedWorkspace.id) return;
+      const existing = tabs.find((tab) => tab.id === document.id);
+      if (existing) activeId = existing.id;
+      else {
+        cacheRenderedSnapshot(document.id, document.source, document);
+        tabs = [...tabs, asOpenTab(document)];
+        activeId = document.id;
+      }
+      showWelcome = false;
+      rememberOpenedDocument(document.meta.path);
+      scheduleFilesystemLintRefresh(document.id);
+      rightPanel = 'outline';
+    } catch (error) {
+      if (operation === documentNavigationGeneration) statusMessage = `Could not open search result: ${invokeErrorMessage(error)}`;
+    }
   }
 
   function handleLink(target: string) {
-    if (!active) return;
+    const origin = active;
+    if (!origin) return;
     const [path, fragment] = target.split('#', 2);
-    if (!path && fragment) return scrollToHeading(fragment);
-    void openDocumentLink(active.id, path, markdownProfile).then((document) => {
+    if (!path && fragment) return void scrollToHeading(fragment, origin.id);
+    if (!flushPendingVisualEdit()) return;
+    const operation = ++documentNavigationGeneration;
+    void openDocumentLink(origin.id, path, markdownProfile, compatibilityTarget).then((document) => {
+      if (operation !== documentNavigationGeneration) return;
       const existing = tabs.find((tab) => tab.id === document.id);
       if (existing) activeId = existing.id;
-      else tabs = [...tabs, { ...document, dirty: false, savedSource: document.source }], activeId = document.id;
+      else {
+        cacheRenderedSnapshot(document.id, document.source, document);
+        tabs = [...tabs, asOpenTab(document)];
+        activeId = document.id;
+      }
       showWelcome = false;
-      if (fragment) setTimeout(() => scrollToHeading(fragment), 80);
+      rememberOpenedDocument(document.meta.path);
+      scheduleFilesystemLintRefresh(document.id);
+      if (fragment) window.setTimeout(() => {
+        if (operation === documentNavigationGeneration && activeId === document.id) void scrollToHeading(fragment, document.id);
+      }, 80);
     }).catch((error) => {
-      statusMessage = invokeErrorMessage(error);
+      if (operation === documentNavigationGeneration) statusMessage = invokeErrorMessage(error);
     });
   }
 
-  async function scrollToHeading(fragment: string) {
-    if (!active) return;
+  function openLinkTarget(target: string) {
+    if (/^(https?:\/\/|mailto:|tel:)/i.test(target)) {
+      void openExternalTarget(target);
+      return;
+    }
+    handleLink(target);
+  }
+
+  function focusLink(link: LinkInfo) {
+    if (!active || !link.mapId) {
+      statusMessage = 'This link is not source-mapped yet';
+      return;
+    }
+    const selection = mappedSelectionFor(active, link.mapId);
+    if (!selection) {
+      statusMessage = 'This link mapping is stale; refresh the preview before selecting it';
+      return;
+    }
+    if (!setViewMode('split')) return;
+    selectedMapId = link.mapId;
+    selectedVisualSourceSelection = selection;
+    editorSelection = selection;
+    statusMessage = 'Selected the link in the rendered preview and source editor';
+  }
+
+  async function scrollToHeading(fragment: string, expectedTabId?: string) {
+    const tabId = expectedTabId ?? active?.id;
+    if (!tabId || activeId !== tabId) return;
     if (mode === 'source') {
-      mode = 'split';
+      setViewMode('split');
       await tick();
     }
+    if (activeId !== tabId) return;
+    const tab = tabs.find((item) => item.id === tabId);
+    if (!tab) return;
     const target = decodeURIComponent(fragment).trim().toLowerCase();
     const normalizedTarget = target.replace(/^user-content-/, '');
-    const expectedHeading = active.headings.find((heading) => heading.slug.toLowerCase() === normalizedTarget);
-    const headings = [...(renderedPane?.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6') ?? [])];
+    const expectedHeading = tab.headings.find((heading) => heading.slug.toLowerCase() === normalizedTarget);
+    const headings = [...(renderedPaneElement()?.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6') ?? [])];
     const element = headings.find((heading) => {
       const id = heading.id.toLowerCase();
       return id === target || id === normalizedTarget || id === `user-content-${normalizedTarget}` || (expectedHeading !== undefined && heading.textContent?.trim() === expectedHeading.text);
@@ -642,23 +2605,47 @@
     statusMessage = 'Exported a sanitized HTML view';
   }
 
+  function visualEditorHasFocus() {
+    const focused = document.activeElement;
+    return focused instanceof HTMLElement && focused.closest('[data-visual-editable="true"], [data-insertion-zone="true"]') !== null;
+  }
+
+  function hasPendingVisualEdit(tabId: string): boolean {
+    return tabId === activeId && Boolean(renderedPaneElement()?.querySelector('[data-visual-dirty="true"]'));
+  }
+
+  function undoFromMenu() {
+    if (!active) return;
+    if (!flushPendingVisualEdit()) return;
+    void tick().then(undoVisualChange);
+  }
+
+  function redoFromMenu() {
+    if (!active) return;
+    if (!flushPendingVisualEdit()) return;
+    void tick().then(redoVisualChange);
+  }
+
   function handleMenuAction(action: string) {
     const actions: Record<string, () => void> = {
+      'new-document': () => void newDocument(),
       'open-file': openFile,
+      'open-recent': () => void openRecentDialog(),
       'open-folder': openFolder,
       save: saveActive,
       'save-as': () => void saveActiveAs(),
+      reload: requestReloadActive,
       'command-palette': () => (showPalette = true),
-      'mode-rendered': () => (mode = 'rendered'),
-      'mode-source': () => (mode = 'source'),
-      'mode-split': () => (mode = 'split'),
+      'mode-rendered': () => setViewMode('rendered'),
+      'mode-source': () => setViewMode('source'),
+      'mode-split': () => setViewMode('split'),
       'toggle-left': () => (leftCollapsed = !leftCollapsed),
       'toggle-right': () => (rightCollapsed = !rightCollapsed),
       back: goBack,
       forward: goForward,
       'quick-open': () => revealFiles(),
       'go-heading': () => revealInspect('outline'),
-      'check-links': () => revealInspect('issues'),
+      'check-links': () => revealIssues('all'),
       reindex: () => workspace && void changeScanDepth(scanDepth),
       settings: () => (showSettings = true),
       'check-for-updates': () => void runUpdateCheck({ manual: true }),
@@ -668,14 +2655,98 @@
       cut: () => document.execCommand('cut'),
       paste: () => document.execCommand('paste'),
       'select-all': () => document.execCommand('selectAll'),
-      undo: () => document.execCommand('undo'),
-      redo: () => document.execCommand('redo'),
+      undo: undoFromMenu,
+      redo: redoFromMenu,
     };
     actions[action]?.();
   }
 
   function handleKeydown(event: KeyboardEvent) {
+    const keyboardContextMenu = event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey);
+    if (keyboardContextMenu) {
+      event.preventDefault();
+      if (contextMenu) return;
+
+      const focused = event.target instanceof HTMLElement
+        ? event.target
+        : document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      const mappedTarget = focused?.closest<HTMLElement>('[data-map-id]');
+      let mapId = mappedTarget?.dataset.mapId;
+      // CodeMirror's source editor does not carry rendered map attributes.
+      // Resolve its current caret/selection through the same source-map path
+      // used by pointer context menus so keyboard invocation remains block-aware.
+      if (!mapId && active && focused?.closest('.editor-host, .cm-editor')) {
+        mapId = sourceMapIdAtPosition(active.source, active.sourceMap, editorSelection.from, editorSelection.to) ?? undefined;
+      }
+      const anchor = mappedTarget ?? focused;
+      const rect = anchor?.getBoundingClientRect();
+      const x = rect ? rect.left + Math.min(rect.width / 2, 24) : window.innerWidth / 2;
+      const y = rect ? rect.bottom + 4 : window.innerHeight / 2;
+      const sourceTarget = !mappedTarget && active && focused?.closest('.editor-host, .cm-editor')
+        ? sourceContextTargetAtPosition(active.source, active.sourceMap, editorSelection.from, editorSelection.to) ?? undefined
+        : undefined;
+      openContextMenu(x, y, mapId, sourceTarget);
+      return;
+    }
     const modifier = event.ctrlKey || event.metaKey;
+    if (modifier && event.key.toLowerCase() === 'f') {
+      event.preventDefault();
+      openFind();
+      return;
+    }
+    const targetElement = event.target instanceof HTMLElement ? event.target : null;
+    const visualEditorTarget = targetElement?.closest<HTMLElement>('[data-visual-editable="true"], [data-insertion-zone="true"]');
+    const textEditingTarget = targetElement?.closest('input, textarea, select, [contenteditable="true"], .cm-editor');
+    const visualHistoryContext = editing && mode !== 'source' && !textEditingTarget;
+    const sourceEditorTarget = targetElement?.closest('.cm-editor');
+    const dialogTarget = targetElement?.closest('[role="dialog"], [role="alertdialog"]');
+    const sourceHistoryContext = Boolean(active && !dialogTarget
+      && (visualEditorTarget || sourceEditorTarget || (!textEditingTarget && (editing || mode !== 'source'))));
+    if (sourceHistoryContext && modifier && event.key.toLowerCase() === 'z') {
+      event.preventDefault();
+      if (visualEditorIsComposing(visualEditorTarget ?? null)) {
+        statusMessage = 'Finish the current text composition before undoing';
+        return;
+      }
+      const pendingVisualEdit = Boolean(visualEditorTarget && flushFocusedVisualEdit(targetElement));
+      const applyHistoryAction = () => {
+        completeVisualDraft();
+        if (event.shiftKey) redoVisualChange();
+        else undoVisualChange();
+      };
+      if (pendingVisualEdit) requestAnimationFrame(applyHistoryAction);
+      else applyHistoryAction();
+      return;
+    }
+    if (sourceHistoryContext && modifier && event.key.toLowerCase() === 'y') {
+      event.preventDefault();
+      if (visualEditorIsComposing(visualEditorTarget ?? null)) {
+        statusMessage = 'Finish the current text composition before redoing';
+        return;
+      }
+      const pendingVisualEdit = Boolean(visualEditorTarget && flushFocusedVisualEdit(targetElement));
+      const applyRedo = () => {
+        completeVisualDraft();
+        redoVisualChange();
+      };
+      if (pendingVisualEdit) requestAnimationFrame(applyRedo);
+      else applyRedo();
+      return;
+    }
+    if (modifier && event.altKey && event.key.toLowerCase() === 's') {
+      event.preventDefault();
+      toggleSourceDrawer();
+      return;
+    }
+    if (event.key === 'F3') {
+      event.preventDefault();
+      if (!showFind) openFind();
+      else moveFindMatch(event.shiftKey ? -1 : 1);
+      return;
+    }
+    if (modifier && event.key.toLowerCase() === 'n') { event.preventDefault(); void newDocument(); }
     if (modifier && event.key.toLowerCase() === 'o') { event.preventDefault(); void openFile(); }
     if (modifier && event.key.toLowerCase() === 's' && event.shiftKey) { event.preventDefault(); void saveActiveAs(); }
     else if (modifier && event.key.toLowerCase() === 's') { event.preventDefault(); void saveActive(); }
@@ -695,14 +2766,19 @@
       }
     }
     if (event.key === 'Escape') {
+      closeFind();
       showPalette = false;
+      showRecent = false;
       showSettings = false;
       showAbout = false;
       showDefaultAppConfirm = false;
+      showReloadConfirm = false;
+      pendingReloadTabId = undefined;
       pendingCloseTabId = undefined;
       showUpdateConfirm = false;
       showUpdateDirtyWarn = false;
       contextMenu = null;
+      if (pendingAssetDrop) void cancelNativeAssetDrop();
     }
   }
 
@@ -885,13 +2961,55 @@
 
   function handleContextMenu(event: MouseEvent) {
     event.preventDefault();
+    const target = event.target instanceof Element
+      ? event.target.closest<HTMLElement>('[data-map-id]')
+      : null;
+    const mapId = target?.dataset.mapId;
+    const linkOrImage = event.target instanceof Element
+      ? event.target.closest<HTMLAnchorElement | HTMLImageElement>('a[href], img[src]')
+      : null;
+    const contextTarget = linkOrImage && mapId
+      ? {
+        kind: linkOrImage.tagName.toLowerCase() === 'a' ? 'link' as const : 'image' as const,
+        target: linkOrImage.getAttribute(linkOrImage.tagName.toLowerCase() === 'a' ? 'href' : 'src') ?? '',
+        mapId,
+      }
+      : undefined;
+    openContextMenu(event.clientX, event.clientY, mapId, contextTarget);
+  }
+
+  function handleSourceContextMenu(from: number, to: number, clientX: number, clientY: number) {
+    if (!active) {
+      openContextMenu(clientX, clientY);
+      return;
+    }
+    const mapId = sourceMapIdAtPosition(active.source, active.sourceMap, from, to);
+    const target = sourceContextTargetAtPosition(active.source, active.sourceMap, from, to) ?? undefined;
+    openContextMenu(clientX, clientY, mapId ?? undefined, target);
+  }
+
+  function openContextMenu(x: number, y: number, mapId?: string, target?: SourceContextTarget) {
+    const focused = document.activeElement;
+    contextMenuReturnFocus = focused instanceof HTMLElement && focused !== document.body
+      ? focused
+      : undefined;
+    if (mapId && active) {
+      const selection = mappedSelectionFor(active, mapId);
+      if (selection) {
+        selectedMapId = mapId;
+        selectedVisualSourceSelection = selection;
+        editorSelection = selection;
+      }
+    }
     const width = 220;
-    const height = active ? 290 : 230;
+    const height = mapId ? 460 : (active ? 290 : 230);
     contextMenu = {
-      x: Math.min(Math.max(8, event.clientX), Math.max(8, window.innerWidth - width - 8)),
-      y: Math.min(Math.max(8, event.clientY), Math.max(8, window.innerHeight - height - 8)),
+      x: Math.min(Math.max(8, x), Math.max(8, window.innerWidth - width - 8)),
+      y: Math.min(Math.max(8, y), Math.max(8, window.innerHeight - height - 8)),
+      mapId,
+      target,
     };
-    void tick().then(() => contextMenuFirstItem?.focus());
+    void tick().then(() => document.getElementById('context-menu-first-item')?.focus());
   }
 
   function handleShellClick(event: MouseEvent) {
@@ -900,14 +3018,18 @@
   }
 
   async function copySelection() {
-    const selected = window.getSelection()?.toString() ?? '';
-    if (!selected) {
-      statusMessage = 'Select text to copy, or use Copy source';
+    const resolved = contextCopyText(window.getSelection()?.toString() ?? '', active?.source, editorSelection);
+    if (!resolved) {
+      statusMessage = 'Open a document or select text to copy';
       return;
     }
     try {
-      await navigator.clipboard.writeText(selected);
-      statusMessage = 'Copied selected text';
+      await navigator.clipboard.writeText(resolved.text);
+      statusMessage = resolved.kind === 'rendered-selection'
+        ? 'Copied selected text'
+        : resolved.kind === 'source-selection'
+          ? 'Copied Markdown selection'
+          : 'Copied Markdown source';
     } catch {
       statusMessage = 'Clipboard access was unavailable';
     }
@@ -918,16 +3040,325 @@
     contextMenu = null;
   }
 
+  async function copyContextText() {
+    const mapId = contextMenu?.mapId;
+    const target = mapId
+      ? [...(renderedPaneElement()?.querySelectorAll<HTMLElement>('[data-map-id]') ?? [])]
+        .find((element) => element.dataset.mapId === mapId)
+      : null;
+    const text = target?.textContent?.trim();
+    if (!text) {
+      statusMessage = 'There is no rendered text to copy for this object';
+      contextMenu = null;
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      statusMessage = 'Copied rendered text';
+    } catch {
+      statusMessage = 'Clipboard access was unavailable';
+    }
+    contextMenu = null;
+  }
+
+  function selectContextSpan(): TextSelection | null {
+    if (!active || !contextMenu?.mapId) return null;
+    const selection = mappedSelectionFor(active, contextMenu.mapId);
+    if (!selection) {
+      statusMessage = 'This Markdown object is stale; refresh the preview before editing';
+      contextMenu = null;
+      return null;
+    }
+    selectedMapId = contextMenu.mapId;
+    selectedVisualSourceSelection = selection;
+    editorSelection = selection;
+    return selection;
+  }
+
+  async function copyContextMarkdown() {
+    if (!active || !selectContextSpan()) return;
+    try {
+      await navigator.clipboard.writeText(active.source.slice(editorSelection.from, editorSelection.to));
+      statusMessage = 'Copied the Markdown object';
+    } catch {
+      statusMessage = 'Clipboard access was unavailable';
+    }
+    contextMenu = null;
+  }
+
+  async function copyContextFenceCode() {
+    const selection = selectContextSpan();
+    if (!active || !selection || (contextSpan?.kind !== 'code_block' && contextSpan?.kind !== 'diagram')) return;
+    const raw = active.source.slice(selection.from, selection.to);
+    const body = fencedCodeBody(raw);
+    if (body === null) {
+      statusMessage = 'This code block does not have a safely extractable fence';
+      contextMenu = null;
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(body);
+      statusMessage = 'Copied code from the Markdown fence';
+    } catch {
+      statusMessage = 'Clipboard access was unavailable';
+    }
+    contextMenu = null;
+  }
+
+  async function copyContextValue(value: string, label: string) {
+    try {
+      await navigator.clipboard.writeText(value);
+      statusMessage = `Copied ${label}`;
+    } catch {
+      statusMessage = 'Clipboard access was unavailable';
+    }
+    contextMenu = null;
+  }
+
+  async function openIssueLearnMore(url: string) {
+    try {
+      if (isTauri) await openUrl(url);
+      else window.open(url, '_blank', 'noopener,noreferrer');
+    } catch {
+      statusMessage = 'Could not open the compatibility guidance';
+    }
+  }
+
+  function contextOpenLink() {
+    const contextTarget = contextMenu?.target;
+    const target = contextTarget?.target
+      ?? (contextSpan?.kind === 'link' ? contextSpan.attrs.target : contextSpan?.kind === 'image' ? contextSpan.attrs.src : undefined);
+    contextMenu = null;
+    if (typeof target !== 'string' || !target) return;
+    if (/^(https?:\/\/|mailto:|tel:)/i.test(target)) {
+      void openExternalTarget(target);
+    } else if (contextTarget?.kind !== 'image') {
+      handleLink(target);
+    }
+  }
+
+  async function openExternalTarget(target: string) {
+    try {
+      if (isTauri) await openUrl(target);
+      else window.open(target, '_blank', 'noopener,noreferrer');
+    } catch {
+      statusMessage = 'Could not open this URL in the default browser';
+    }
+  }
+
+  function contextCopyHeadingLink() {
+    if (!active || contextSpan?.kind !== 'heading') return;
+    const headingSpans = active.sourceMap.spans
+      .filter((span) => span.kind === 'heading')
+      .sort((left, right) => left.sourceByteStart - right.sourceByteStart);
+    const headingIndex = headingSpans.findIndex((span) => span.mapId === contextSpan?.mapId);
+    const slug = headingIndex >= 0 ? active.headings[headingIndex]?.slug : undefined;
+    if (!slug) {
+      statusMessage = 'This heading link is unavailable until the preview refreshes';
+      contextMenu = null;
+      return;
+    }
+    void copyContextValue(`#${slug}`, 'the heading link');
+  }
+
+  function contextRevealSource() {
+    const mapId = contextMenu?.mapId;
+    contextMenu = null;
+    if (mapId) revealMapInSource(mapId);
+  }
+
+  async function contextRevealAsset() {
+    const target = contextSpan?.kind === 'image' ? contextSpan.attrs.src : undefined;
+    const documentId = active?.id;
+    contextMenu = null;
+    if (!documentId || typeof target !== 'string' || !target.trim()) {
+      statusMessage = 'This image has no local asset to reveal';
+      return;
+    }
+    if (!isTauri) {
+      statusMessage = 'Reveal asset is available in the desktop application';
+      return;
+    }
+    try {
+      await revealAsset(documentId, target);
+      statusMessage = 'Asset revealed in the file manager';
+    } catch (error) {
+      statusMessage = `Could not reveal asset: ${invokeErrorMessage(error)}`;
+    }
+  }
+
+  async function contextReplaceImage() {
+    const span = contextSpan;
+    const tab = active;
+    if (!tab || !span || span.kind !== 'image') {
+      contextMenu = null;
+      return;
+    }
+    const baseSource = tab.source;
+    const tabId = tab.id;
+    const mapId = span.mapId;
+    const replacementAssetFolder = assetFolder;
+    contextMenu = null;
+    if (!isTauri) {
+      statusMessage = 'Replace image is available in the desktop application';
+      return;
+    }
+    try {
+      const grant = await pickImagePath();
+      if (!grant) {
+        statusMessage = 'Image replacement cancelled';
+        return;
+      }
+      const staged = await copySelectedImage(tabId, grant.token, replacementAssetFolder);
+      const relativePath = staged.relativePath;
+      const current = tabs.find((item) => item.id === tabId);
+      if (!current || current.source !== baseSource) {
+        await discardStagedAsset(tabId, staged.cleanupToken).catch(() => undefined);
+        statusMessage = `Copied ${relativePath}, but the document changed before it could be linked`;
+        return;
+      }
+      const currentSpan = current.sourceMap.spans.find((item) => item.mapId === mapId);
+      const currentSelection = currentSpan
+        ? mappedSelectionFor(current, mapId)
+        : null;
+      if (!currentSpan || !currentSelection) {
+        await discardStagedAsset(tabId, staged.cleanupToken).catch(() => undefined);
+        statusMessage = `Copied ${relativePath}, but the original image is no longer present`;
+        return;
+      }
+      const result = updateImage(
+        current.source,
+        currentSelection,
+        String(currentSpan.attrs.alt ?? ''),
+        relativePath,
+        String(currentSpan.attrs.title ?? ''),
+      );
+      if (result.source === current.source) {
+        await discardStagedAsset(tabId, staged.cleanupToken).catch(() => undefined);
+        statusMessage = `Copied ${relativePath}, but the image syntax could not be patched safely`;
+        return;
+      }
+      recordSourceChange(tabId, current.source, result.source, currentSelection, result.selection);
+      if (activeId === tabId) {
+        editorSelection = result.selection;
+        selectedVisualSourceSelection = result.selection;
+      }
+      void updateSource(result.source, true, tabId);
+      await commitStagedAsset(tabId, staged.cleanupToken);
+      statusMessage = `Replaced image with ${relativePath}`;
+    } catch (error) {
+      statusMessage = `Could not replace image: ${invokeErrorMessage(error)}`;
+    }
+  }
+
+  function contextChangeHeading(level: number) {
+    if (!selectContextSpan()) return;
+    applySourceEdit((current) => applyHeadingLevel(current, editorSelection, level));
+    contextMenu = null;
+  }
+
+  function contextOpenBlockTab() {
+    if (!selectContextSpan()) return;
+    ribbonFocusTab = 'Block';
+    contextMenu = null;
+    statusMessage = 'Block properties are ready in the Block ribbon';
+  }
+
+  function contextEditBlock() {
+    if (!selectContextSpan()) return;
+    ribbonFocusTab = 'Block';
+    contextMenu = null;
+    statusMessage = 'Block properties are ready in the Block ribbon';
+  }
+
+  function contextDeleteBlock() {
+    const selection = selectContextSpan();
+    if (!selection) return;
+    applySourceEdit((current) => ({
+      source: `${current.slice(0, selection.from)}${current.slice(selection.to)}`,
+      selection: { from: selection.from, to: selection.from },
+    }));
+    contextMenu = null;
+  }
+
+  function contextDuplicateBlock() {
+    const selection = selectContextSpan();
+    if (!active || !selection) return;
+    const raw = active.source.slice(selection.from, selection.to);
+    if (!raw) return;
+    const lineBreak = active.meta.lineEnding === 'CRLF' ? '\r\n' : active.meta.lineEnding === 'CR' ? '\r' : '\n';
+    const separator = contextSpan?.kind === 'heading' || /(?:\r\n|\r|\n)/.test(raw)
+      ? `${lineBreak}${lineBreak}`
+      : '';
+    applySourceEdit((current) => {
+      const insertion = `${separator}${raw}`;
+      const from = selection.to;
+      return {
+        source: `${current.slice(0, from)}${insertion}${current.slice(from)}`,
+        selection: { from: from + separator.length, to: from + separator.length + raw.length },
+      };
+    });
+    contextMenu = null;
+  }
+
+  function applyTableEdit(action: TableEditAction, mapId?: string) {
+    const context = active && mapId
+      ? tableSelectionContext(active.source, active.sourceMap, mapId, activeSourceSelectionIndex)
+      : selectedTableContext;
+    if (!active || !context) {
+      statusMessage = 'Select a GFM table before using table tools';
+      return;
+    }
+    const result = editGfmTable(active.source, context.tableSelection, action, {
+      rowIndex: context.rowIndex,
+      columnIndex: context.columnIndex,
+    });
+    if (!result) {
+      statusMessage = 'This table is not a safely editable GFM pipe table';
+      return;
+    }
+    applySourceEdit(() => result);
+  }
+
+  function contextUnlink() {
+    const selection = selectContextSpan();
+    if (!active || !selection) return;
+    const raw = active.source.slice(selection.from, selection.to);
+    const labelEnd = raw.indexOf('](');
+    if (!raw.startsWith('[') || labelEnd <= 0) {
+      statusMessage = 'This link syntax cannot be safely unlinked';
+      contextMenu = null;
+      return;
+    }
+    const label = raw.slice(1, labelEnd);
+    const applied = applyVisualDraftPatch(active.source, selection, raw, label);
+    if (!applied) {
+      statusMessage = 'This link became stale before it could be unlinked';
+      contextMenu = null;
+      return;
+    }
+    recordSourceChange(active.id, active.source, applied.source, editorSelection, applied.selection);
+    editorSelection = applied.selection;
+    selectedVisualSourceSelection = applied.selection;
+    void updateSource(applied.source, true);
+    statusMessage = 'Unlinked the Markdown destination without rewriting the document';
+    contextMenu = null;
+  }
+
   async function restoreSelectedRecovery() {
     if (!selectedRecoveryId || !isTauri) return;
     try {
-      const document = await restoreRecovery(selectedRecoveryId, markdownProfile);
-      const recovered = { ...document, dirty: true, savedSource: `__disk__:${document.revision}` };
+      const document = await restoreRecovery(selectedRecoveryId, markdownProfile, compatibilityTarget);
+      const recovered = asOpenTab(document, {
+        dirty: true,
+        savedSource: `__disk__:${document.revision}`,
+      });
       const existing = tabs.find((tab) => tab.id === document.id);
       tabs = existing
         ? tabs.map((tab) => tab.id === document.id ? recovered : tab)
         : [...tabs, recovered];
       activeId = document.id;
+      rememberOpenedDocument(document.meta.path);
       showWelcome = false;
       recoveryItems = recoveryItems.filter((item) => item.documentId !== selectedRecoveryId);
       selectedRecoveryId = recoveryItems[0]?.documentId;
@@ -964,22 +3395,22 @@
 <svelte:window onkeydown={handleKeydown} oncontextmenu={handleContextMenu} onpointerdown={handleShellClick} />
 
 <div class="app-shell" aria-busy={workspaceLoading}>
-  <header class="app-toolbar">
-    <div class="nav-controls">
-      <button class="icon-button" type="button" aria-label="Go back" title="Back (Alt+Left)" disabled={!backHistory.length} onclick={goBack}>←</button>
-      <button class="icon-button" type="button" aria-label="Go forward" title="Forward (Alt+Right)" disabled={!forwardHistory.length} onclick={goForward}>→</button>
-    </div>
-    <div class="breadcrumb" title={active?.meta.path ?? workspace?.displayPath ?? 'No folder open'}>
-      <span class="crumb-root">{workspace?.name ?? 'No folder open'}</span>
-      {#if active}
-        <span class="crumb-separator">/</span><span class="crumb-current">{active.title}.md</span>
-        {#if active.dirty}<span class="dirty-dot" title="Unsaved changes"></span>{/if}
-      {/if}
-    </div>
-    <button class="command-trigger" type="button" aria-label="Search and command palette" onclick={() => (showPalette = true)}><span class="command-glyph" aria-hidden="true"></span> Search or command… <kbd>{platformPaletteShortcut}</kbd></button>
-    <button class="toolbar-edit" type="button" disabled={!active} aria-label={mode === 'rendered' ? 'Switch to editing view' : 'Switch to reading view'} onclick={() => (mode = mode === 'rendered' ? 'split' : 'rendered')}>{mode === 'rendered' ? 'Edit' : 'Read'}</button>
-    <button class="icon-button" type="button" aria-label="Open settings" title="Settings" onclick={() => (showSettings = true)}>•••</button>
-  </header>
+  <AppToolbar
+    workspaceName={workspace?.name ?? 'No folder open'}
+    documentPath={active?.meta.path ?? workspace?.displayPath ?? 'No folder open'}
+    documentTitle={active?.title}
+    dirty={active?.dirty ?? false}
+    canGoBack={backHistory.length > 0}
+    canGoForward={forwardHistory.length > 0}
+    paletteShortcut={platformPaletteShortcut}
+    editing={editing}
+    hasActiveDocument={Boolean(active)}
+    onBack={goBack}
+    onForward={goForward}
+    onOpenPalette={() => (showPalette = true)}
+    onToggleEditing={toggleEditing}
+    onOpenSettings={() => (showSettings = true)}
+  />
 
   {#if showUpdateBanner && pendingUpdate && updateCheckState === 'available'}
     <UpdateBanner
@@ -989,24 +3420,13 @@
     />
   {/if}
 
-  {#if tabs.length}
-    <div class="document-tabs-bar">
-      <div class="tabs-bar">
-        {#each tabs as tab (tab.id)}
-          <div class:active={activeId === tab.id} class="document-tab">
-            <button class="document-tab-main" type="button" aria-pressed={activeId === tab.id} aria-label={`Open ${tab.title}`} onclick={() => selectTab(tab.id)}><span class="tab-icon">◈</span>{tab.title}<span class:dirty={tab.dirty} class="tab-state">{tab.dirty ? '•' : ''}</span></button>
-            <button class="tab-close" type="button" aria-label={`Close ${tab.title}`} onclick={() => closeTab(tab.id)}>×</button>
-          </div>
-        {/each}
-        <button class="new-tab" type="button" aria-label="Open a new document" onclick={openFile}>+</button>
-      </div>
-    </div>
-  {:else}
-    <div class="document-tabs-bar empty-tabs-bar">
-      <button class="new-tab" type="button" aria-label="Open a new document" onclick={openFile}>+</button>
-      <span>No open documents</span>
-    </div>
-  {/if}
+  <DocumentTabs
+    tabs={tabs}
+    activeId={activeId}
+    onSelect={selectTab}
+    onClose={closeTab}
+    onNew={() => void newDocument()}
+  />
 
   {#if pendingCloseTabId}
     {@const closingTab = tabs.find((tab) => tab.id === pendingCloseTabId)}
@@ -1019,132 +3439,165 @@
     </div>
   {/if}
 
-  {#if active && (mode === 'source' || mode === 'split')}
+  {#if showReloadConfirm}
+    {@const reloadingTab = tabs.find((tab) => tab.id === pendingReloadTabId)}
+    <div class="modal-backdrop" role="presentation" onclick={(event) => event.target === event.currentTarget && (showReloadConfirm = false, pendingReloadTabId = undefined)}>
+      <div class="settings-modal default-app-confirm" role="alertdialog" aria-modal="true" aria-labelledby="reload-title" aria-describedby="reload-description" tabindex="-1">
+        <div class="settings-header"><div><span class="eyebrow">Unsaved changes</span><h2 id="reload-title">Reload {reloadingTab?.title ?? 'document'}?</h2></div><button class="icon-button" type="button" aria-label="Cancel" onclick={() => { showReloadConfirm = false; pendingReloadTabId = undefined; }}>×</button></div>
+        <p id="reload-description">Reloading reads the file from disk and discards all unsaved edits in this tab.</p>
+        <div class="default-app-actions"><button type="button" class="secondary-button" onclick={() => { showReloadConfirm = false; pendingReloadTabId = undefined; }}>Keep editing</button><button bind:this={reloadConfirmButton} type="button" class="primary-button" onclick={() => void confirmReload()}>Reload from disk</button></div>
+      </div>
+    </div>
+  {/if}
+
+  {#if active && (editing || mode === 'source' || mode === 'split')}
     <EditorRibbon
       selection={editorSelection}
+      source={active.source}
+      profile={markdownProfile}
+      blockSelection={selectedBlockSelection ?? editorSelection}
       selectedText={active.source.slice(editorSelection.from, editorSelection.to)}
+      selectedBlockKind={selectedSpan?.kind ?? ''}
+      selectedBlockAttrs={selectedSpan?.attrs ?? {}}
+      tableSelection={selectedTableSelection ?? undefined}
+      tableRowIndex={selectedTableRowIndex}
+      tableColumnIndex={selectedTableColumnIndex}
+      tableBodyRowCount={selectedTableBodyRowCount}
+      tableColumnCount={selectedTableColumnCount}
+      insertRequest={insertDialogRequest}
+      editing={editing}
       onApply={applySourceEdit}
+      onTableEdit={applyTableEdit}
       onSave={saveActive}
+      onDoneEditing={finishEditing}
+      onFind={openFind}
+      onIssues={() => revealIssues('all')}
+      onToggleSource={toggleSourceDrawer}
+      blockMoveUpTarget={selectedBlockMoveUpTarget}
+      blockMoveDownTarget={selectedBlockMoveDownTarget}
+      onMoveBlockUp={() => moveSelectedBlock('up')}
+      onMoveBlockDown={() => moveSelectedBlock('down')}
+      focusTab={ribbonFocusTab}
+      onInsertRequestConsumed={(token) => {
+        if (insertDialogRequest?.token === token) insertDialogRequest = null;
+      }}
     />
   {/if}
 
   <div class="workspace-grid" class:left-collapsed={leftCollapsed} class:right-collapsed={rightCollapsed}>
-    <aside class="left-sidebar" aria-label="Workspace navigation">
-      <div class="sidebar-tabs">
-        <div class="panel-tablist" role="tablist" aria-label="Workspace panels">
-          <button id="left-files-tab" class:active={leftPanel === 'files'} type="button" role="tab" aria-selected={leftPanel === 'files'} aria-controls={leftPanel === 'files' ? 'left-files-panel' : undefined} tabindex={leftPanel === 'files' ? 0 : -1} onclick={() => (leftPanel = 'files')} onkeydown={handleTablistKeydown}>Files</button>
-          <button id="left-search-tab" class:active={leftPanel === 'search'} type="button" role="tab" aria-selected={leftPanel === 'search'} aria-controls={leftPanel === 'search' ? 'left-search-panel' : undefined} tabindex={leftPanel === 'search' ? 0 : -1} onclick={() => (leftPanel = 'search')} onkeydown={handleTablistKeydown}>Search</button>
-        </div>
-        <button class="collapse-button panel-collapse-control" type="button" aria-label="Collapse left sidebar" aria-expanded={!leftCollapsed} onclick={() => (leftCollapsed = true)}>‹</button>
-      </div>
-      {#if leftPanel === 'files'}
-        <div id="left-files-panel" class="sidebar-heading" role="tabpanel" aria-labelledby="left-files-tab" tabindex="0">
-          <span>{workspace?.name ?? 'Recent documents'}</span>
-          <span class="heading-actions">
-            {#if workspace}
-              <label class="depth-control">
-                Depth
-                <button type="button" aria-label="Decrease scan depth" disabled={scanDepth <= 1 || treeScanning} onclick={() => void changeScanDepth(scanDepth - 1)}>−</button>
-                <strong>{scanDepth}</strong>
-                <button type="button" aria-label="Increase scan depth" disabled={scanDepth >= 12 || treeScanning} onclick={() => void changeScanDepth(scanDepth + 1)}>+</button>
-              </label>
-            {/if}
-            <button type="button" aria-label="Refresh workspace" onclick={() => workspace && void changeScanDepth(scanDepth)}>↻</button>
-          </span>
-        </div>
-        {#if workspace}
-          {#if workspace.indexedFiles > 0}
-            <div class="file-tree-shell" class:scanning={treeScanning} aria-busy={treeScanning}>
-              {#if treeScanning}
-                <div class="tree-scan-overlay" role="status"><span class="loading-spinner" aria-hidden="true"></span><span>Scanning to depth {scanDepth}…</span></div>
-              {/if}
-              <div class="file-tree"><FileTree node={workspace.root} onOpen={openTreeNode} /></div>
-            </div>
-          {:else}
-            <div class="empty-sidebar"><span class="empty-symbol">⌁</span><p>No supported Markdown files were found at depth {scanDepth}.</p><button type="button" onclick={openFolder}>Open Another Folder</button></div>
-          {/if}
-          {#if workspace.warnings.length}
-            <div class="scan-warnings" role="status">
-              <strong>{workspace.warnings.length} skipped folders</strong>
-              {#each workspace.warnings.slice(0, 4) as warning}
-                <p title={warning.path}>{warning.message}</p>
-              {/each}
-            </div>
-          {/if}
-        {:else}
-          <div class="empty-sidebar"><span class="empty-symbol">⌂</span><p>Open a folder to browse its Markdown files.</p><button type="button" onclick={openFolder}>Open Folder</button></div>
-        {/if}
-      {:else}
-        <div id="left-search-panel" class="search-panel" role="tabpanel" aria-labelledby="left-search-tab" tabindex="0">
-          <label for="workspace-search">Search in workspace</label>
-          <div class="search-input"><span>⌕</span><input id="workspace-search" value={searchQuery} oninput={(event) => handleSearch(event.currentTarget.value)} placeholder="Search files and content" /></div>
-          {#if !workspace}
-            <div class="search-empty-state"><span class="empty-symbol" aria-hidden="true">⌕</span><p>Open a workspace to search file names and Markdown content.</p><button class="secondary-button" type="button" onclick={openFolder}>Open Workspace</button></div>
-          {:else if searchQuery && !searchResults.length}<p class="muted-copy">No matches yet.</p>{/if}
-          {#each searchResults as result (result.documentId)}
-            <button class="search-result" type="button" onclick={() => openSearchResult(result)}><span class="result-icon">◈</span><span><strong>{result.title}</strong><small>{result.snippet}</small></span></button>
-          {/each}
-        </div>
-      {/if}
-    </aside>
+    <WorkspaceSidebar
+      panel={leftPanel}
+      workspace={workspace}
+      scanDepth={scanDepth}
+      treeScanning={treeScanning}
+      searchQuery={searchQuery}
+      searchResults={searchResults}
+      onPanelChange={(panel) => (leftPanel = panel)}
+      onTablistKeydown={handleTablistKeydown}
+      onCollapse={() => (leftCollapsed = true)}
+      onDepthChange={(depth) => void changeScanDepth(depth)}
+      onRefresh={() => { if (workspace) void changeScanDepth(scanDepth); }}
+      onOpenTreeNode={openTreeNode}
+      onOpenFolder={openFolder}
+      onSearch={handleSearch}
+      onOpenSearchResult={openSearchResult}
+      recentDocuments={recentDocuments}
+      activeDocumentPath={active?.meta.path ?? ''}
+      onOpenRecent={(path) => void openRecent(path)}
+    />
 
-    <main class="document-area" aria-label="Document">
-      {#if showWelcome || !active}
-        <section class="welcome">
-          <img class="welcome-logo" src="/markdown-desktop.png" alt="" aria-hidden="true" />
-          <p class="eyebrow">Markdown Desktop</p>
-          <h1>Open a Markdown file.<br /><em>Read or edit it.</em></h1>
-          <p class="welcome-copy">Read the rendered document, switch to the source when you want to edit, and save the file back to disk.</p>
-          <div class="welcome-actions"><button class="primary-button" type="button" onclick={openFile}>Open Markdown</button><button class="secondary-button" type="button" onclick={openFolder}>Open Workspace</button></div>
-          <div class="welcome-hints"><span><kbd>{platformOpenShortcut}</kbd> Open</span><span><kbd>{platformQuickOpenShortcut}</kbd> Quick open</span><span><kbd>{platformCommandsShortcut}</kbd> Commands</span></div>
-        </section>
-      {:else}
-        <div class="document-header">
-          <div><span class="doc-type">MARKDOWN DOCUMENT</span><h1>{active.title}</h1></div>
-          <div class="header-actions"><button type="button" onclick={copyRendered}>Copy source</button><button type="button" onclick={exportHtml}>Export HTML</button></div>
-        </div>
-         <div id="view-mode-panel" class="document-views" class:split={mode === 'split'} role="tabpanel" aria-label={`${mode} document view`} tabindex="0">
-          {#if mode === 'rendered' || mode === 'split'}
-            <div class="rendered-pane" bind:this={renderedPane}><MarkdownView html={active.html} documentId={active.id} headingSlugs={active.headings.map((heading) => heading.slug)} allowRemoteImages={remoteImagesEnabled} onOpenLink={handleLink} /></div>
-          {/if}
-          {#if mode === 'source' || mode === 'split'}
-            <div class="source-pane">
-              {#key `${active.id}:${active.meta.lineEnding}`}
-                <MarkdownEditor source={active.source} lineEnding={active.meta.lineEnding} onChange={updateSource} onSelection={updateSelection} onPaste={handleEditorPaste} />
-              {/key}
-            </div>
-          {/if}
-        </div>
-      {/if}
-    </main>
+    <DocumentSurface
+      active={active ?? null}
+      showWelcome={showWelcome}
+      recentDocuments={recentDocuments}
+      platformOpenShortcut={platformOpenShortcut}
+      platformQuickOpenShortcut={platformQuickOpenShortcut}
+      platformCommandsShortcut={platformCommandsShortcut}
+      showFind={showFind}
+      findQuery={findQuery}
+      findReplacement={findReplacement}
+      documentFindMatches={documentFindMatches}
+      activeFindIndex={activeFindIndex}
+      findCaseSensitive={findCaseSensitive}
+      editing={editing}
+      sourceViewVisible={sourceViewVisible}
+      splitViewVisible={splitViewVisible}
+      effectiveViewMode={effectiveViewMode}
+      renderedViewVisible={renderedViewVisible}
+      sourceEditorMounted={sourceEditorMounted}
+      markdownProfile={markdownProfile}
+      remoteImagesEnabled={remoteImagesEnabled}
+      findMapIds={findMapIds}
+      activeFindMapIds={activeFindMapIds}
+      headingSlugs={active?.headings.map((heading) => heading.slug) ?? []}
+      hoveredMapIds={hoveredMapIds}
+      selectedMapIds={selectedMapIds}
+      renderResetToken={visualResetToken}
+      incrementalCommitMapId={incrementalCommitMapId}
+      incrementalCommitSourceRange={incrementalCommitSourceRange}
+      hoveredSourceSelection={hoveredSourceSelection}
+      externalSourceSelection={externalSourceSelection}
+      sourceSelectionActive={sourceSelectionActive}
+      compatibilityTarget={compatibilityTarget}
+      compatibilitySummary={compatibilitySummary}
+      onOpenFile={openFile}
+      onOpenFolder={openFolder}
+      onOpenRecent={(path) => void openRecent(path)}
+      onFindQuery={updateFindQuery}
+      onFindReplacement={updateFindReplacement}
+      onFindKeydown={handleFindKeydown}
+      onFindCaseSensitive={(checked) => { findCaseSensitive = checked; findIndex = 0; }}
+      onMoveFindMatch={moveFindMatch}
+      onCloseFind={closeFind}
+      onReplaceFind={() => replaceFindMatches(false)}
+      onReplaceAllFind={() => replaceFindMatches(true)}
+      onCopyRendered={copyRendered}
+      onExportHtml={exportHtml}
+      onRevealCompatibilityIssues={() => revealIssues('compatibility')}
+      onToggleSource={toggleSourceDrawer}
+      onMapReady={revealFindMatch}
+      onMapHover={updateVisualHover}
+      onMapSelect={updateVisualSelection}
+      onBlockEdit={commitVisualBlock}
+      onVisualDraftEdit={applyVisualDraftEdit}
+      onVisualDraftCommit={completeVisualDraft}
+      onVisualFormat={handleVisualFormat}
+      onVisualStructureEdit={commitVisualStructureEdit}
+      onVisualPaste={handleVisualPaste}
+      onVisualEditRejected={(message) => (statusMessage = message)}
+      onDetailsSummaryEdit={commitDetailsSummary}
+      onTableEdit={applyTableEdit}
+      onBlockMove={moveBlock}
+      onBlockBeside={moveBlockBeside}
+      onSlashCommand={handleSlashCommand}
+      onRevealSource={revealMapInSource}
+      onOpenLink={openLinkTarget}
+      onSourceHover={updateSourceHover}
+      onSourceContextMenu={handleSourceContextMenu}
+      onSourceChange={handleSourceChange}
+      onSourceSelection={updateSelection}
+      onPaste={handleEditorPaste}
+      onSourceSlashCommand={handleSourceSlashCommand}
+    />
 
-    <aside class="right-sidebar" aria-label="Document intelligence">
-      <div class="right-tabs">
-        <button class="collapse-button panel-collapse-control" type="button" aria-label="Collapse right sidebar" aria-expanded={!rightCollapsed} onclick={() => (rightCollapsed = true)}>›</button>
-        <div class="right-panel-tabs" role="tablist" aria-label="Document panels">
-          {#each [['outline', 'Outline'], ['links', 'Links'], ['backlinks', 'Backlinks'], ['issues', 'Issues'], ['properties', 'Props']] as panel}
-            <button id={`right-${panel[0]}-tab`} class:active={rightPanel === panel[0]} type="button" role="tab" aria-selected={rightPanel === panel[0]} aria-controls={rightPanel === panel[0] && active ? `right-${panel[0]}-panel` : undefined} tabindex={rightPanel === panel[0] ? 0 : -1} onclick={() => (rightPanel = panel[0] as RightPanel)} onkeydown={handleTablistKeydown}>{panel[1]}</button>
-          {/each}
-        </div>
-      </div>
-      {#if active}
-        <div id={`right-${rightPanel}-panel`} role="tabpanel" aria-labelledby={`right-${rightPanel}-tab`} tabindex="0">
-        {#if rightPanel === 'outline'}
-          <div class="panel-list"><div class="panel-title">Document outline</div>{#each active.headings as heading (heading.slug)}<button class="outline-row" type="button" aria-current={activeHeadingSlug === heading.slug ? 'location' : undefined} style={`padding-left: ${10 + heading.level * 9}px`} onclick={() => scrollToHeading(heading.slug)}><span>{heading.level}</span>{heading.text}</button>{/each}{#if !active.headings.length}<p class="muted-copy">No headings in this document.</p>{/if}</div>
-        {:else if rightPanel === 'links'}
-          <div class="panel-list"><div class="panel-title">Links in this document <span>{active.links.length}</span></div>{#each active.links as link}<button class="info-row" type="button" onclick={() => handleLink(link.target)}><span class="status-dot" class:external={link.kind === 'external'}></span><span><strong>{link.label || link.target}</strong><small>{link.target}</small></span></button>{/each}{#if !active.links.length}<p class="muted-copy">No links found.</p>{/if}</div>
-        {:else if rightPanel === 'backlinks'}
-          <div class="panel-list"><div class="panel-title">Backlinks</div><p class="muted-copy">Backlinks are not indexed in this version. Use workspace search from the left sidebar.</p></div>
-        {:else if rightPanel === 'issues'}
-          <div class="panel-list"><div class="panel-title">Issues <span>{active.issues.length}</span></div>{#each active.issues as issue}<div class="issue-row"><span class="issue-icon">{issue.severity === 'error' ? '!' : '△'}</span><span><strong>{issue.title}</strong><small>{issue.detail}</small></span></div>{/each}{#if !active.issues.length}<p class="muted-copy success-copy">✓ No actionable issues detected.</p>{/if}</div>
-        {:else}
-          <div class="panel-list properties"><div class="panel-title">Properties</div><dl><dt>File</dt><dd>{active.meta.fileName}</dd><dt>Location</dt><dd title={active.meta.path}>{active.meta.path}</dd><dt>Size</dt><dd>{Math.max(1, Math.round(active.meta.bytes / 1024))} KB</dd><dt>Encoding</dt><dd>{active.meta.encoding}</dd><dt>Line endings</dt><dd>{active.meta.lineEnding}</dd><dt>Profile</dt><dd>{active.meta.profile}</dd></dl></div>
-        {/if}
-        </div>
-      {:else}
-        <div class="empty-sidebar"><span class="empty-symbol">⌁</span><p>Open a document to see its outline, links, issues, and properties.</p></div>
-      {/if}
-    </aside>
+    <InspectorSidebar
+      panel={rightPanel}
+      active={active ?? null}
+      activeHeadingSlug={activeHeadingSlug}
+      issues={visibleIssues}
+      issueFilter={issueFilter}
+      compatibilityTarget={compatibilityTarget}
+      compatibilityIssueCount={activeCompatibilityIssues.length}
+      onPanelChange={(panel) => (rightPanel = panel)}
+      onTablistKeydown={handleTablistKeydown}
+      onCollapse={() => (rightCollapsed = true)}
+      onHeading={scrollToHeading}
+      onLink={focusLink}
+      onOpenLink={openLinkTarget}
+      onIssue={revealIssue}
+      onLearnMore={(url) => void openIssueLearnMore(url)}
+      onIssueFilterChange={(filter) => (issueFilter = filter)}
+    />
 
     {#if leftCollapsed}
       <button class="sidebar-restore left-restore" type="button" aria-label="Expand left sidebar" title="Expand left sidebar" onclick={() => (leftCollapsed = false)}><span class="restore-glyph" aria-hidden="true"></span><span class="restore-label">Files</span><span class="restore-chevron" aria-hidden="true">›</span></button>
@@ -1155,7 +3608,7 @@
   </div>
 
   <footer class="bottom-bar">
-    <div class="view-switcher" role="tablist" aria-label="View mode"><button id="view-rendered-tab" class:active={mode === 'rendered'} type="button" role="tab" aria-selected={mode === 'rendered'} aria-controls={active ? 'view-mode-panel' : undefined} tabindex={mode === 'rendered' ? 0 : -1} disabled={!active} onclick={() => (mode = 'rendered')} onkeydown={handleTablistKeydown}>Render</button><button id="view-source-tab" class:active={mode === 'source'} type="button" role="tab" aria-selected={mode === 'source'} aria-controls={active ? 'view-mode-panel' : undefined} tabindex={mode === 'source' ? 0 : -1} disabled={!active} onclick={() => (mode = 'source')} onkeydown={handleTablistKeydown}>Source</button><button id="view-split-tab" class:active={mode === 'split'} type="button" role="tab" aria-selected={mode === 'split'} aria-controls={active ? 'view-mode-panel' : undefined} tabindex={mode === 'split' ? 0 : -1} disabled={!active} onclick={() => (mode = 'split')} onkeydown={handleTablistKeydown}>Split</button></div>
+    <div class="view-switcher" role="tablist" aria-label="View mode"><button id="view-rendered-tab" class:active={effectiveViewMode === 'rendered'} type="button" role="tab" aria-selected={effectiveViewMode === 'rendered'} aria-controls={active ? 'view-mode-panel' : undefined} tabindex={effectiveViewMode === 'rendered' ? 0 : -1} disabled={!active} onclick={() => setViewMode('rendered')} onkeydown={handleTablistKeydown}>Render</button><button id="view-source-tab" class:active={effectiveViewMode === 'source'} type="button" role="tab" aria-selected={effectiveViewMode === 'source'} aria-controls={active ? 'view-mode-panel' : undefined} tabindex={effectiveViewMode === 'source' ? 0 : -1} disabled={!active} onclick={() => setViewMode('source')} onkeydown={handleTablistKeydown}>Source</button><button id="view-split-tab" class:active={effectiveViewMode === 'split'} type="button" role="tab" aria-selected={effectiveViewMode === 'split'} aria-controls={active ? 'view-mode-panel' : undefined} tabindex={effectiveViewMode === 'split' ? 0 : -1} disabled={!active} onclick={() => setViewMode('split')} onkeydown={handleTablistKeydown}>Split</button></div>
     <div class="status-bar">
       <span class="status-live" class:ready={statusMessage === 'Ready'} aria-hidden="true"></span>
       <span class="status-message" aria-live="polite" aria-atomic="true">{statusMessage}</span>
@@ -1167,7 +3620,8 @@
       {/if}
       <span class="status-version" title="Installed version">{formatVersionLabel(appVersion)}</span>
       {#if active}
-        <span class="status-meta">{active.source.split('\n').length} lines</span>
+        <span class="status-meta" title="Source lines">{activeDocumentMetrics?.lines ?? 1} lines</span>
+        <span class="status-meta" title="Unicode characters, including line breaks">{activeDocumentMetrics?.characters ?? 0} chars</span>
       {:else}
         <span class="status-meta">Markdown Desktop</span>
       {/if}
@@ -1179,42 +3633,94 @@
   <div class="workspace-loading" role="status" aria-live="polite"><span class="loading-spinner" aria-hidden="true"></span><span>Opening workspace…</span></div>
 {/if}
 
-{#if contextMenu}
-  <div class="context-menu" role="menu" tabindex="-1" aria-label="Markdown Desktop actions" style={`left: ${contextMenu.x}px; top: ${contextMenu.y}px`} onpointerdown={(event) => event.stopPropagation()} oncontextmenu={(event) => event.stopPropagation()} onkeydown={handleContextMenuKeydown}>
-    <div class="context-menu-label">Markdown Desktop</div>
-    <button bind:this={contextMenuFirstItem} type="button" role="menuitem" onclick={() => void copyContextContent()}>Copy {active ? 'source or selection' : 'selection'}</button>
-    <button type="button" role="menuitem" onclick={() => { contextMenu = null; void openFile(); }}>Open Markdown</button>
-    <button type="button" role="menuitem" onclick={() => { contextMenu = null; void openFolder(); }}>Open Workspace</button>
-    {#if active}
-      <button type="button" role="menuitem" onclick={() => { contextMenu = null; mode = 'rendered'; }}>Rendered view</button>
-      <button type="button" role="menuitem" onclick={() => { contextMenu = null; mode = 'source'; }}>Source view</button>
-    {/if}
-    <button type="button" role="menuitem" onclick={() => { contextMenu = null; showSettings = true; }}>Settings</button>
-    <button type="button" role="menuitem" onclick={() => { contextMenu = null; showAbout = true; }}>About Markdown Desktop</button>
-  </div>
+<ContextMenu
+  contextMenu={contextMenu}
+  contextSpan={contextSpan}
+  contextTarget={contextMenu?.target ?? null}
+  hasActiveDocument={Boolean(active)}
+  onKeydown={handleContextMenuKeydown}
+  onCopyContextContent={copyContextContent}
+  onCopyContextMarkdown={copyContextMarkdown}
+  onCopyContextText={copyContextText}
+  onCopyContextFenceCode={copyContextFenceCode}
+  onCopyContextValue={copyContextValue}
+  onOpenLink={contextOpenLink}
+  onCopyHeadingLink={contextCopyHeadingLink}
+  onReplaceImage={() => void contextReplaceImage()}
+  onRevealAsset={() => void contextRevealAsset()}
+  onChangeHeading={contextChangeHeading}
+  onOpenBlockTab={contextOpenBlockTab}
+  onEditBlock={contextEditBlock}
+  onDeleteBlock={contextDeleteBlock}
+  onDuplicateBlock={contextDuplicateBlock}
+  onRevealSource={contextRevealSource}
+  onUnlink={contextUnlink}
+  onOpenSettings={() => { contextMenu = null; showSettings = true; }}
+  onOpenAbout={() => { contextMenu = null; showAbout = true; }}
+  onOpenFile={() => { contextMenu = null; void openFile(); }}
+  onOpenFolder={() => { contextMenu = null; void openFolder(); }}
+  onRenderedView={() => { contextMenu = null; setViewMode('rendered'); }}
+  onSourceView={() => { contextMenu = null; setViewMode('source'); }}
+/>
+{#if showRecent}
+  <RecentDocuments
+    paths={recentDocuments}
+    openingPath={openingRecentPath}
+    onClose={() => (showRecent = false)}
+    onOpen={openRecent}
+    onRemove={removeRecentDocument}
+    onOpenFile={() => { showRecent = false; void openFile(); }}
+  />
 {/if}
-
 {#if showPalette}
-  <div class="modal-backdrop" role="presentation" onclick={(event) => event.target === event.currentTarget && (showPalette = false)}>
-    <div class="palette" role="dialog" aria-modal="true" aria-label="Command palette" tabindex="-1">
-      <div class="palette-input"><span class="palette-glyph" aria-hidden="true"></span><input bind:this={paletteInput} value={paletteQuery} aria-label="Command search" placeholder="Type a command…" oninput={(event) => { paletteQuery = event.currentTarget.value; paletteIndex = 0; }} onkeydown={handlePaletteKeydown} /></div>
-      <div class="palette-list">{#each filteredPaletteCommands as [label, action], index}<button class:active={index === paletteIndex} type="button" onclick={() => { showPalette = false; paletteQuery = ''; action(); }}>{label}<kbd aria-hidden="true" class="keycap keycap-enter"></kbd><span class="visually-hidden">Enter</span></button>{/each}</div>
-      <div class="palette-footer"><span>Navigate</span><span><kbd aria-hidden="true" class="keycap keycap-up"></kbd><span class="visually-hidden">Arrow up</span><kbd aria-hidden="true" class="keycap keycap-down"></kbd><span class="visually-hidden">Arrow down</span> Select</span><span><kbd>Esc</kbd> Close</span></div>
-    </div>
-  </div>
+  <CommandPalette
+    commands={filteredPaletteCommands}
+    query={paletteQuery}
+    index={paletteIndex}
+    onQueryChange={(value) => { paletteQuery = value; paletteIndex = 0; }}
+    onKeydown={handlePaletteKeydown}
+    onSelect={(action) => { showPalette = false; paletteQuery = ''; action(); }}
+    onClose={() => (showPalette = false)}
+  />
 {/if}
 
 {#if showSettings}
-  <div class="modal-backdrop" role="presentation" onclick={(event) => event.target === event.currentTarget && (showSettings = false)}>
-    <div class="settings-modal" role="dialog" aria-modal="true" aria-label="Settings" tabindex="-1">
-      <div class="settings-header"><div><span class="eyebrow">Preferences</span><h2>Settings</h2></div><button bind:this={settingsCloseButton} class="icon-button" type="button" aria-label="Close settings" onclick={() => (showSettings = false)}>×</button></div>
-      <div class="settings-grid"><label for="theme-setting">Theme<select id="theme-setting" bind:value={theme}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label><label for="view-setting">Default view<select id="view-setting" bind:value={mode}><option value="rendered">Rendered</option><option value="source">Source</option><option value="split">Split</option></select></label><label for="profile-setting">Markdown profile<select id="profile-setting" bind:value={markdownProfile}><option value="github">GitHub Compatible</option><option value="extended">Extended</option><option value="commonmarkStrict">CommonMark Strict</option></select></label><label for="remote-images-setting">Remote images<select id="remote-images-setting" value={remoteImagesEnabled ? 'enabled' : 'disabled'} onchange={(event) => (remoteImagesEnabled = event.currentTarget.value === 'enabled')}><option value="enabled">Enabled with safe fetch policy</option><option value="disabled">Disabled</option></select></label><label for="scan-depth-setting">Folder scan depth<input id="scan-depth-setting" type="number" min="1" max="12" value={scanDepth} oninput={(event) => void changeScanDepth(Number(event.currentTarget.value))} /></label></div>
-      <div class="settings-section"><h3>Integration</h3><p>The installer registers Markdown Desktop for .md, .markdown, .mdown, and .mkdown. Defaults change only after you approve — on Windows in Settings, on macOS and Linux after you confirm here.</p><button type="button" class="secondary-button" onclick={promptDefaultMarkdownApp}>Make Default Markdown App…</button></div>
-      <div class="settings-section"><h3>Privacy & security</h3><p>Markdown is parsed and sanitized in the Rust core. No document content is loaded as an internal web page and no generic filesystem or shell capability is exposed to the UI.</p></div>
+  <SettingsModal
+    theme={theme}
+    mode={mode}
+    markdownProfile={markdownProfile}
+    compatibilityTarget={compatibilityTarget}
+    remoteImagesEnabled={remoteImagesEnabled}
+    scanDepth={scanDepth}
+    assetFolder={assetFolder}
+    hasActiveDocument={Boolean(active)}
+    consolidatingAssets={consolidatingAssets}
+    onClose={() => (showSettings = false)}
+    onThemeChange={(nextTheme) => (theme = nextTheme)}
+    onViewModeChange={setViewMode}
+    onProfileChange={(nextProfile) => (markdownProfile = nextProfile)}
+    onCompatibilityTargetChange={changeCompatibilityTarget}
+    onRemoteImagesChange={(enabled) => (remoteImagesEnabled = enabled)}
+    onScanDepthChange={(depth) => void changeScanDepth(depth)}
+    onAssetFolderChange={(folder) => (assetFolder = assetFolderSetting(folder))}
+    onConsolidate={() => void consolidateReferencedImages()}
+    onMakeDefault={promptDefaultMarkdownApp}
+  />
+{/if}
+{#if pendingAssetDrop}
+  <div class="modal-backdrop" role="presentation" onclick={(event) => event.target === event.currentTarget && void cancelNativeAssetDrop()}>
+    <div class="settings-modal default-app-confirm" role="alertdialog" aria-modal="true" aria-labelledby="asset-drop-title" aria-describedby="asset-drop-description" tabindex="-1">
+      <div class="settings-header"><div><span class="eyebrow">Dropped image</span><h2 id="asset-drop-title">Use image in place?</h2></div><button class="icon-button" type="button" aria-label="Cancel image drop" onclick={() => void cancelNativeAssetDrop()}>×</button></div>
+      <p id="asset-drop-description"><strong>{pendingAssetDrop.info.name}</strong> ({Math.max(1, Math.round(pendingAssetDrop.info.bytes / 1024))} KB) is already inside <code>{assetFolder}</code>.</p>
+      <p class="default-app-note">Link in place keeps the existing file. Copy creates a separate asset with collision-safe naming.</p>
+      <div class="default-app-actions">
+        <button type="button" class="secondary-button" onclick={() => void cancelNativeAssetDrop()}>Cancel</button>
+        <button type="button" class="secondary-button" onclick={() => void chooseNativeAssetDrop('copy')}>Copy to asset folder</button>
+        <button type="button" class="primary-button" onclick={() => void chooseNativeAssetDrop('link')}>Link in place</button>
+      </div>
     </div>
   </div>
 {/if}
-
 {#if showDefaultAppConfirm}
   <div class="modal-backdrop" role="presentation" onclick={(event) => event.target === event.currentTarget && (showDefaultAppConfirm = false)}>
     <div class="settings-modal default-app-confirm" role="dialog" aria-modal="true" aria-label="Make Markdown Desktop the default" tabindex="-1">
@@ -1318,241 +3824,3 @@
     </div>
   </div>
 {/if}
-
-<style>
-  :global(*) { box-sizing: border-box; }
-  :global(html), :global(body) { margin: 0; min-width: 860px; height: 100%; min-height: 100%; background: var(--app-bg); }
-  :global(body) { font-family: var(--font-sans); }
-  :global(button), :global(input), :global(select) { font: inherit; }
-  :global(button:focus-visible), :global(input:focus-visible), :global(select:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
-  :global(:root) { --app-bg: #111214; --panel: #1a1b1d; --panel-2: #202225; --border: #34363a; --hover: #292b2f; --text: #e8e4dc; --heading: #faf7f0; --muted: #aaa79f; --faint: #918e87; --accent: #d29a55; --accent-strong: #f0c37d; --link: #d9ad71; --gold: #d29a55; --danger: #e8877f; --success: #82bd91; --action-bg: #ece8df; --action-text: #191a1b; --action-border: #ece8df; --action-hover: #fffdf7; --code-bg: #0c0d0e; --document-width: 860px; --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; --font-mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace; color-scheme: dark; }
-  :global(:root[data-theme='light']) { --app-bg: #f2efe8; --panel: #fcfbf7; --panel-2: #e8e5dd; --border: #d7d2c7; --hover: #e9e2d5; --text: #2b2b29; --heading: #171817; --muted: #5f5d57; --faint: #696761; --accent: #85500f; --accent-strong: #7c4d16; --link: #8a591c; --success: #287047; --action-bg: #fffdf8; --action-text: #252321; --action-border: #cfc7b9; --action-hover: #ffffff; --code-bg: #e7e4dc; color-scheme: light; }
-  :global(:root[data-theme='system']) { color-scheme: dark; }
-  @media (prefers-color-scheme: light) {
-    :global(:root[data-theme='system']) { --app-bg: #f2efe8; --panel: #fcfbf7; --panel-2: #e8e5dd; --border: #d7d2c7; --hover: #e9e2d5; --text: #2b2b29; --heading: #171817; --muted: #5f5d57; --faint: #696761; --accent: #85500f; --accent-strong: #7c4d16; --link: #8a591c; --success: #287047; --action-bg: #fffdf8; --action-text: #252321; --action-border: #cfc7b9; --action-hover: #ffffff; --code-bg: #e7e4dc; color-scheme: light; }
-  }
-  .app-shell { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; color: var(--text); background: var(--app-bg); }
-  .app-toolbar { display: flex; flex: 0 0 58px; align-items: center; gap: 12px; min-height: 0; padding: 0 16px; border-bottom: 1px solid var(--border); background: var(--app-bg); }
-  .nav-controls { display: flex; gap: 2px; }
-  .icon-button { width: 30px; height: 30px; padding: 0; border: 0; border-radius: 6px; color: var(--muted); background: transparent; cursor: pointer; }
-  .icon-button:hover:not(:disabled) { color: var(--text); background: var(--hover); }
-  .icon-button:disabled { opacity: .3; cursor: default; }
-  .breadcrumb { min-width: 170px; flex: 1 1 auto; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; }
-  .crumb-root { color: var(--muted); }
-  .crumb-separator { padding: 0 8px; color: var(--faint); }
-  .crumb-current { color: var(--text); }
-  .dirty-dot { display: inline-block; width: 6px; height: 6px; margin: 0 0 1px 7px; border-radius: 50%; background: var(--gold); }
-  .command-trigger { display: flex; align-items: center; gap: 8px; width: min(330px, 30vw); padding: 8px 11px; border: 1px solid var(--border); border-radius: 8px; color: var(--muted); background: var(--panel-2); font-size: 12px; text-align: left; cursor: pointer; }
-  .command-glyph, .palette-glyph { display: inline-block; width: 1em; flex: 0 0 1em; }
-  .command-glyph::before, .palette-glyph::before { content: '⌕'; }
-  .command-trigger:hover { border-color: var(--accent); color: var(--text); }
-  kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; color: var(--muted); background: var(--panel-2); font-size: 10px; }
-  .command-trigger kbd { margin-left: auto; }
-  .toolbar-edit, .primary-button, .secondary-button { border-radius: 7px; padding: 8px 13px; cursor: pointer; }
-  .toolbar-edit, .primary-button { border: 1px solid var(--action-border); color: var(--action-text); background: var(--action-bg); font-weight: 700; }
-  .toolbar-edit:hover, .primary-button:hover { border-color: var(--accent); background: var(--action-hover); }
-  .toolbar-edit:active, .primary-button:active { background: var(--hover); }
-  .secondary-button { border: 1px solid var(--border); color: var(--text); background: var(--panel-2); }
-  .secondary-button:hover { border-color: var(--accent); }
-  .document-tabs-bar { display: flex; flex: 0 0 42px; min-width: 0; border-bottom: 1px solid var(--border); background: var(--app-bg); }
-  .empty-tabs-bar { flex-basis: 34px; align-items: center; gap: 4px; color: var(--faint); font-size: 10px; }
-  .empty-tabs-bar .new-tab { width: 38px; flex-basis: 38px; }
-  .document-tabs-bar .tabs-bar { flex: 1 1 auto; }
-  .workspace-grid { position: relative; display: grid; flex: 1 1 auto; grid-template-columns: 245px minmax(0, 1fr) 250px; min-height: 0; height: auto; overflow: hidden; }
-  .workspace-grid.left-collapsed { grid-template-columns: 0 minmax(0, 1fr) 250px; }
-  .workspace-grid.right-collapsed { grid-template-columns: 245px minmax(0, 1fr) 0; }
-  .workspace-grid.left-collapsed.right-collapsed { grid-template-columns: 0 minmax(0, 1fr) 0; }
-  .left-sidebar, .right-sidebar { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; border-right: 1px solid var(--border); background: var(--panel); transition: opacity 160ms ease; }
-  .right-sidebar { border-right: 0; border-left: 1px solid var(--border); }
-  .left-collapsed .left-sidebar, .right-collapsed .right-sidebar { opacity: 0; pointer-events: none; }
-  .sidebar-tabs, .right-tabs { display: flex; align-items: center; min-height: 44px; padding: 0 8px; gap: 3px; border-bottom: 1px solid var(--border); overflow: visible; }
-  .panel-tablist { display: flex; align-items: center; min-width: 0; gap: 3px; }
-  .sidebar-tabs button, .right-tabs button { border: 0; border-radius: 6px; padding: 6px 8px; color: var(--muted); background: transparent; font-size: 11px; cursor: pointer; white-space: nowrap; }
-  .sidebar-tabs button.active, .right-tabs button.active { color: var(--text); background: var(--hover); }
-  .collapse-button { margin-left: auto; font-size: 18px !important; }
-  .panel-collapse-control { display: grid; place-items: center; width: 28px; height: 28px; flex: 0 0 28px; margin: 0 0 0 auto; padding: 0 !important; border: 1px solid var(--border) !important; border-radius: 7px !important; color: var(--muted); background: var(--panel-2) !important; line-height: 1; }
-  .panel-collapse-control:hover { border-color: var(--accent) !important; color: var(--text); background: var(--hover) !important; }
-  .sidebar-heading, .panel-title { display: flex; align-items: center; justify-content: space-between; padding: 16px 14px 9px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
-  .sidebar-heading button { border: 0; color: var(--muted); background: transparent; cursor: pointer; }
-  .file-tree { flex: 1 1 auto; min-height: 0; height: auto; padding: 0 9px 18px; overflow: auto; }
-  .empty-sidebar { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; align-items: center; justify-content: center; height: auto; padding: 26px; color: var(--muted); text-align: center; font-size: 12px; }
-  .empty-symbol { display: block; margin-bottom: 12px; color: var(--accent); font-size: 30px; }
-  .empty-sidebar button { border: 1px solid var(--border); border-radius: 7px; padding: 7px 11px; color: var(--text); background: var(--panel-2); cursor: pointer; }
-  .search-panel { flex: 1 1 auto; min-height: 0; padding: 14px; overflow: auto; }
-  .search-panel label { display: block; margin-bottom: 7px; color: var(--muted); font-size: 11px; }
-  .search-input { display: flex; align-items: center; gap: 7px; padding: 8px 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel-2); }
-  .search-input input, .palette-input input { width: 100%; border: 0; outline: 0; color: var(--text); background: transparent; font-size: 12px; }
-  .search-input input:focus-visible, .palette-input input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .search-empty-state { display: flex; flex-direction: column; align-items: flex-start; padding: 30px 5px 10px; color: var(--muted); font-size: 11px; line-height: 1.6; }
-  .search-empty-state .empty-symbol { margin-bottom: 8px; font-size: 23px; }
-  .search-empty-state p { margin: 0 0 14px; }
-  .search-result, .info-row, .issue-row { display: flex; align-items: flex-start; gap: 9px; width: 100%; padding: 10px 4px; border: 0; border-bottom: 1px solid var(--border); color: var(--text); background: transparent; text-align: left; cursor: pointer; }
-  .search-result:hover, .info-row:hover { background: var(--hover); }
-  .result-icon { color: var(--accent); }
-  .search-result span:last-child, .info-row span:last-child, .issue-row span:last-child { min-width: 0; }
-  .search-result strong, .info-row strong, .issue-row strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
-  .search-result small, .info-row small, .issue-row small { display: block; overflow: hidden; margin-top: 3px; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
-  .document-area { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; background: var(--app-bg); }
-  .welcome { display: flex; flex: 1 1 auto; flex-direction: column; align-items: flex-start; justify-content: center; min-height: 0; margin: auto; padding: 50px; }
-  .welcome-logo { width: 58px; height: 58px; margin-bottom: 26px; object-fit: contain; }
-  .eyebrow, .doc-type { margin: 0 0 12px; color: var(--accent); font-size: 10px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
-  .welcome h1 { margin: 0; color: var(--heading); font-size: clamp(36px, 5vw, 60px); line-height: .98; letter-spacing: -.055em; }
-  .welcome h1 em { color: var(--accent-strong); font-style: normal; }
-  .welcome-copy { max-width: 480px; margin: 24px 0 28px; color: var(--muted); font-size: 16px; line-height: 1.6; }
-  .welcome-actions { display: flex; gap: 9px; }
-  .welcome-hints { display: flex; gap: 18px; margin-top: 34px; color: var(--faint); font-size: 11px; }
-  .welcome-hints kbd { margin-right: 5px; }
-  .document-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; padding: 30px clamp(24px, 5vw, 78px) 0; }
-  .document-header h1 { margin: 0; color: var(--heading); font-size: 25px; letter-spacing: -.03em; }
-  .header-actions { display: flex; gap: 6px; }
-  .header-actions button { border: 1px solid var(--border); border-radius: 6px; padding: 6px 9px; color: var(--muted); background: var(--panel); font-size: 11px; cursor: pointer; }
-  .header-actions button:hover { border-color: var(--accent); color: var(--text); }
-  .document-views { flex: 1 1 auto; min-height: 0; height: auto; overflow: auto; }
-  .document-views.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); overflow: hidden; }
-  .document-views:not(.split) .rendered-pane { overflow: visible; }
-  .document-views:not(.split) .source-pane { height: 100%; overflow: hidden; }
-  .rendered-pane, .source-pane { min-width: 0; min-height: 0; overflow: auto; }
-  .document-views.split .rendered-pane { border-right: 1px solid var(--border); }
-  .source-pane { background: color-mix(in srgb, var(--panel) 40%, transparent); }
-  .right-tabs { align-items: center; min-height: 70px; padding: 8px; }
-  .right-panel-tabs { display: grid; flex: 1 1 auto; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: minmax(26px, auto); align-content: center; min-width: 0; gap: 3px; overflow: visible; }
-  .right-tabs .panel-collapse-control { order: 0; margin: 0 6px 0 0; }
-  .right-tabs button { padding: 5px 4px; font-size: 10px; }
-  .right-panel-tabs button { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  .panel-list { flex: 1 1 auto; min-height: 0; height: auto; overflow: auto; padding: 4px 10px 18px; }
-  .panel-title { padding: 10px 4px; }
-  .panel-title span { color: var(--faint); }
-  .outline-row { display: block; width: 100%; border: 0; border-radius: 5px; padding-block: 6px; color: var(--muted); background: transparent; text-align: left; font-size: 11px; cursor: pointer; }
-  .outline-row:hover { color: var(--text); background: var(--hover); }
-  .outline-row span { display: inline-block; width: 15px; color: var(--faint); font: 10px var(--font-mono); }
-  .status-dot, .status-live { display: inline-block; flex: 0 0 auto; width: 7px; height: 7px; margin-top: 4px; border-radius: 50%; background: var(--muted); }
-  .status-live.ready { background: var(--success); }
-  .toolbar-edit:disabled, .view-switcher button:disabled { opacity: .35; cursor: default; }
-  .heading-actions { display: flex; align-items: center; gap: 6px; }
-  .depth-control { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 10px; letter-spacing: 0; text-transform: none; font-weight: 600; }
-  .depth-control button { width: 22px; height: 22px; border: 1px solid var(--border); border-radius: 5px; color: var(--text); background: var(--panel-2); cursor: pointer; }
-  .depth-control button:disabled { opacity: .4; cursor: default; }
-  .depth-control strong { min-width: 1.2em; color: var(--text); text-align: center; }
-  .file-tree-shell { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; }
-  .file-tree-shell.scanning .file-tree { filter: blur(3px); pointer-events: none; transform: scale(0.995); }
-  .tree-scan-overlay { position: absolute; inset: 0; z-index: 2; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--text); background: color-mix(in srgb, var(--panel) 55%, transparent); font-size: 11px; }
-  .scan-warnings { padding: 8px 14px 14px; color: var(--muted); font-size: 10px; line-height: 1.5; border-top: 1px solid var(--border); }
-  .scan-warnings strong { display: block; margin-bottom: 4px; color: var(--accent); }
-  .scan-warnings p { margin: 0 0 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .recovery-list { display: grid; gap: 6px; margin: 16px 0; }
-  .recovery-list button { width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); background: var(--panel-2); text-align: left; cursor: pointer; }
-  .recovery-list button.active, .recovery-list button:hover { border-color: var(--accent); }
-  .recovery-list strong, .recovery-list small { display: block; }
-  .recovery-list small { margin-top: 4px; color: var(--muted); font-size: 10px; }
-  @media (prefers-reduced-motion: reduce) { .file-tree-shell.scanning .file-tree { filter: none; transform: none; } }
-  .status-dot.external { background: var(--gold); }
-  .issue-icon { width: 16px; color: var(--gold); text-align: center; }
-  .success-copy { color: var(--success); }
-  .properties dl { display: grid; grid-template-columns: 80px 1fr; gap: 10px 8px; margin: 0; padding: 0 4px; font-size: 10px; }
-  .properties dt { color: var(--faint); }
-  .properties dd { min-width: 0; margin: 0; overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
-  .muted-copy { padding: 10px 5px; color: var(--muted); font-size: 11px; line-height: 1.6; }
-  .bottom-bar { display: grid; flex: 0 0 42px; grid-template-columns: auto minmax(190px, 1fr); align-items: stretch; min-height: 0; border-top: 1px solid var(--border); background: var(--panel); }
-  .tabs-bar { display: flex; min-width: 0; overflow: auto; }
-  .document-tab { display: flex; align-items: stretch; min-width: 130px; max-width: 220px; border-right: 1px solid var(--border); color: var(--muted); background: transparent; }
-  .document-tab-main, .tab-close, .new-tab, .view-switcher button { border: 0; color: var(--muted); background: transparent; cursor: pointer; }
-  .document-tab-main { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; padding: 0 7px 0 11px; overflow: hidden; color: inherit; text-align: left; font-size: 11px; white-space: nowrap; text-overflow: ellipsis; }
-  .document-tab-main:hover, .tab-close:hover, .new-tab:hover, .view-switcher button:hover { color: var(--text); background: var(--hover); }
-  .document-tab.active { color: var(--text); background: var(--hover); box-shadow: inset 0 2px 0 var(--accent); }
-  .tab-icon { color: var(--accent); font-size: 10px; }
-  .tab-state { color: transparent; }
-  .tab-state.dirty { color: var(--gold); }
-  .tab-close { width: 30px; flex: 0 0 30px; color: var(--faint); font-size: 15px; }
-  .tab-close:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
-  .tab-close:focus-visible { color: var(--text); background: var(--hover); outline-offset: -2px; }
-  .tab-close:active { background: color-mix(in srgb, var(--danger) 22%, transparent); }
-  .new-tab { display: grid; place-items: center; width: 42px; flex: 0 0 42px; color: var(--muted); font-family: var(--font-sans); font-size: 20px; font-weight: 400; line-height: 1; }
-  .view-switcher { display: flex; align-items: center; padding: 0 5px; border-inline: 1px solid var(--border); }
-  .view-switcher button { padding: 0 9px; font-size: 10px; }
-  .view-switcher button.active { color: var(--text); }
-  .status-bar { display: flex; align-items: center; gap: 7px; padding: 0 13px; color: var(--muted); font-size: 10px; }
-  .status-message { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .status-version, .status-meta { flex-shrink: 0; color: var(--faint); }
-  .status-update {
-    flex-shrink: 0;
-    border: 1px solid var(--action-border);
-    border-radius: 999px;
-    padding: 2px 8px;
-    color: var(--action-text);
-    background: var(--action-bg);
-    font: inherit;
-    cursor: pointer;
-  }
-  .status-update:hover { border-color: var(--accent); background: var(--action-hover); }
-  .status-spacer { flex: 1; }
-  .modal-backdrop { position: fixed; z-index: 20; isolation: isolate; inset: 0; display: grid; place-items: start center; overflow: auto; padding: max(24px, 11vh) 24px 24px; background: rgba(2, 5, 10, .68); backdrop-filter: blur(4px); }
-  .palette, .settings-modal, .conflict-modal, .about-modal { width: min(600px, calc(100vw - 48px)); max-height: calc(100vh - 48px); overflow: auto; border: 1px solid var(--border); border-radius: 13px; box-shadow: 0 24px 80px rgba(0,0,0,.45); background: var(--panel); }
-  .palette { overflow: hidden; }
-  .palette-input { display: flex; align-items: center; gap: 10px; padding: 15px; border-bottom: 1px solid var(--border); color: var(--accent); }
-  .keycap { display: inline-block; min-width: 1.5em; }
-  .keycap-enter::before { content: '↵'; }
-  .keycap-up::before { content: '↑'; }
-  .keycap-down::before { content: '↓'; }
-  .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
-  .palette-input input { font-size: 15px; }
-  .palette-list { max-height: 390px; overflow: auto; padding: 7px; }
-  .palette-list button { display: flex; justify-content: space-between; width: 100%; padding: 10px; border: 0; border-radius: 7px; color: var(--text); background: transparent; text-align: left; font-size: 12px; cursor: pointer; }
-  .palette-list button:hover, .palette-list button.active { background: var(--hover); }
-  .palette-footer { display: flex; gap: 16px; padding: 9px 13px; border-top: 1px solid var(--border); color: var(--faint); font-size: 10px; }
-  .settings-modal { padding: 25px; }
-  .about-modal { position: relative; display: grid; justify-items: center; padding: 38px 32px 32px; text-align: center; }
-  .about-close { position: absolute; top: 14px; right: 14px; }
-  .about-logo { width: 86px; height: 86px; margin: 2px 0 20px; object-fit: contain; }
-  .about-modal h2 { margin: 0; color: var(--heading); font-size: 28px; }
-  .about-copy { max-width: 360px; margin: 12px 0 8px; color: var(--muted); line-height: 1.6; }
-  .about-version { margin: 0 0 22px; color: var(--faint); font-size: 11px; }
-  .about-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
-  .about-actions button { min-width: 180px; }
-  .about-update { max-width: 390px; min-height: 28px; margin: 14px 0 0; color: var(--faint); font-size: 11px; line-height: 1.5; }
-  .update-notes { max-height: 180px; overflow: auto; margin-top: 16px; padding: 11px 12px; border: 1px solid var(--border); border-radius: 8px; color: var(--muted); background: var(--panel-2); text-align: left; }
-  .update-notes strong { color: var(--heading); font-size: 11px; }
-  .update-notes p { margin: 7px 0 0; white-space: pre-wrap; font: 11px/1.55 var(--font-sans); }
-  .settings-header { display: flex; align-items: flex-start; justify-content: space-between; }
-  .settings-header h2, .conflict-modal h2 { margin: 0; color: var(--heading); font-size: 25px; }
-  .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 24px; }
-  .settings-grid label { display: grid; gap: 6px; color: var(--muted); font-size: 11px; }
-  .settings-grid select, .settings-grid input { padding: 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--panel-2); }
-  .settings-section { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--border); background: var(--panel); }
-  .settings-section h3 { margin: 0 0 6px; color: var(--heading); font-size: 13px; }
-  .settings-section p { color: var(--muted); background: var(--panel); font-size: 11px; line-height: 1.6; }
-  .default-app-confirm { max-width: 460px; }
-  .default-app-confirm p { margin: 14px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
-  .default-app-confirm .default-app-note { color: var(--faint); font-size: 11px; }
-  .default-app-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
-  .conflict-modal { padding: 28px; }
-  .conflict-icon { display: grid; place-items: center; width: 34px; height: 34px; margin-bottom: 16px; border-radius: 50%; color: #271706; background: var(--gold); font-weight: 900; }
-  .conflict-modal p { color: var(--muted); line-height: 1.6; }
-  .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 20px 0; }
-  .compare-grid span { color: var(--muted); font-size: 10px; }
-  .compare-grid pre { max-height: 200px; overflow: auto; padding: 10px; border: 1px solid var(--border); border-radius: 7px; color: var(--text); background: var(--code-bg); font: 10px/1.5 var(--font-mono); white-space: pre-wrap; }
-  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
-  .sidebar-restore { position: absolute; z-index: 5; top: 12px; display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 10px; border: 1px solid var(--border); border-radius: 9px; color: var(--muted); background: var(--panel); box-shadow: 0 5px 18px rgba(0, 0, 0, .18); cursor: pointer; }
-  .sidebar-restore:hover { border-color: var(--accent); color: var(--text); background: var(--hover); }
-  .left-restore { left: 12px; }
-  .right-restore { right: 12px; }
-  .restore-glyph { color: var(--accent); font-size: 11px; }
-  .restore-glyph::before { content: '◈'; }
-  .restore-label { color: inherit; font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
-  .restore-chevron { color: var(--muted); font-size: 17px; line-height: 1; }
-  .workspace-loading { position: fixed; z-index: 18; top: 108px; left: 50%; display: inline-flex; align-items: center; gap: 10px; transform: translateX(-50%); padding: 9px 13px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); background: color-mix(in srgb, var(--panel) 94%, transparent); box-shadow: 0 8px 28px rgba(0, 0, 0, .18); font-size: 11px; }
-  .loading-spinner { width: 13px; height: 13px; border: 2px solid color-mix(in srgb, var(--accent) 28%, transparent); border-top-color: var(--accent); border-radius: 50%; animation: spin 700ms linear infinite; }
-  .context-menu { position: fixed; z-index: 30; display: grid; min-width: 210px; gap: 2px; padding: 6px; border: 1px solid var(--border); border-radius: 9px; background: var(--panel); box-shadow: 0 14px 40px rgba(0, 0, 0, .3); }
-  .context-menu-label { padding: 6px 9px 7px; border-bottom: 1px solid var(--border); color: var(--faint); font-size: 9px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
-  .context-menu button { width: 100%; padding: 8px 9px; border: 0; border-radius: 6px; color: var(--text); background: transparent; text-align: left; font-size: 11px; cursor: pointer; }
-  .context-menu button:hover, .context-menu button:focus-visible { color: var(--text); background: var(--hover); }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  @media (max-width: 1050px) {
-    .workspace-grid:not(.left-collapsed):not(.right-collapsed) { grid-template-columns: 210px minmax(0, 1fr) 230px; }
-    .workspace-grid.left-collapsed:not(.right-collapsed) { grid-template-columns: 0 minmax(0, 1fr) 230px; }
-    .workspace-grid:not(.left-collapsed).right-collapsed { grid-template-columns: 210px minmax(0, 1fr) 0; }
-    .workspace-grid.left-collapsed.right-collapsed { grid-template-columns: 0 minmax(0, 1fr) 0; }
-    .command-trigger { width: 230px; }
-  }
-  @media (prefers-reduced-motion: reduce) { :global(*) { scroll-behavior: auto !important; transition: none !important; } .loading-spinner { animation: none; } }
-  @media print { .app-toolbar, .left-sidebar, .right-sidebar, .bottom-bar, .document-header { display: none !important; } .document-views { height: auto; overflow: visible; } :global(.markdown-view) { max-width: none; color: #111; } }
-</style>

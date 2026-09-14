@@ -1,0 +1,13 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { runCommand } from './upgrade-process.mjs';
+import { assertMermaidCompatibility } from './upgrade-plan.mjs';
+const root = fileURLToPath(new URL('..', import.meta.url));
+const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+assertMermaidCompatibility(manifest.dependencies?.mermaid);
+console.log(`Mermaid renderer compatibility policy: ${manifest.dependencies.mermaid}`);
+console.log('Remaining Rust duplicate versions and their parent constraints:');
+runCommand('cargo', ['tree', '--manifest-path', 'src-tauri/Cargo.toml', '--locked', '--duplicates'], root);
+console.log('Direct Rust upgrade availability after resolution:');
+runCommand('cargo', ['upgrade', '--manifest-path', 'src-tauri/Cargo.toml', '--incompatible', 'allow', '--pinned', 'allow', '--dry-run'], root);
+console.log('Older transitive lines may remain required by upstream parents. No forced overrides or prereleases were applied.');

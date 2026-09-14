@@ -1,0 +1,84 @@
+.markdown-view-shell { position: relative; min-height: 100%; }
+.markdown-view { position: relative; max-width: var(--document-width); margin: 0 auto; padding: 42px clamp(24px, 5vw, 78px) 120px; color: var(--text); }
+.markdown-view h1, .markdown-view h2, .markdown-view h3, .markdown-view h4 { color: var(--heading); letter-spacing: -0.025em; scroll-margin-top: 24px; }
+.markdown-view h1 { font-size: clamp(30px, 4vw, 46px); line-height: 1.1; margin: 0 0 24px; }
+.markdown-view h2 { font-size: 28px; margin: 42px 0 14px; }
+.markdown-view h3 { font-size: 21px; margin: 32px 0 12px; }
+.markdown-view p, .markdown-view li { font-size: 15px; line-height: 1.75; }
+.markdown-view p { margin: 0 0 18px; }
+.markdown-view a { color: var(--link); text-decoration: none; border-bottom: 1px solid color-mix(in srgb, var(--link) 35%, transparent); }
+.markdown-view a:hover { border-bottom-color: var(--link); }
+/* Badge / logo anchors should not keep a text-link underline under images. */
+.markdown-view a:has(> img) { border-bottom: 0; }
+.markdown-view blockquote { margin: 24px 0; padding: 8px 18px; border-left: 3px solid var(--accent); background: color-mix(in srgb, var(--panel) 75%, var(--accent) 25%); border-radius: 0 10px 10px 0; }
+.markdown-view pre { position: relative; overflow: auto; padding: 18px; margin: 22px 0; border: 1px solid var(--border); border-radius: 12px; background: var(--code-bg); }
+.markdown-view .fence-shell { margin: 22px 0; }
+.markdown-view .fence-shell pre { margin: 0; border-top-left-radius: 0; border-top-right-radius: 0; }
+.markdown-view .fence-chrome { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 30px; padding: 5px 10px; border: 1px solid var(--border); border-bottom: 0; border-radius: 12px 12px 0 0; background: color-mix(in srgb, var(--code-bg) 82%, var(--panel)); }
+.markdown-view .fence-language { color: var(--accent-strong); font: 700 10px/1 var(--font-mono); letter-spacing: .04em; text-transform: lowercase; }
+.markdown-view .fence-source-button { border: 1px solid var(--border); border-radius: 5px; padding: 3px 7px; color: var(--muted); background: var(--panel); font-size: 10px; cursor: pointer; }
+.markdown-view .fence-source-button:hover, .markdown-view .fence-source-button:focus-visible { border-color: var(--accent); color: var(--text); }
+.markdown-view .block-insertion-zone { min-height: 10px; margin: 2px 0; border: 1px solid transparent; border-radius: 5px; color: var(--muted); outline: none; transition: min-height .12s ease, border-color .12s ease, background-color .12s ease; }
+.markdown-view .block-insertion-zone::before { content: attr(data-placeholder); display: block; max-height: 0; overflow: hidden; padding: 0 8px; opacity: 0; font-size: 10px; pointer-events: none; transition: max-height .12s ease, padding .12s ease, opacity .12s ease; }
+.markdown-view .block-insertion-zone:hover, .markdown-view .block-insertion-zone:focus, .markdown-view .block-insertion-zone:focus-within { min-height: 26px; border-color: color-mix(in srgb, var(--accent) 48%, var(--border)); background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.markdown-view .block-insertion-zone:hover::before, .markdown-view .block-insertion-zone:focus::before, .markdown-view .block-insertion-zone:focus-within::before { max-height: 24px; padding: 5px 8px; opacity: .75; }
+.markdown-view code { font: 0.9em/1.6 var(--font-mono); }
+.markdown-view :not(pre) > code { padding: 2px 5px; border-radius: 5px; background: var(--code-bg); color: var(--accent-strong); }
+.markdown-view code[data-visual-editable="true"] { display: block; min-height: 1.6em; cursor: text; outline: 1px solid transparent; outline-offset: 4px; }
+.markdown-view code[data-visual-editable="true"]:focus { outline-color: color-mix(in srgb, var(--accent) 54%, transparent); }
+.markdown-view table { border-collapse: collapse; width: 100%; margin: 24px 0; }
+.markdown-view th, .markdown-view td { border: 1px solid var(--border); padding: 9px 12px; text-align: left; }
+.markdown-view th { background: var(--panel); color: var(--heading); }
+/* Match GitHub README fidelity: no decorative chrome on ordinary images. */
+.markdown-view img { max-width: 100%; height: auto; }
+.markdown-view h1 img, .markdown-view h2 img, .markdown-view h3 img,
+.markdown-view h4 img, .markdown-view h5 img, .markdown-view h6 img {
+  vertical-align: middle;
+}
+.markdown-view p[align="center"] { text-align: center; }
+.markdown-view img.asset-error {
+  min-height: 46px;
+  opacity: 0.6;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+}
+.markdown-view .visual-empty-block { min-height: 2.4em; margin: 0 0 18px; outline: 1px dashed transparent; }
+.markdown-view .visual-empty-block:empty::before { content: 'Start writing Markdown…'; color: var(--muted); opacity: .72; pointer-events: none; }
+.markdown-view .visual-empty-block:focus { outline-color: color-mix(in srgb, var(--accent) 50%, transparent); outline-offset: 5px; }
+.markdown-view hr { border: 0; border-top: 1px solid var(--border); margin: 36px 0; }
+.copy-code { position: absolute; top: 8px; right: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--muted); padding: 4px 8px; font-size: 11px; cursor: pointer; }
+.diagram-output { margin: 22px 0; padding: 18px; overflow: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--code-bg); }
+.diagram-output svg { max-width: 100%; height: auto; }
+.math-output { margin: 22px 0; overflow: auto; }
+.diagram-error { color: var(--danger); font-family: var(--font-mono); white-space: pre-wrap; }
+.map-find-hit { outline: 1px dashed color-mix(in srgb, var(--accent) 68%, transparent); outline-offset: 3px; background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.map-find-active { outline: 2px solid var(--warning, #f0b429); outline-offset: 3px; background: color-mix(in srgb, var(--warning, #f0b429) 14%, transparent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--warning, #f0b429) 18%, transparent); }
+.map-hover { outline: 1px dotted color-mix(in srgb, var(--accent-strong) 80%, transparent); outline-offset: 3px; background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.map-selected { outline: 2px solid var(--accent-strong); outline-offset: 3px; background: color-mix(in srgb, var(--accent) 12%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-strong) 18%, transparent); }
+.map-source-selected { outline: 3px double color-mix(in srgb, var(--accent-strong) 82%, transparent); outline-offset: 4px; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-strong) 16%, transparent); }
+.source-selection-range { border-radius: 3px; background: color-mix(in srgb, var(--accent-strong) 48%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-strong) 22%, transparent); }
+::highlight(markdown-source-selection) { background-color: color-mix(in srgb, var(--accent-strong) 48%, transparent); }
+.source-reveal { position: absolute; z-index: 2; border: 1px solid var(--action-border); border-radius: 6px; padding: 4px 7px; color: var(--action-text); background: var(--action-bg); box-shadow: 0 4px 14px rgba(0, 0, 0, .16); font-size: 10px; font-weight: 700; cursor: pointer; }
+.source-reveal:hover, .source-reveal:focus-visible { filter: brightness(1.08); }
+.markdown-map-tooltip { position: absolute; z-index: 8; max-width: min(360px, calc(100% - 16px)); padding: 6px 9px; border: 1px solid var(--action-border); border-radius: 7px; color: var(--action-text); background: var(--action-bg); box-shadow: 0 6px 18px rgba(0, 0, 0, .2); font-size: 11px; line-height: 1.35; pointer-events: none; }
+.table-toolbar { position: absolute; z-index: 7; display: flex; flex-wrap: wrap; gap: 3px; max-width: min(440px, calc(100% - 16px)); padding: 4px; border: 1px solid var(--action-border); border-radius: 8px; background: var(--action-bg); box-shadow: 0 6px 18px rgba(0, 0, 0, .18); }
+.table-toolbar button { min-width: 30px; min-height: 24px; padding: 3px 6px; border: 1px solid color-mix(in srgb, var(--action-border) 70%, transparent); border-radius: 5px; color: var(--action-text); background: transparent; font-size: 10px; font-weight: 700; cursor: pointer; }
+.table-toolbar button:hover, .table-toolbar button:focus-visible { border-color: var(--accent); background: var(--hover); outline: none; }
+.block-handle-layer { position: absolute; z-index: 3; inset: 0; pointer-events: none; }
+.block-drag-handle { position: absolute; display: grid; place-items: center; width: 22px; height: 28px; padding: 0; border: 1px solid transparent; border-radius: 6px; color: var(--muted); background: transparent; pointer-events: auto; cursor: grab; opacity: .55; touch-action: none; user-select: none; }
+.block-drag-handle::before { content: '⋮⋮'; font: 700 14px/1 var(--font-mono); letter-spacing: -1px; }
+.block-drag-handle:hover, .block-drag-handle:focus-visible { opacity: 1; border-color: var(--accent); color: var(--accent-strong); background: var(--panel); outline: none; }
+.block-drag-handle:active { cursor: grabbing; }
+.markdown-view:hover .block-drag-handle, .markdown-view:focus-within .block-drag-handle { opacity: .85; }
+.block-dragging { opacity: .62; }
+.block-drop-before { outline: 2px solid color-mix(in srgb, var(--accent) 76%, transparent); outline-offset: 7px; box-shadow: inset 0 3px 0 var(--accent); }
+.block-drop-after { outline: 2px solid color-mix(in srgb, var(--accent) 76%, transparent); outline-offset: 7px; box-shadow: inset 0 -3px 0 var(--accent); }
+.block-drop-beside { outline: 2px dashed color-mix(in srgb, var(--warning, #f0b429) 82%, transparent); outline-offset: 7px; box-shadow: inset 4px 0 0 var(--warning, #f0b429), inset -4px 0 0 var(--warning, #f0b429); }
+.slash-menu { position: absolute; z-index: 4; width: min(310px, calc(100% - 16px)); max-height: 300px; overflow: auto; padding: 6px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); box-shadow: 0 10px 30px rgba(0, 0, 0, .2); }
+.slash-menu-query { padding: 6px 8px; color: var(--faint); font: 10px var(--font-mono); border-bottom: 1px solid var(--border); }
+.slash-menu button { display: grid; width: 100%; gap: 2px; border: 0; border-radius: 7px; padding: 8px; color: var(--text); background: transparent; text-align: left; cursor: pointer; }
+.slash-menu button:hover, .slash-menu button.active { background: var(--hover); }
+.slash-menu button strong { font-size: 11px; }
+.slash-menu button span, .slash-menu-empty { color: var(--muted); font-size: 10px; }
+.slash-menu-empty { margin: 8px; }

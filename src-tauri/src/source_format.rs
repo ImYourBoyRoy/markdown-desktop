@@ -45,6 +45,22 @@ pub fn decode_bytes(
             path.display()
         ));
     };
+    let (line_ending, final_newline, newline_sequences) = infer_text_format(&source);
+    Ok((
+        source,
+        encoding,
+        bom,
+        line_ending,
+        final_newline,
+        newline_sequences,
+    ))
+}
+
+/// Infer the text-format metadata needed to re-encode a recovered source when
+/// the original file is no longer available. This intentionally works on the
+/// decoded source so legacy recovery snapshots can still preserve CRLF/CR/LF
+/// and final-newline behavior.
+pub fn infer_text_format(source: &str) -> (String, bool, Vec<String>) {
     let newline_sequences = source
         .as_bytes()
         .iter()
@@ -68,14 +84,7 @@ pub fn decode_bytes(
     }
     .to_owned();
     let final_newline = source.ends_with('\n') || source.ends_with('\r');
-    Ok((
-        source,
-        encoding,
-        bom,
-        line_ending,
-        final_newline,
-        newline_sequences,
-    ))
+    (line_ending, final_newline, newline_sequences)
 }
 
 pub fn apply_recorded_newlines(

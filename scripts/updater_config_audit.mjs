@@ -44,7 +44,7 @@ for (const forbidden of ['process:default', 'opener:default', 'opener:allow-reve
 if (!capability.permissions?.includes('opener:allow-open-url')) {
   failures.push('missing narrowly scoped opener permission: opener:allow-open-url');
 }
-for (const marker of ['TAURI_SIGNING_PRIVATE_KEY', 'includeUpdaterJson: true', 'assetNamePattern:', 'updaterJsonPreferNsis: true', 'tauri.release.conf.json', 'gh release upload']) {
+for (const marker of ['TAURI_SIGNING_PRIVATE_KEY', 'uploadUpdaterJson: true', 'releaseAssetNamePattern:', 'updaterJsonPreferNsis: true', 'tauri.release.conf.json', 'gh release upload']) {
   if (!releaseWorkflow.includes(marker)) failures.push(`release workflow is missing updater marker: ${marker}`);
 }
 const prePublishVerification = releaseWorkflow.indexOf('name: Verify release assets before publication');
@@ -58,8 +58,8 @@ if (!releaseWorkflow.includes('releaseTag = if') || !releaseWorkflow.includes('!
 for (const marker of ['windows-11-vs2026-arm', 'ubuntu-22.04-arm', 'aarch64-pc-windows-msvc', 'aarch64-unknown-linux-gnu', 'Windows-ARM64', 'Linux-ARM64', 'windows-aarch64', 'linux-aarch64']) {
   if (!releaseWorkflow.includes(marker)) failures.push(`release workflow is missing ARM updater marker: ${marker}`);
 }
-for (const obsoleteMarker of ['uploadUpdaterJson:', 'releaseAssetNamePattern:']) {
-  if (releaseWorkflow.includes(obsoleteMarker)) failures.push(`release workflow still uses obsolete Tauri Action input: ${obsoleteMarker}`);
+for (const obsoleteMarker of ['includeUpdaterJson:', 'assetNamePattern:']) {
+  if (releaseWorkflow.includes(obsoleteMarker)) failures.push(`release workflow still uses obsolete Tauri Action v0 input: ${obsoleteMarker}`);
 }
 if (!/max-parallel:\s*1/.test(releaseWorkflow)) {
   failures.push('release workflow must serialize shared draft-release/latest.json uploads');

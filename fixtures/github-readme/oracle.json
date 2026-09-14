@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "fixtures": [
+    {
+      "id": "readme-alerts",
+      "file": "readme-alerts.md",
+      "profile": "github",
+      "compatibilityTarget": "githubReadme",
+      "fileName": "README.md",
+      "expect": {
+        "headingSlugs": ["github-readme-alerts"],
+        "linkCount": 1,
+        "htmlContains": ["markdown-alert", "<table"],
+        "htmlExcludes": ["<script>"],
+        "issueCodesExclude": ["profile.github-alert"]
+      }
+    },
+    {
+      "id": "readme-truncated",
+      "file": "readme-truncated.md",
+      "profile": "github",
+      "compatibilityTarget": "githubReadme",
+      "fileName": "README.md",
+      "expect": {
+        "minSourceBytes": 65536,
+        "issueCodesInclude": ["github.readme-truncated"]
+      }
+    },
+    {
+      "id": "assets-heavy",
+      "file": "assets-heavy.md",
+      "profile": "github",
+      "compatibilityTarget": "githubReadme",
+      "fileName": "README.md",
+      "expect": {
+        "headingSlugs": ["asset-heavy-readme"],
+        "linkCount": 1,
+        "htmlContains": ["<img"],
+        "issueCodesExclude": ["profile.github-alert"]
+      }
+    }
+  ]
+}

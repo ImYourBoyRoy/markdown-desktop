@@ -1,0 +1,5 @@
+.update-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 13px; border-bottom: 1px solid var(--border); background: var(--panel-2); }
+.update-banner p { margin: 0; color: var(--muted); font-size: 11px; }
+.update-banner strong { color: var(--heading); }
+.update-banner-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.update-banner-actions .primary-button, .update-banner-actions .secondary-button { padding: 5px 10px; font-size: 11px; }

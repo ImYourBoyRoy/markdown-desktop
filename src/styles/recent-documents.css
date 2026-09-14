@@ -1,0 +1,13 @@
+.recent-modal { width: min(680px, calc(100vw - 48px)); max-height: min(640px, calc(100vh - 48px)); overflow: hidden; border: 1px solid var(--border); border-radius: 13px; box-shadow: 0 24px 80px rgba(0,0,0,.45); background: var(--panel); }
+.recent-header { margin-bottom: 0; }
+.recent-list { display: grid; max-height: min(420px, calc(100vh - 240px)); gap: 5px; overflow: auto; padding: 10px 14px; }
+.recent-item { display: flex; align-items: stretch; gap: 6px; min-width: 0; }
+.recent-open { display: grid; flex: 1 1 auto; min-width: 0; gap: 4px; padding: 11px 12px; border: 1px solid transparent; border-radius: 8px; color: var(--text); background: transparent; text-align: left; cursor: pointer; }
+.recent-open:hover, .recent-open:focus-visible { border-color: var(--accent); background: var(--hover); }
+.recent-open:disabled { cursor: wait; opacity: .65; }
+.recent-name { overflow: hidden; font-size: 13px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.recent-path { overflow: hidden; color: var(--muted); font: 11px/1.35 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.recent-remove { align-self: center; flex: 0 0 auto; color: var(--muted); }
+.recent-empty { margin: 0; padding: 34px 18px; color: var(--muted); text-align: center; }
+.recent-footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 14px; border-top: 1px solid var(--border); color: var(--faint); font-size: 11px; }
+@media (max-width: 560px) { .recent-footer { align-items: stretch; flex-direction: column; } }

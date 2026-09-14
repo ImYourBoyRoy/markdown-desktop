@@ -1,3 +1,14 @@
+@import './styles/app-shell.css';
+@import './styles/editor-ribbon.css';
+@import './styles/ribbon-overflow.css';
+@import './styles/markdown-editor.css';
+@import './styles/markdown-view.css';
+@import './styles/file-tree.css';
+@import './styles/update-banner.css';
+@import './styles/assistant-panel.css';
+@import './styles/inspector.css';
+@import './styles/recent-documents.css';
+
 html { color-scheme: dark; }
 html, body, #app { width: 100%; height: 100%; min-height: 100%; }
 body { overflow: hidden; }

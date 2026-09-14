@@ -172,6 +172,8 @@ if (args.has('--help') || args.has('-h')) {
   printHelp();
 } else {
   try {
+    // Fail before deleting working dependencies/artifacts when tools conflict.
+    if (rebuild || fresh || locksOnly) run('node', ['scripts/verify-toolchains.mjs']);
     if (!locksOnly) purgeCaches();
     if (fresh || locksOnly) refreshLocks();
     if (rebuild) rebuildProof();

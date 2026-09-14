@@ -22,3 +22,8 @@ export function escapeHtml(value: string): string {
     "'": '&#39;',
   })[character] ?? character);
 }
+
+/** True for in-memory documents that have not been saved to a user path yet. */
+export function isUntitledDocumentId(documentId: string): boolean {
+  return documentId.startsWith('untitled:');
+}
