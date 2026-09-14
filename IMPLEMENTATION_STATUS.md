@@ -15,10 +15,11 @@ Updated: 2026-09-14
   publication run `34870524308`.
 - CI and release workflows use the non-exact pnpm `12` channel while the
   project toolchain check enforces the `12.3.4+` floor.
-- A Windows CI failure exposed that bare `pnpm <script>` shorthand was a
-  no-op in the native Windows jobs, leaving `Apps/**` absent. Native CI and
-  release smoke steps now use explicit `pnpm run ...` invocation so the
-  build, artifact, and uninstall checks execute on every runner.
+- The first Windows CI repair exposed a second runner-specific issue: the
+  hosted Windows `pnpm` shim returned success without running script bodies.
+  Windows native jobs now install through `pnpm.cmd` and invoke build, smoke,
+  and uninstall scripts with `node` directly, so missing staged artifacts
+  cannot be hidden by a false-positive smoke step.
 - The CI-discovered `RUSTSEC-2026-0285` `rustls 0.23.44` vulnerability was
   resolved by locking `rustls 0.23.45`; the current cargo audit has zero
   vulnerabilities and seven documented upstream maintenance/unsoundness

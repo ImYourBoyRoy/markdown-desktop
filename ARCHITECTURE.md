@@ -197,7 +197,7 @@ file sizes; lines are logical source lines with a terminal newline excluded.
 Refresh it after source or documentation changes so cold models can trust the
 routing table below.
 
-Inventory totals: 245 files / 49,768 lines / 2,012,420 B. Runtime (excluding this generator): 152 files / 29,469 lines / 1,216,866 B. Tests/benchmarks: 68 files / 6,028 lines / 240,956 B.
+Inventory totals: 245 files / 49,783 lines / 2,013,067 B. Runtime (excluding this generator): 152 files / 29,469 lines / 1,216,866 B. Tests/benchmarks: 68 files / 6,028 lines / 240,956 B.
 
 ### Read first
 
@@ -489,13 +489,13 @@ These files define toolchains, dependency graphs, packaging, permissions, CI, an
 
 | File | Lines | Bytes | Summary |
 | --- | ---: | ---: | --- |
-| `.github/workflows/ci.yml` | 156 | 4,394 B | Quality, security, cross-platform build, and test automation. |
-| `.github/workflows/release.yml` | 473 | 24,727 B | Signed six-family release build, publication, and post-publication verification. |
+| `.github/workflows/ci.yml` | 162 | 4,614 B | Quality, security, cross-platform build, and test automation. |
+| `.github/workflows/release.yml` | 479 | 24,928 B | Signed six-family release build, publication, and post-publication verification. |
 | `.gitignore` | 81 | 1,061 B | Generated output, local credentials, runtime state, and continuity-file boundaries. |
 | `AGENTS.md` | 86 | 6,931 B | Repository operating contract, invariants, required workflows, and safety boundaries. |
-| `IMPLEMENTATION_STATUS.md` | 725 | 56,225 B | Current implementation checkpoint and evidence summary. |
+| `IMPLEMENTATION_STATUS.md` | 726 | 56,293 B | Current implementation checkpoint and evidence summary. |
 | `LICENSE` | 21 | 1,086 B | MIT license text. |
-| `MEMORY.md` | 665 | 79,915 B | Local continuity record of architecture decisions, validation, risks, and next actions. |
+| `MEMORY.md` | 667 | 80,073 B | Local continuity record of architecture decisions, validation, risks, and next actions. |
 | `README.md` | 391 | 26,461 B | Published user/developer guide for installation, usage, commands, releases, and limitations. |
 | `SECURITY.md` | 52 | 3,567 B | Security model, audit findings, upstream advisories, and unresolved platform boundaries. |
 | `docs/PHASE-0-PERFORMANCE.md` | 137 | 6,049 B | Phase 0 performance matrix, baseline, budgets, and evidence limits. |

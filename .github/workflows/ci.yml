@@ -135,17 +135,23 @@ jobs:
           workspaces: './src-tauri -> target'
 
       - name: Install dependencies
+        if: runner.os != 'Windows'
         run: pnpm install --frozen-lockfile
 
+      - name: Install dependencies (Windows command shim)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: pnpm.cmd install --frozen-lockfile
+
       - name: Build and stage native release artifacts
-        run: pnpm run build:app
+        run: node scripts/build_app.mjs
 
       - name: Verify native artifact and branding
-        run: pnpm run smoke:native
+        run: node scripts/native_smoke.mjs
 
       - name: Smoke test Windows uninstall cleanup
         if: runner.os == 'Windows'
-        run: pnpm run smoke:uninstall
+        run: node scripts/uninstall_smoke.mjs
 
       - name: Upload native smoke artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
