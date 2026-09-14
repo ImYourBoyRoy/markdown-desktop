@@ -23,7 +23,10 @@ Updated: 2026-09-14
 - The CI-discovered `RUSTSEC-2026-0285` `rustls 0.23.44` vulnerability was
   resolved by locking `rustls 0.23.45`; the current cargo audit has zero
   vulnerabilities and seven documented upstream maintenance/unsoundness
-  warnings. The post-fix CI rerun remains the final cross-platform gate.
+  warnings. Post-fix CI run
+  [`34897036643`](https://github.com/ImYourBoyRoy/markdown-desktop/actions/runs/34897036643)
+  passed quality/security plus native smoke and artifact verification on
+  Windows x64/ARM64, macOS Intel/Apple Silicon, and Linux x64/ARM64.
 
 ## Architecture boundary (2026-09-13)
 
@@ -40,7 +43,7 @@ Updated: 2026-09-14
 - The next safe boundary is another callback-bounded lifecycle domain. Do not
   move selection, source-map revision, or tab authority into a second store.
 - `pnpm architecture:check` now verifies the cold-start file inventory in
-  `ARCHITECTURE.md` (244 maintained files with exact sizes, line counts, and
+  `ARCHITECTURE.md` (245 maintained files with exact sizes, line counts, and
   curated summaries).
 
 ## Current dependency and renderer closure (2026-09-13)
