@@ -1299,6 +1299,7 @@
       startY: number;
       active: boolean;
       nativeStarted: boolean;
+      dropBounds: Array<{ block: HTMLElement; rect: DOMRect }>;
       targetMapId?: string;
       position?: 'before' | 'after' | 'beside';
     } | undefined;
@@ -1311,8 +1312,7 @@
     const clearDropState = () => {
       blocks.forEach((block) => block.classList.remove('block-drop-before', 'block-drop-after', 'block-drop-beside'));
     };
-    const isBesideZone = (clientX: number, block: HTMLElement) => {
-      const rect = block.getBoundingClientRect();
+    const isBesideZone = (clientX: number, rect: DOMRect) => {
       const edgeWidth = Math.min(72, Math.max(28, rect.width * 0.18));
       return clientX - rect.left <= edgeWidth || rect.right - clientX <= edgeWidth;
     };
@@ -1328,7 +1328,39 @@
         return null;
       };
       const hit = document.elementFromPoint?.(clientX, clientY);
-      return blockForElement(hit)
+      const hitBlock = blockForElement(hit);
+      if (hitBlock && hitBlock !== pointerDrag?.block) return hitBlock;
+      if (hit && !host.contains(hit)) return hitBlock;
+
+      // Pointer capture retargets pointer events to the handle, and some
+      // WebViews can return no useful element from elementFromPoint while a
+      // captured drag is in progress. Use the per-gesture geometry snapshot
+      // in those cases instead of mistaking the captured handle for the drop
+      // target. Bounds are refreshed on scroll/resize, not on every move.
+      const hostRect = host.getBoundingClientRect();
+      const pointInsideHost = clientX >= hostRect.left && clientX <= hostRect.right
+        && clientY >= hostRect.top && clientY <= hostRect.bottom;
+      if (pointInsideHost && pointerDrag) {
+        const bounds = pointerDrag.dropBounds;
+        const contained = bounds.find(({ rect }) => clientX >= rect.left && clientX <= rect.right
+          && clientY >= rect.top && clientY <= rect.bottom);
+        if (contained) return contained.block;
+
+        // Whitespace between blocks is also a useful drop surface. Snap to
+        // the nearest other block within a modest radius; the existing source
+        // transaction remains the final authority on whether that move is safe.
+        let nearest: { block: HTMLElement; distance: number } | undefined;
+        for (const { block, rect } of bounds) {
+          if (block === pointerDrag.block) continue;
+          const dx = Math.max(rect.left - clientX, 0, clientX - rect.right);
+          const dy = Math.max(rect.top - clientY, 0, clientY - rect.bottom);
+          const distance = Math.hypot(dx, dy);
+          if (!nearest || distance < nearest.distance) nearest = { block, distance };
+        }
+        if (nearest && nearest.distance <= 72) return nearest.block;
+      }
+
+      return hitBlock
         ?? blockForElement(fallbackTarget instanceof Element ? fallbackTarget : null);
     };
     const updatePointerDropTarget = (event: PointerEvent) => {
@@ -1343,7 +1375,7 @@
       const targetMapId = target.dataset.mapId;
       if (!targetMapId) return;
       const rect = target.getBoundingClientRect();
-      const beside = isBesideZone(event.clientX, target);
+      const beside = isBesideZone(event.clientX, rect);
       const position = beside
         ? 'beside'
         : event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
@@ -1357,14 +1389,24 @@
     const updateHandlePositions = () => {
       if (!blockHandleLayer) return;
       const hostRect = host.getBoundingClientRect();
+      const dropBounds: Array<{ block: HTMLElement; rect: DOMRect }> = [];
       [...blockHandleLayer.children].forEach((child, index) => {
         const block = blocks[index];
         if (!(child instanceof HTMLElement) || !block) return;
         const rect = block.getBoundingClientRect();
+        dropBounds.push({ block, rect });
         const handleHeight = child.offsetHeight || 28;
         child.style.top = `${Math.max(4, rect.top - hostRect.top + (rect.height - handleHeight) / 2)}px`;
         child.style.left = `${Math.max(4, rect.left - hostRect.left - 26)}px`;
       });
+      if (pointerDrag) pointerDrag.dropBounds = dropBounds;
+    };
+    const updateForContainingScroll = (event: Event) => {
+      const target = event.target;
+      if (target === document || target === window
+        || (target instanceof Element && target.contains(host))) {
+        updateHandlePositions();
+      }
     };
 
     const handlePointerMove = (event: PointerEvent) => {
@@ -1415,9 +1457,11 @@
       pointerDrag = undefined;
       clearDropState();
     };
-    document.addEventListener('pointermove', handlePointerMove);
-    document.addEventListener('pointerup', handlePointerUp);
-    document.addEventListener('pointercancel', handlePointerCancel);
+    // Capture at the window boundary so nested editor handlers cannot swallow
+    // a drag before it reaches the document bubble phase.
+    window.addEventListener('pointermove', handlePointerMove, true);
+    window.addEventListener('pointerup', handlePointerUp, true);
+    window.addEventListener('pointercancel', handlePointerCancel, true);
 
     blocks.forEach((block, index) => {
       const mapId = block.dataset.mapId;
@@ -1448,6 +1492,10 @@
           startY: event.clientY,
           active: false,
           nativeStarted: false,
+          dropBounds: blocks.map((candidate) => ({
+            block: candidate,
+            rect: candidate.getBoundingClientRect(),
+          })),
         };
         try {
           handle.setPointerCapture?.(event.pointerId);
@@ -1494,7 +1542,7 @@
         event.preventDefault();
         if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
         const rect = block.getBoundingClientRect();
-        const beside = isBesideZone(event.clientX, block);
+        const beside = isBesideZone(event.clientX, rect);
         block.classList.toggle('block-drop-beside', beside);
         block.classList.toggle('block-drop-before', !beside && event.clientY < rect.top + rect.height / 2);
         block.classList.toggle('block-drop-after', !beside && event.clientY >= rect.top + rect.height / 2);
@@ -1507,7 +1555,7 @@
         if (!draggingMapId || draggingMapId === mapId) return;
         event.preventDefault();
         const rect = block.getBoundingClientRect();
-        const beside = isBesideZone(event.clientX, block);
+        const beside = isBesideZone(event.clientX, rect);
         const movingMapId = draggingMapId;
         draggingMapId = undefined;
         clearDropState();
@@ -1526,7 +1574,7 @@
     });
     updateHandlePositions();
     window.addEventListener('resize', updateHandlePositions);
-    host.addEventListener('scroll', updateHandlePositions, { passive: true });
+    window.addEventListener('scroll', updateForContainingScroll, { capture: true, passive: true });
     blockHandleCleanup.push(() => {
       if (pointerDrag) {
         try {
@@ -1537,14 +1585,14 @@
           // Cleanup is best-effort if the WebView already released capture.
         }
       }
-      document.removeEventListener('pointermove', handlePointerMove);
-      document.removeEventListener('pointerup', handlePointerUp);
-      document.removeEventListener('pointercancel', handlePointerCancel);
+      window.removeEventListener('pointermove', handlePointerMove, true);
+      window.removeEventListener('pointerup', handlePointerUp, true);
+      window.removeEventListener('pointercancel', handlePointerCancel, true);
       pointerDrag = undefined;
       draggingMapId = undefined;
       clearDropState();
       window.removeEventListener('resize', updateHandlePositions);
-      host.removeEventListener('scroll', updateHandlePositions);
+      window.removeEventListener('scroll', updateForContainingScroll, true);
     });
   }
 

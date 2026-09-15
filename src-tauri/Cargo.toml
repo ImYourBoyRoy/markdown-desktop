@@ -1,6 +1,6 @@
 [package]
 name = "markdown-desktop"
-version = "1.0.2"
+version = "1.0.3"
 description = "A desktop viewer and editor for Markdown files"
 authors = ["Roy Dawson IV"]
 license = "MIT"

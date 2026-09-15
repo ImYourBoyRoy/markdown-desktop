@@ -4,7 +4,7 @@ A focused desktop viewer and editor for ordinary Markdown files.
 
 <p align="center">
   <a href="https://github.com/ImYourBoyRoy/markdown-desktop/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/ImYourBoyRoy/markdown-desktop/actions/workflows/ci.yml/badge.svg?branch=main" /></a>
-  <a href="https://github.com/ImYourBoyRoy/markdown-desktop/releases"><img alt="Version 1.0.2" src="https://img.shields.io/badge/version-1.0.2-b7833f?style=flat-square" /></a>
+  <a href="https://github.com/ImYourBoyRoy/markdown-desktop/releases/latest"><img alt="Latest GitHub release" src="https://img.shields.io/github/v/release/ImYourBoyRoy/markdown-desktop?color=b7833f&style=flat-square" /></a>
   <a href="./LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-6b6158?style=flat-square" /></a>
 </p>
 
@@ -118,8 +118,11 @@ available, then confirm it with the guarded native render.
 Rendered text selection is pointer-aware: the post-drag click cannot replace a
 precise cross-block range with a whole-block selection, and releasing outside
 the rendered pane still completes the gesture. Block handles use the same
-pointer path with visible before/after drop feedback; source movement refuses
-only the opaque content actually crossed by the move.
+pointer path with visible before/after drop feedback; dropping in nearby
+whitespace targets the nearest block. Pointer capture and WebView hit-testing
+fallbacks keep the gesture attached to its source handle. Reordering still uses
+a bounded source transaction and refuses moves that would displace opaque,
+unmapped Markdown; **Alt+↑ / Alt+↓** remains available as a keyboard fallback.
 Selecting text in the source editor paints the matching visible text in the
 rendered pane, including editable paragraphs and inline formatting. Browser
 range highlights preserve the editable HTML and caret; older webviews without
@@ -202,7 +205,7 @@ on demand rather than during startup.
 
 Installers and portable builds are on the [Releases](https://github.com/ImYourBoyRoy/markdown-desktop/releases) page. Every downloadable build follows the same pattern: `Markdown-Desktop-<version>-<platform>-<architecture>...`.
 
-The checked-in release workflow targets all six platform families in the table below. The published [`v1.0.2` release](https://github.com/ImYourBoyRoy/markdown-desktop/releases/tag/v1.0.2) contains the verified six-family asset set and signed updater metadata. The macOS packages are intentionally unsigned because Apple Developer signing/notarization is not configured and may show an unidentified-developer warning. Release publication and updater verification run [34870524308](https://github.com/ImYourBoyRoy/markdown-desktop/actions/runs/34870524308) passed after the release asset and manifest checks completed. This does not substitute for target-OS desktop-session integration, Gatekeeper approval, or live-updater relaunch evidence.
+The checked-in release workflow targets all six platform families in the table below. The [latest published release](https://github.com/ImYourBoyRoy/markdown-desktop/releases/latest) contains the verified six-family asset set and signed updater metadata. The macOS packages are intentionally unsigned because Apple Developer signing/notarization is not configured and may show an unidentified-developer warning. The release workflow verifies all platform assets and signed updater metadata before publishing, then confirms the published release is latest. This does not substitute for target-OS desktop-session integration, Gatekeeper approval, or live-updater relaunch evidence.
 
 | Platform | Installer | Other packages |
 | --- | --- | --- |
@@ -223,7 +226,7 @@ Run the x64 or ARM64 `-setup.exe` that matches your Windows device, or use the m
 
 ### macOS
 
-For a signed and notarized build, open the corresponding `.dmg` from a verified release, then drag **Markdown Desktop** into Applications. For the intentionally unsigned `v1.0.2` path, open only a trusted release asset: macOS may report an unidentified developer, so use the Finder context menu → **Open** after verifying the download. macOS then exposes the app through Finder and Launchpad like any other installed app. Apple signing, notarization, stapling, and Gatekeeper approval are not claimed until Apple Developer credentials are provisioned.
+For a signed and notarized build, open the corresponding `.dmg` from a verified release, then drag **Markdown Desktop** into Applications. For a release whose macOS packages are intentionally unsigned, open only a trusted release asset: macOS may report an unidentified developer, so use the Finder context menu → **Open** after verifying the download. macOS then exposes the app through Finder and Launchpad like any other installed app. Apple signing, notarization, stapling, and Gatekeeper approval are not claimed until Apple Developer credentials are provisioned and the corresponding release checks pass.
 
 ### Linux
 

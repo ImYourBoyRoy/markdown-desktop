@@ -158,7 +158,7 @@ export async function selectRenderedCrossBlockProbe(
   return true;
 }
 
-/** Dispatch the packaged pointer path used by rendered block drag handles. */
+/** Dispatch the packaged pointer-capture path used by rendered block handles. */
 export async function dragRenderedBlockProbe(renderedPane: HTMLElement | null): Promise<boolean> {
   if (!renderedPane) return false;
   const handles = [...renderedPane.querySelectorAll<HTMLButtonElement>('.block-drag-handle')];
@@ -183,7 +183,9 @@ export async function dragRenderedBlockProbe(renderedPane: HTMLElement | null): 
     clientX: movingRect.left + movingRect.width / 2,
     clientY: movingRect.top + movingRect.height / 2,
   }));
-  target.dispatchEvent(new PointerEvent('pointermove', {
+  // A captured pointer's move/up events are retargeted to the initiating
+  // handle, even though the coordinates identify a different drop target.
+  movingHandle.dispatchEvent(new PointerEvent('pointermove', {
     bubbles: true,
     cancelable: true,
     isPrimary: true,
@@ -191,7 +193,7 @@ export async function dragRenderedBlockProbe(renderedPane: HTMLElement | null): 
     clientX: targetRect.left + targetRect.width / 2,
     clientY: targetRect.top + targetRect.height * 0.75,
   }));
-  target.dispatchEvent(new PointerEvent('pointerup', {
+  movingHandle.dispatchEvent(new PointerEvent('pointerup', {
     bubbles: true,
     cancelable: true,
     isPrimary: true,
