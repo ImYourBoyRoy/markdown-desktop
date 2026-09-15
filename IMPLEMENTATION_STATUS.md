@@ -5,7 +5,30 @@ detailed execution work order remains local and gitignored at
 `Tasks/8-27-2026_Tasklist.md`; this file records the state that must survive a
 clone or handoff.
 
-Updated: 2026-09-14
+Updated: 2026-09-15
+
+## Release v1.0.3 publication and verification (2026-09-15)
+
+- `v1.0.3` is published at
+  [GitHub Releases](https://github.com/ImYourBoyRoy/markdown-desktop/releases/tag/v1.0.3)
+  from exact commit `5b5ce924022d03e762deba2e27cbacfe97ee4fe4`.
+- Continuous Integration run
+  [`35003870279`](https://github.com/ImYourBoyRoy/markdown-desktop/actions/runs/35003870279)
+  passed quality/security gates and native smoke/artifact verification on
+  Windows x64/ARM64, macOS Intel/Apple Silicon, and Linux x64/ARM64.
+- Release run
+  [`35004603599`](https://github.com/ImYourBoyRoy/markdown-desktop/actions/runs/35004603599)
+  passed all six release builds, prepublication asset/signature verification,
+  publication, and postpublication verification.
+- The live release contains 29 assets with unique names. All 29 public asset
+  endpoints returned HTTP 200. `latest.json` reports version `1.0.3`; its 18
+  platform/package entries resolve to 12 published updater assets and contain
+  signed updater metadata. Apple Developer signing/notarization remains
+  intentionally deferred; this is distinct from the signed updater metadata.
+- The release fixes rendered-view block drag tracking when pointer capture
+  retargets events, improves rendered-block drop hit-testing, and retains
+  source-boundary validation and keyboard reordering. Exact packaged Windows
+  x64 acceptance passed 17/17 checks; selection acceptance passed 47/47.
 
 ## Release v1.0.2 publication and CI follow-up (2026-09-14)
 
