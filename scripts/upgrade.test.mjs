@@ -21,11 +21,12 @@ test('TypeScript compatibility follows the current Svelte peer contract', () => 
   assert.throws(() => highestCaretMajor('*'));
   assert.throws(() => highestCaretMajor(undefined));
 });
-test('renderer upgrades stay within the verified cross-platform browser floor', () => {
+test('renderer upgrades stay within the verified Mermaid 12 desktop browser floor', () => {
   const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   assert.doesNotThrow(() => assertMermaidCompatibility(manifest.dependencies?.mermaid));
   assert.doesNotThrow(() => assertMermaidCompatibility('^11.17.2'));
-  assert.throws(() => assertMermaidCompatibility('^12.0.0'), /target-OS\/macOS compatibility review/);
+  assert.doesNotThrow(() => assertMermaidCompatibility('^12.0.0'));
+  assert.throws(() => assertMermaidCompatibility('^13.0.0'), /review the browser floor/);
   assert.throws(() => assertMermaidCompatibility('*'), /Unsupported Mermaid dependency range/);
 });
 test('arguments reject unknown flags, combinations and traversal', () => {
@@ -37,6 +38,7 @@ test('arguments reject unknown flags, combinations and traversal', () => {
 test('updates manifest ranges before lockfile resolution and runs full gates', () => {
   const plan = upgradePlan().map(([command, args]) => `${command} ${args.join(' ')}`);
   assert.ok(plan.indexOf('cargo +stable upgrade --manifest-path src-tauri/Cargo.toml --incompatible allow --pinned allow') < plan.indexOf('cargo +stable update --manifest-path src-tauri/Cargo.toml'));
+  assert.ok(plan.includes('node scripts/update-pnpm.mjs'));
   assert.ok(plan.includes('pnpm update --latest --include-github-actions'));
   assert.ok(plan.includes('node scripts/normalize-workflow-comments.mjs'));
   assert.ok(plan.includes('pnpm verify:dependencies'));
@@ -74,14 +76,14 @@ test('restore refuses to race an active upgrade lock', () => {
   const backupRoot = new URL('../.upgrade-backups/', import.meta.url);
   mkdirSync(backupRoot, { recursive: true });
   const lock = new URL('../.upgrade-backups/upgrade.lock', import.meta.url);
-  assert.equal(existsSync(lock), false);
-  writeFileSync(lock, 'test lock');
+  const alreadyHeld = existsSync(lock);
+  if (!alreadyHeld) writeFileSync(lock, 'test lock');
   try {
     const result = spawnSync(process.execPath, ['scripts/full_upgrade.mjs', '--restore', 'run-does-not-exist'], { encoding: 'utf8' });
     assert.equal(result.status, 1);
     assert.match(`${result.stdout}\n${result.stderr}`, /already running/);
   } finally {
-    unlinkSync(lock);
+    if (!alreadyHeld) unlinkSync(lock);
   }
 });
 

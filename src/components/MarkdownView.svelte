@@ -51,6 +51,7 @@
   import { applyMapTooltips, decorateFenceChrome, decorateTaskCheckboxes, tinyPlaceholder } from '../lib/markdown-view-decoration';
   import { tryIncrementalBlockCommit } from '../lib/markdown-view-dom-commit';
   import { renderDiagram, renderMathPreview, type RichContentContext } from '../lib/markdown-view-rich-content';
+  import type { MediaPreview } from '../lib/media-preview';
   import { sanitizeImageAsset } from '../lib/safe-image';
   import { performanceCount, performanceSpan } from '../lib/performance';
   import type { VisualStructurePatch } from '../lib/visual-structure';
@@ -93,6 +94,7 @@
   export let onSlashCommand: (mapId: string, command: SlashCommand) => void = () => undefined;
   export let onRevealSource: (mapId: string) => void = () => undefined;
   export let onOpenLink: (target: string) => void = () => undefined;
+  export let onOpenMedia: (media: MediaPreview) => void = () => undefined;
 
   function applyVisualDraftEdit(
     mapId: string,
@@ -354,8 +356,18 @@
       moved: boolean;
     };
     let pointerGesture: PointerGesture | undefined;
+    let blockHandlePointerId: number | undefined;
     let suppressClickAfterPointerDrag = false;
     const pointerMoveThreshold = 4;
+    const handleBlockHandlePointerDown = (event: PointerEvent) => {
+      if (event.button !== 0 || event.isPrimary === false
+        || !(event.target instanceof Element)
+        || !event.target.closest('.block-drag-handle')) return;
+      // A grip drag belongs to block movement, not the rendered-text selection
+      // bridge. Remember it in capture phase because the button stops bubbling.
+      blockHandlePointerId = event.pointerId;
+      suppressClickAfterPointerDrag = false;
+    };
     const handlePointerDown = (event: PointerEvent) => {
       if (event.button !== 0 || event.isPrimary === false) return;
       // A new pointer gesture owns the next click. This also clears the
@@ -370,6 +382,7 @@
       };
     };
     const handlePointerMove = (event: PointerEvent) => {
+      if (blockHandlePointerId === event.pointerId) return;
       if (!pointerGesture || event.pointerId !== pointerGesture.pointerId) return;
       if (pointerGesture.moved) return;
       pointerGesture.moved = Math.hypot(
@@ -676,6 +689,43 @@
       onMapSelect(selectedMapId, outgoingSelection);
       performanceCount('rendered-selection.committed');
     };
+    const previewImageTarget = (target: EventTarget | null): HTMLImageElement | null => {
+      if (!(target instanceof Element)) return null;
+      const image = target.closest<HTMLImageElement>('img[data-previewable-media="image"]');
+      return image?.dataset.previewableMedia === 'image' ? image : null;
+    };
+    const openImagePreview = (image: HTMLImageElement) => {
+      const source = image.currentSrc || image.src;
+      if (!source || source === tinyPlaceholder()) return;
+      onOpenMedia({
+        kind: 'image',
+        src: source,
+        alt: image.alt || 'Image preview',
+        title: image.dataset.source ? `Image · ${image.dataset.source}` : 'Image preview',
+      });
+    };
+    const handleMediaClick = (event: MouseEvent) => {
+      const image = previewImageTarget(event.target);
+      if (!image) return;
+      // A linked image still selects its exact mapped source span, but the
+      // image itself opens the safe display preview rather than navigating
+      // away from the document unexpectedly.
+      if (image.closest('a')) {
+        event.preventDefault();
+        event.stopPropagation();
+        selectMappedObject(image);
+      }
+      openImagePreview(image);
+    };
+    const handleMediaKeydown = (event: KeyboardEvent) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      const image = previewImageTarget(event.target);
+      if (!image || image.closest('a')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      selectMappedObject(image);
+      openImagePreview(image);
+    };
     const scheduleVisualSelectionSync = (fallbackTarget: EventTarget | null = null) => {
       pendingVisualSelectionTarget = fallbackTarget;
       if (visualSelectionSchedule) return;
@@ -694,6 +744,11 @@
       }
     };
     const handlePointerUp = (event: PointerEvent) => {
+      if (blockHandlePointerId === event.pointerId) {
+        blockHandlePointerId = undefined;
+        pointerGesture = undefined;
+        return;
+      }
       if (!pointerGesture || event.pointerId !== pointerGesture.pointerId) {
         if (!(event.target instanceof Node) || !host.contains(event.target)) return;
         scheduleVisualSelectionSync(event.target);
@@ -705,9 +760,11 @@
       scheduleVisualSelectionSync(event.target);
     };
     const handlePointerCancel = (event: PointerEvent) => {
+      if (blockHandlePointerId === event.pointerId) blockHandlePointerId = undefined;
       if (pointerGesture?.pointerId === event.pointerId) pointerGesture = undefined;
     };
     const handleClick = (event: MouseEvent) => {
+      if (event.target instanceof Element && event.target.closest('.block-drag-handle')) return;
       // Browsers dispatch a click after a text drag. The click is not a
       // second user intent: honoring it would replace the exact projected
       // range with the containing block (especially for cross-block drags).
@@ -723,9 +780,12 @@
       selectMappedBlock(target);
     };
     const handleSelectionChange = () => scheduleVisualSelectionSync();
+    host?.addEventListener('pointerdown', handleBlockHandlePointerDown, true);
     host?.addEventListener('pointerdown', handlePointerDown);
     host?.addEventListener('pointerover', handlePointerOver);
     host?.addEventListener('pointerout', handlePointerOut);
+    host?.addEventListener('click', handleMediaClick, true);
+    host?.addEventListener('keydown', handleMediaKeydown, true);
     document.addEventListener('pointermove', handlePointerMove, { passive: true });
     document.addEventListener('pointerup', handlePointerUp);
     document.addEventListener('pointercancel', handlePointerCancel);
@@ -734,9 +794,12 @@
     host?.addEventListener('focusout', handleFocusOut);
     document.addEventListener('selectionchange', handleSelectionChange);
     return () => {
+      host?.removeEventListener('pointerdown', handleBlockHandlePointerDown, true);
       host?.removeEventListener('pointerdown', handlePointerDown);
       host?.removeEventListener('pointerover', handlePointerOver);
       host?.removeEventListener('pointerout', handlePointerOut);
+      host?.removeEventListener('click', handleMediaClick, true);
+      host?.removeEventListener('keydown', handleMediaKeydown, true);
       document.removeEventListener('pointermove', handlePointerMove);
       document.removeEventListener('pointerup', handlePointerUp);
       document.removeEventListener('pointercancel', handlePointerCancel);
@@ -744,6 +807,8 @@
       host?.removeEventListener('focusin', handleFocusIn);
       host?.removeEventListener('focusout', handleFocusOut);
       document.removeEventListener('selectionchange', handleSelectionChange);
+      blockHandlePointerId = undefined;
+      pointerGesture = undefined;
       teardown();
     };
   });
@@ -1290,19 +1355,23 @@
     blockHandleLayer.setAttribute('aria-label', 'Markdown block movement controls');
     host.append(blockHandleLayer);
     let draggingMapId: string | undefined;
-    let pointerDrag: {
+    type PointerDrag = {
       pointerId: number;
       mapId: string;
       handle: HTMLButtonElement;
       block: HTMLElement;
       startX: number;
       startY: number;
+      grabOffsetX: number;
+      grabOffsetY: number;
       active: boolean;
       nativeStarted: boolean;
       dropBounds: Array<{ block: HTMLElement; rect: DOMRect }>;
+      preview?: HTMLElement;
       targetMapId?: string;
       position?: 'before' | 'after' | 'beside';
-    } | undefined;
+    };
+    let pointerDrag: PointerDrag | undefined;
     const blocksByMapId = new Map(
       blocks.flatMap((block) => block.dataset.mapId
         ? [[block.dataset.mapId, block] as const]
@@ -1311,6 +1380,52 @@
 
     const clearDropState = () => {
       blocks.forEach((block) => block.classList.remove('block-drop-before', 'block-drop-after', 'block-drop-beside'));
+    };
+    const clearDragPreview = (drag: PointerDrag) => {
+      drag.preview?.remove();
+      drag.preview = undefined;
+    };
+    const clearDragVisuals = (drag: PointerDrag) => {
+      clearDragPreview(drag);
+      drag.block.classList.remove('block-dragging');
+      drag.handle.setAttribute('aria-grabbed', 'false');
+    };
+    const updateDragPreview = (drag: PointerDrag, clientX: number, clientY: number) => {
+      if (!drag.preview) {
+        const rect = drag.block.getBoundingClientRect();
+        const preview = document.createElement('div');
+        preview.className = 'markdown-view block-drag-preview';
+        preview.setAttribute('data-block-drag-preview', '');
+        preview.setAttribute('aria-hidden', 'true');
+        preview.setAttribute('inert', '');
+        preview.style.width = `${rect.width}px`;
+        preview.style.height = `${rect.height}px`;
+
+        const clone = drag.block.cloneNode(true) as HTMLElement;
+        const scrubPreviewNode = (node: HTMLElement) => {
+          [...node.attributes].forEach(({ name }) => {
+            if (name === 'id' || name === 'contenteditable' || name === 'tabindex'
+              || name.startsWith('data-map-') || name.startsWith('data-source')) {
+              node.removeAttribute(name);
+            }
+          });
+          node.classList.remove(
+            'block-dragging',
+            'block-drop-before',
+            'block-drop-after',
+            'block-drop-beside',
+            'map-hover',
+          );
+        };
+        [clone, ...clone.querySelectorAll<HTMLElement>('*')].forEach(scrubPreviewNode);
+        clone.classList.add('block-drag-preview-content');
+        clone.style.margin = '0';
+        clone.style.width = '100%';
+        preview.append(clone);
+        document.body.append(preview);
+        drag.preview = preview;
+      }
+      drag.preview.style.transform = `translate3d(${clientX - drag.grabOffsetX}px, ${clientY - drag.grabOffsetY}px, 0) scale(1.015)`;
     };
     const isBesideZone = (clientX: number, rect: DOMRect) => {
       const edgeWidth = Math.min(72, Math.max(28, rect.width * 0.18));
@@ -1411,13 +1526,15 @@
 
     const handlePointerMove = (event: PointerEvent) => {
       if (!pointerDrag || event.pointerId !== pointerDrag.pointerId || pointerDrag.nativeStarted) return;
-      if (!pointerDrag.active) {
+      const activating = !pointerDrag.active;
+      if (activating) {
         if (Math.hypot(event.clientX - pointerDrag.startX, event.clientY - pointerDrag.startY) < 4) return;
         pointerDrag.active = true;
-        pointerDrag.block.classList.add('block-dragging');
         pointerDrag.handle.setAttribute('aria-grabbed', 'true');
       }
       event.preventDefault();
+      updateDragPreview(pointerDrag, event.clientX, event.clientY);
+      if (activating) pointerDrag.block.classList.add('block-dragging');
       updatePointerDropTarget(event);
     };
     const handlePointerUp = (event: PointerEvent) => {
@@ -1425,17 +1542,17 @@
       const current = pointerDrag;
       if (current.nativeStarted || draggingMapId) {
         pointerDrag = undefined;
+        clearDragVisuals(current);
         return;
       }
       if (!current.active) {
         pointerDrag = undefined;
+        clearDragVisuals(current);
         return;
       }
       updatePointerDropTarget(event);
       pointerDrag = undefined;
-      current.handle.dataset.pointerDragged = 'true';
-      current.handle.setAttribute('aria-grabbed', 'false');
-      current.block.classList.remove('block-dragging');
+      clearDragVisuals(current);
       const targetMapId = current.targetMapId;
       const position = current.position;
       clearDropState();
@@ -1452,8 +1569,7 @@
       } catch {
         // Pointer capture can already be gone when a WebView cancels a drag.
       }
-      pointerDrag.block.classList.remove('block-dragging');
-      pointerDrag.handle.setAttribute('aria-grabbed', 'false');
+      clearDragVisuals(pointerDrag);
       pointerDrag = undefined;
       clearDropState();
     };
@@ -1469,8 +1585,10 @@
       const handle = document.createElement('button');
       handle.type = 'button';
       handle.className = 'block-drag-handle';
-      handle.dataset.mapId = mapId;
-      handle.dataset.mapKind = block.dataset.mapKind ?? 'block';
+      // Grip controls are UI chrome, not rendered Markdown nodes. Keep their
+      // identity separate so source-map selection/highlighting and visual
+      // editing never treat the button as a second editable copy of its block.
+      handle.dataset.blockMapId = mapId;
       // Pointer events are the source of truth for reordering. Native HTML
       // drag-and-drop steals the gesture in some Tauri WebViews before the
       // document-level pointer path can establish a target, which makes the
@@ -1483,6 +1601,16 @@
       handle.title = 'Drag to reorder this Markdown block. Alt+↑ / Alt+↓ also moves it.';
       handle.addEventListener('pointerdown', (event) => {
         if (event.button !== 0 || event.isPrimary === false) return;
+        // Keep grip gestures out of browser text selection and the rendered
+        // selection bridge. The host capture listener above already records
+        // this pointer before propagation is stopped here.
+        event.preventDefault();
+        event.stopPropagation();
+        const dropBounds = blocks.map((candidate) => ({
+          block: candidate,
+          rect: candidate.getBoundingClientRect(),
+        }));
+        const blockRect = dropBounds.find(({ block: candidate }) => candidate === block)?.rect;
         pointerDrag = {
           pointerId: event.pointerId,
           mapId,
@@ -1490,12 +1618,11 @@
           block,
           startX: event.clientX,
           startY: event.clientY,
+          grabOffsetX: event.clientX - (blockRect?.left ?? 0),
+          grabOffsetY: event.clientY - (blockRect?.top ?? 0),
           active: false,
           nativeStarted: false,
-          dropBounds: blocks.map((candidate) => ({
-            block: candidate,
-            rect: candidate.getBoundingClientRect(),
-          })),
+          dropBounds,
         };
         try {
           handle.setPointerCapture?.(event.pointerId);
@@ -1505,7 +1632,10 @@
       });
       handle.addEventListener('dragstart', (event) => {
         draggingMapId = mapId;
-        if (pointerDrag?.mapId === mapId) pointerDrag.nativeStarted = true;
+        if (pointerDrag?.mapId === mapId) {
+          pointerDrag.nativeStarted = true;
+          clearDragPreview(pointerDrag);
+        }
         block.classList.add('block-dragging');
         handle.setAttribute('aria-grabbed', 'true');
         if (event.dataTransfer) {
@@ -1515,17 +1645,17 @@
       });
       handle.addEventListener('dragend', () => {
         draggingMapId = undefined;
-        if (pointerDrag?.mapId === mapId) pointerDrag = undefined;
+        if (pointerDrag?.mapId === mapId) {
+          clearDragVisuals(pointerDrag);
+          pointerDrag = undefined;
+        }
         block.classList.remove('block-dragging');
         handle.setAttribute('aria-grabbed', 'false');
-        handle.dataset.pointerDragged = 'true';
         clearDropState();
       });
       handle.addEventListener('click', (event) => {
-        if (handle.dataset.pointerDragged !== 'true') return;
         event.preventDefault();
         event.stopPropagation();
-        delete handle.dataset.pointerDragged;
       });
       handle.addEventListener('keydown', (event) => {
         if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
@@ -1584,6 +1714,7 @@
         } catch {
           // Cleanup is best-effort if the WebView already released capture.
         }
+        clearDragVisuals(pointerDrag);
       }
       window.removeEventListener('pointermove', handlePointerMove, true);
       window.removeEventListener('pointerup', handlePointerUp, true);
@@ -2141,6 +2272,7 @@
       applyExternalSourceSelection: (selection) => {
         if (version === renderVersion) applyExternalSourceSelection(selection);
       },
+      onOpenMedia,
     };
     if (editableForRender) decorateBlockHandles();
     if (editableForRender) {
@@ -2262,10 +2394,26 @@
           if (thisVersion !== renderVersion) return;
           image.src = asset.dataUri;
           image.removeAttribute('aria-busy');
+          image.dataset.previewableMedia = 'image';
+          if (!image.closest('a')) {
+            image.tabIndex = 0;
+            image.setAttribute('role', 'button');
+            image.setAttribute('aria-label', `Open ${image.alt || 'image'} preview`);
+          } else {
+            // Keep linked images' native link/image semantics intact; the
+            // pointer path still offers the preview without nesting a second
+            // keyboard-interactive role inside the link.
+            image.removeAttribute('tabindex');
+            image.removeAttribute('aria-label');
+          }
           image.dataset.mapTooltip = `Image · ${image.dataset.source || 'no source'} · ${image.naturalWidth || '?'}×${image.naturalHeight || '?'}`;
           image.removeAttribute('title');
         } catch (error) {
           image.removeAttribute('aria-busy');
+          delete image.dataset.previewableMedia;
+          image.removeAttribute('role');
+          image.removeAttribute('aria-label');
+          image.removeAttribute('tabindex');
           image.classList.add('asset-error');
           image.alt = `${image.alt || 'Image'} — unavailable`;
           image.dataset.mapTooltip = `Image · ${image.dataset.source || 'no source'} · unavailable`;

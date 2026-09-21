@@ -5,7 +5,50 @@ detailed execution work order remains local and gitignored at
 `Tasks/8-27-2026_Tasklist.md`; this file records the state that must survive a
 clone or handoff.
 
-Updated: 2026-09-15
+Updated: 2026-09-21
+
+## Release v1.1.0 candidate (2026-09-21)
+
+- Version metadata is aligned at `1.1.0` in `package.json`, `src-tauri/Cargo.toml`,
+  `src-tauri/Cargo.lock`, and `src-tauri/tauri.conf.json`.
+- `fixtures/mermaid/visual.md` and the Vite-served visual fixture exercise the
+  Mermaid 12 Markdown fence through the production rich-content renderer. The
+  inspected result showed the complete flowchart, eight readable labels, one
+  SVG, and zero `foreignObject` elements.
+- Local release verification passed after the bump: 331 frontend tests / 2
+  skipped, zero Svelte diagnostics, renderer smoke, updater audit, Windows
+  `1.1.0` MSI/NSIS bundling, and packaged acceptance 17/17.
+- Publication remains gated on the pushed `main` CI run followed by the signed
+  six-platform tag workflow and its post-publication updater verification.
+
+## Fresh dependency/toolchain validation (2026-09-21)
+
+- Node `26.9.0`, pnpm `12.5.1`, Rust/Cargo `1.98.1`; pnpm remains a minimum
+  `12.3.4+` policy rather than an exact project pin. There are no Git
+  submodules in this repository.
+- Mermaid is now intentionally on `^12.0.0`. The optional renderer uses
+  native SVG labels, keeps its lazy graph split, and the macOS bundle declares
+  the Mermaid 12 WebKit floor (`14.4`). The upgrade-policy tests allow Mermaid
+  11/12 and block later majors pending review.
+- Fresh purge removed project-owned install/build output, regenerated both
+  lockfiles, and preserved shared pnpm/Cargo stores. `lodash-es` is pinned by
+  the workspace override to `4.18.1` to remove Mermaid's transitive audit
+  advisory without suppressing audit output.
+- The end-to-end `full:upgrade` workflow completed successfully and now uses
+  `scripts/update-pnpm.mjs` so Windows npm-managed pnpm shims are upgraded
+  through their owning npm installation and the active resolved command is
+  verified afterward. Its restore-contention regression test was corrected to
+  remain valid while the workflow itself holds the upgrade lock.
+- `pnpm verify:dependencies` passed: 331 frontend tests / 2 skipped, zero
+  Svelte diagnostics, build, renderer smoke, accessibility and updater audits,
+  clean npm audit, Rust fmt/check/clippy, 89 native tests / 1 ignored, cargo
+  audit, and cargo deny. Local Windows Tauri release bundling produced MSI and
+  NSIS installers; packaged acceptance passed 17/17 probes.
+- The only remaining freshness notes are exact parent constraints in the GTK /
+  GLib and Tauri crypto dependency graph (`toml`, `toml_datetime`, `toml_edit`,
+  `generic-array`); forced precise upgrades fail resolution. Cargo audit's
+  seven upstream maintenance/unsoundness warnings and cargo-deny duplicate
+  crate notices remain documented upstream conditions, not hidden failures.
 
 ## Release v1.0.3 publication and verification (2026-09-15)
 
@@ -90,9 +133,11 @@ Updated: 2026-09-15
 ## Latest verification (2026-09-13)
 
 - Compatible patch updates are installed and locked: Vite 8.3.0,
-  `@types/node` 26.5.1, and Mammoth 1.12.3. `pnpm outdated` now reports only
-  the separate Mermaid 12 and TypeScript 7 major lines; neither was applied
-  without a migration review.
+  `@types/node` 26.6.2, Tauri CLI 2.11.5, and the current Tauri 2.11.x
+  plugin lines. Mermaid 12 is now the supported renderer line after its
+  native-SVG migration and explicit macOS 14.4 WebKit floor review; TypeScript
+  7 remains the native compiler alias while the Svelte peer-compatible editor
+  compiler stays on TypeScript 6.
 - `pnpm check` reports 0 errors and 0 warnings. The full frontend suite passed
   65 files / 323 tests, with 2 opt-in performance benchmarks skipped. Rust formatting,
   `cargo check`, Clippy with `-D warnings`, and native tests passed (89 tests,
@@ -113,11 +158,12 @@ Updated: 2026-09-15
   one read/decode/render/source-map transaction inside a blocking native worker,
   removing duplicate I/O and decode work. Rich-content lazy loading shares
   bounded observers across images and diagrams.
-- Mermaid remains on the compatible 11.x line with explicit Dagre/classic
-  rendering defaults. The upgrade policy fails closed on Mermaid 12 until its
-  browser-floor and visual migration are reviewed for every supported desktop
-  target. The GLib warning remains an upstream Tauri GTK3/WebKitGTK boundary;
-  no unsafe Cargo override or prerelease host migration was introduced.
+- Mermaid 12 uses explicit Dagre/classic rendering defaults and native SVG
+  labels. The bundle declares macOS 14.4 as its minimum system version because
+  Mermaid 12 targets ES2024 and Safari 17.4+. The upgrade policy now fails
+  closed only for Mermaid majors after 12. The GLib warning remains an
+  upstream Tauri GTK3/WebKitGTK boundary; no unsafe Cargo override or
+  prerelease host migration was introduced.
 
 ## Phase 0 measurement baseline (2026-09-02)
 

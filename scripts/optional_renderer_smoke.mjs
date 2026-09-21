@@ -50,6 +50,9 @@ globalThis.CSSStyleSheet = class {
   }
 };
 dom.window.SVGElement.prototype.getBBox = () => ({ x: 0, y: 0, width: 80, height: 24 });
+dom.window.SVGElement.prototype.getComputedTextLength = function () {
+  return Math.max(8, (this.textContent?.length ?? 0) * 8);
+};
 Object.defineProperty(globalThis, 'navigator', {
   configurable: true,
   value: dom.window.navigator,
@@ -64,11 +67,38 @@ const mermaid = mermaidModule.default;
 if (!mermaid || typeof mermaid.initialize !== 'function' || typeof mermaid.render !== 'function') {
   throw new Error('Mermaid renderer does not expose its stable initialize/render facade');
 }
-mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'base', layout: 'dagre', look: 'classic' });
+mermaid.initialize({
+  startOnLoad: false,
+  securityLevel: 'strict',
+  theme: 'base',
+  layout: 'dagre',
+  look: 'classic',
+  htmlLabels: false,
+  flowchart: {
+    htmlLabels: false,
+    useMaxWidth: false,
+    nodeSpacing: 34,
+    rankSpacing: 46,
+    padding: 16,
+    curve: 'basis',
+  },
+  themeVariables: {
+    background: 'transparent',
+    primaryColor: '#f1ede4',
+    primaryTextColor: '#2b2b29',
+    primaryBorderColor: '#85500f',
+    lineColor: '#5f5d57',
+    fontFamily: 'system-ui, sans-serif',
+    fontSize: '16px',
+  },
+});
 const mermaidResult = await mermaid.render('markdown-desktop-smoke', 'flowchart TD\n A-->B');
 
 if (!graphvizSvg.includes('<svg') || !mermaidResult.svg.includes('<svg')) {
   throw new Error('Optional renderer smoke did not produce SVG output');
+}
+if (!/<text[\s>]/i.test(mermaidResult.svg) || /<foreignObject/i.test(mermaidResult.svg)) {
+  throw new Error('Mermaid smoke output did not preserve native SVG labels');
 }
 
 console.log('Optional renderer smoke passed: Graphviz and Mermaid produced SVG output.');

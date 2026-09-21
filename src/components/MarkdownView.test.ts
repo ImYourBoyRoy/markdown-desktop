@@ -1438,7 +1438,7 @@ describe('MarkdownView visual editing', () => {
     expect(onBlockBeside).toHaveBeenCalledWith('first', 'second');
   });
 
-  it('moves a block with the pointer handle when native HTML drag is unavailable', async () => {
+  it('moves a block after the pointer leaves the grip without capturing or selecting rendered text', async () => {
     const source = '# First\n\n# Second';
     const sourceMap: SourceMap = {
       version: 1,
@@ -1449,6 +1449,7 @@ describe('MarkdownView visual editing', () => {
       ],
     };
     const onBlockMove = vi.fn();
+    const onMapSelect = vi.fn();
     const { container } = render(MarkdownView, {
       props: {
         html: '<h1 data-sourcepos="1:1-1:7">First</h1><h1 data-sourcepos="3:1-3:8">Second</h1>',
@@ -1456,6 +1457,7 @@ describe('MarkdownView visual editing', () => {
         sourceMap,
         editable: true,
         onBlockMove,
+        onMapSelect,
       },
     });
 
@@ -1465,15 +1467,16 @@ describe('MarkdownView visual editing', () => {
       return elements;
     });
     expect(handles[0]!.draggable).toBe(false);
+    expect(handles.every((handle) => !handle.isContentEditable
+      && !handle.hasAttribute('data-map-id')
+      && !handle.hasAttribute('data-map-kind'))).toBe(true);
     const target = container.querySelector<HTMLElement>('[data-map-id="second"]');
     if (!target) throw new Error('target block not mounted');
+    const firstBlock = container.querySelector<HTMLElement>('[data-map-id="first"]');
+    if (!firstBlock) throw new Error('source block not mounted');
+    const firstBlockRect = firstBlock.getBoundingClientRect();
     const host = container.querySelector<HTMLElement>('.markdown-view');
     if (!host) throw new Error('markdown host not mounted');
-    // A nested surface may stop bubbling pointer events. The active drag must
-    // still complete because its listeners run at the window capture boundary.
-    const swallowPointerEvent = (event: PointerEvent) => event.stopPropagation();
-    host.addEventListener('pointermove', swallowPointerEvent);
-    host.addEventListener('pointerup', swallowPointerEvent);
     vi.spyOn(handles[0]!, 'getBoundingClientRect').mockReturnValue({
       top: 0, bottom: 28, left: 0, right: 22, width: 22, height: 28,
       x: 0, y: 0, toJSON: () => ({}),
@@ -1490,36 +1493,81 @@ describe('MarkdownView visual editing', () => {
       value: () => target,
     });
 
-    await fireEvent.pointerDown(handles[0]!, {
-      button: 0,
-      isPrimary: true,
-      pointerId: 12,
-      clientX: 10,
-      clientY: 10,
-    });
-    // Pointer capture retargets real moves/releases to the initiating handle.
-    await fireEvent.pointerMove(handles[0]!, {
-      isPrimary: true,
-      pointerId: 12,
-      clientX: 200,
-      clientY: 150,
-    });
-    await fireEvent.pointerUp(handles[0]!, {
-      isPrimary: true,
-      pointerId: 12,
-      clientX: 200,
-      clientY: 150,
-    });
-
-    expect(onBlockMove).toHaveBeenCalledWith('first', 'second', 'after');
-    expect(target.classList.contains('block-drop-after')).toBe(false);
-    if (originalElementFromPoint) {
-      Object.defineProperty(document, 'elementFromPoint', {
-        configurable: true,
-        value: originalElementFromPoint,
+    try {
+      const pointerDownWasCanceled = await fireEvent.pointerDown(handles[0]!, {
+        button: 0,
+        isPrimary: true,
+        pointerId: 12,
+        clientX: 10,
+        clientY: 10,
       });
-    } else {
-      Reflect.deleteProperty(document, 'elementFromPoint');
+      expect(pointerDownWasCanceled).toBe(false);
+
+      // JSDOM does not implement pointer capture. Delivering the move/release
+      // to the block under the pointer verifies the real uncaptured path; the
+      // old test incorrectly sent both events back to the grip itself.
+      await fireEvent.pointerMove(target, {
+        isPrimary: true,
+        pointerId: 12,
+        clientX: 200,
+        clientY: 150,
+      });
+      const preview = document.querySelector<HTMLElement>('[data-block-drag-preview]');
+      expect(preview).not.toBeNull();
+      expect(preview?.getAttribute('aria-hidden')).toBe('true');
+      expect(preview?.hasAttribute('inert')).toBe(true);
+      expect(preview?.querySelector('[data-map-id], [data-map-kind], [contenteditable]')).toBeNull();
+      expect(firstBlock.classList.contains('block-dragging')).toBe(true);
+      expect(preview?.style.transform).toBe(
+        `translate3d(${200 - (10 - firstBlockRect.left)}px, ${150 - (10 - firstBlockRect.top)}px, 0) scale(1.015)`,
+      );
+      await fireEvent.pointerUp(target, {
+        isPrimary: true,
+        pointerId: 12,
+        clientX: 200,
+        clientY: 150,
+      });
+      expect(document.querySelector('[data-block-drag-preview]')).toBeNull();
+      expect(firstBlock.classList.contains('block-dragging')).toBe(false);
+      expect(handles[0]!.getAttribute('aria-grabbed')).toBe('false');
+      await fireEvent.click(handles[0]!);
+
+      expect(onBlockMove).toHaveBeenCalledWith('first', 'second', 'after');
+      expect(onMapSelect).not.toHaveBeenCalled();
+      expect(target.classList.contains('block-drop-after')).toBe(false);
+
+      await fireEvent.pointerDown(handles[0]!, {
+        button: 0,
+        isPrimary: true,
+        pointerId: 14,
+        clientX: 10,
+        clientY: 10,
+      });
+      await fireEvent.pointerMove(handles[0]!, {
+        isPrimary: true,
+        pointerId: 14,
+        clientX: 40,
+        clientY: 30,
+      });
+      expect(document.querySelector('[data-block-drag-preview]')).not.toBeNull();
+      await fireEvent.pointerCancel(document, {
+        isPrimary: true,
+        pointerId: 14,
+        clientX: 40,
+        clientY: 30,
+      });
+      expect(document.querySelector('[data-block-drag-preview]')).toBeNull();
+      expect(firstBlock.classList.contains('block-dragging')).toBe(false);
+      expect(onBlockMove).toHaveBeenCalledTimes(1);
+    } finally {
+      if (originalElementFromPoint) {
+        Object.defineProperty(document, 'elementFromPoint', {
+          configurable: true,
+          value: originalElementFromPoint,
+        });
+      } else {
+        Reflect.deleteProperty(document, 'elementFromPoint');
+      }
     }
   });
 

@@ -30,7 +30,8 @@ Open a file or folder, read the rendered document, edit supported Markdown direc
 
 ## Features
 
-- **Rendered, Source, and Split** views, with rendered reading as the default; Edit mode can collapse the source drawer without leaving visual editing
+- **Rendered, Source, and Split** views, with a configurable startup layout that remembers the last-used view or always opens in a chosen mode; Edit mode can collapse the source drawer without leaving visual editing
+- Reader focus mode fills the window with the rendered Markdown, keeps optional Files and Inspect sidebars available, and restores the previous view on exit with **F11** or **Esc**
 - Source-authoritative visual editing for safe headings, paragraphs, list items, simple table cells, and supported inline marks/links, plus plain-text details summaries, with source-range undo/redo
 - Visual edits support plain-text and sanitized rich-HTML paste, including Word-style list cleanup, multiline paragraph hard breaks, and IME composition guards so Save, Undo, navigation, and leaving Edit cannot discard an unfinished composition or an unblurred block edit
 - Source-map hover and selection synchronization between the visual and CodeMirror panes, including mapped fences, tables, images, links, and diagrams
@@ -40,7 +41,7 @@ Open a file or folder, read the rendered document, edit supported Markdown direc
 - Workspace file tree, full-text search, tabs, outline, link/issue panels, and compatibility-profile selection (`github`, `commonmarkStrict`, or `extended`)
 - Atomic saves that keep the file’s encoding, BOM, line endings, and final newline
 - Recovery snapshots and conflict handling when a file changes outside the app
-- Sanitized Markdown rendering with constrained local and remote assets, safe SVG preview sanitization for image references, profile-aware semantic HTML marks/details, drag/drop image import, editable document-relative asset folders, safe image destinations/titles, and image consolidation
+- Sanitized Markdown rendering with constrained local and remote assets, safe SVG preview sanitization for image references, keyboard-accessible image and diagram previews with bounded zoom, profile-aware semantic HTML marks/details, drag/drop image import, editable document-relative asset folders, safe image destinations/titles, and image consolidation
 - Bounded native reads for image/import handling and workspace indexing, with clear local limits that protect responsiveness without replacing GitHub compatibility diagnostics
 - GitHub-oriented Issues with source-mapped lint findings, Graphviz portability advisories, missing local-reference checks, unsafe-path checks, and calm README/object-size warnings with official guidance links; a separate GitHub README indicator keeps this check advisory and non-blocking
 - Native menus, file associations, keyboard shortcuts, and light/dark themes
@@ -80,6 +81,16 @@ shown or hidden from Layout or with **Ctrl+Alt+S**. The themed context menu can
 be opened with the standard **ContextMenu** key or **Shift+F10** when a mapped
 visual block or source selection has focus.
 
+Use **Focus reader** in the document header, **F11**, or **Focus Reader** from
+the command palette to temporarily hide the application chrome and read the
+active rendered document at full height. The focus bar keeps independent
+controls for showing or hiding the Files and Inspect sidebars and restores the
+previous Rendered, Source, or Split arrangement when closed. Images open with a
+click (or Enter/Space when standalone) in a safe zoomable preview; rendered
+Mermaid and Graphviz diagrams expose the same **Open preview** control. The
+preview closes with its close button, an outside click, or **Esc**, and these
+display-only interactions never modify Markdown source.
+
 Hold **Ctrl** (or **Cmd** on macOS) and click a mapped hyperlink in either the
 rendered pane or source editor to open it. Right-clicking a mapped link exposes
 Open link and Copy link URL actions. External URLs use the system's default
@@ -95,6 +106,11 @@ file's full path, is validated natively against the current filesystem when
 opened, and removes entries that no longer exist or are no longer Markdown
 files. Recent history is local app settings; it does not copy or upload the
 documents.
+
+Choose **Settings → Startup view** to restore **Remember last used** (the
+default) or always launch in **Rendered**, **Source**, or **Split**. This setting
+controls the layout at app launch; the view switcher remains available during
+each session.
 
 The default `github` editor profile favors GitHub-healthy Markdown: relative
 asset paths, GFM tables, documented marks, footnotes, dollar-delimited math,
@@ -147,14 +163,21 @@ show that fence as ordinary code rather than rendering a diagram.
 The Mermaid and Graphviz runtimes stay out of the startup JavaScript graph:
 they are staged as on-demand renderer assets, and `pnpm smoke:renderers`
 verifies both packaged-style assets produce SVG output.
-Mermaid is intentionally kept on the compatible 11.x line for the current
-cross-platform desktop baseline. The renderer explicitly uses the classic
-look and Dagre layout so a future reviewed upgrade cannot silently reflow or
-recolor existing diagrams. Mermaid 12 is a separate browser-compatibility and
-visual migration; `full:upgrade` fails closed if it tries to move this project
-to that major. See Mermaid's [configuration](https://mermaid.js.org/config/configuration)
-and [flowchart](https://mermaid.js.org/syntax/flowchart.html) documentation
-before approving that migration.
+Mermaid 12 is the supported renderer line. The renderer explicitly uses native
+SVG text, the classic look, theme-aware colors, and Dagre spacing so sanitized
+output retains readable node labels instead of relying on removable
+`foreignObject` HTML labels. Mermaid 12 targets ES2024 and documents Safari
+17.4+ as its supported WebKit floor; the macOS bundle therefore declares
+macOS 14.4 as its minimum system version. Windows WebView2 and Linux
+WebKitGTK remain native platform dependencies and are exercised by the release
+matrix. `full:upgrade` fails closed for Mermaid majors after 12 until their
+browser floor and diagram defaults are reviewed. See Mermaid's
+[configuration](https://mermaid.js.org/config/configuration) and
+[flowchart](https://mermaid.js.org/syntax/flowchart.html) documentation.
+For a repeatable visual check of the real `.md` fence path, start `pnpm dev`
+and open `/scripts/fixtures/mermaid-visual.html`; that fixture loads
+`fixtures/mermaid/visual.md` through the production rich-content renderer and
+asserts visible native SVG labels.
 The 500 KiB rendering advisory is shown for README-named files only; general
 Markdown files still receive applicable Git object-size guidance. GitHub
 rendering guidance and repository object limits are based on GitHub's
@@ -286,13 +309,14 @@ pnpm tauri dev
 pnpm check
 pnpm test
 pnpm smoke:visual
+pnpm smoke:block-drag
 pnpm smoke:renderers
 pnpm architecture:check
 pnpm verify:dependencies
 pnpm tauri build
 ```
 
-`pnpm smoke:visual` runs the curated visual-editor acceptance suites (revision ownership, visual draft history, rendered-pane contract, and MarkdownView interaction paths). `pnpm smoke:packaged` launches the built desktop binary with `MARKDOWN_DESKTOP_ACCEPTANCE=1` to exercise synthetic DOM input, undo/redo, Save/reload, Find, exact rendered text and cross-block selection, pointer block dragging, composition handlers, and split-mode latency. Save and close existing application instances first: the harness refuses to terminate them. Composition must reach source and preview; the five-edit split probe waits for rendering and animation frames, with a 150 ms average budget. These synthetic checks are not physical keyboard, pointer, OS IME, screen-reader, or compositor-presentation evidence. `pnpm oracle:github-readme` validates the GitHub-host fixture oracle in Rust.
+`pnpm smoke:visual` runs the curated visual-editor acceptance suites (revision ownership, visual draft history, rendered-pane contract, and MarkdownView interaction paths). `pnpm smoke:block-drag` starts an isolated Vite fixture and performs a real mouse gesture in headless Chromium, checking grip hit-testing, cursor affordance, and the resulting source reorder. It is browser evidence, not a physical packaged-WebView test. `pnpm smoke:packaged` launches the built desktop binary with `MARKDOWN_DESKTOP_ACCEPTANCE=1` to exercise synthetic DOM input, undo/redo, Save/reload, Find, exact rendered text and cross-block selection, pointer block dragging, composition handlers, and split-mode latency. Save and close existing application instances first: the harness refuses to terminate them. Composition must reach source and preview; the five-edit split probe waits for rendering and animation frames, with a 150 ms average budget. These synthetic checks are not physical keyboard, pointer, OS IME, screen-reader, or compositor-presentation evidence. `pnpm oracle:github-readme` validates the GitHub-host fixture oracle in Rust.
 `pnpm architecture:check` verifies that `ARCHITECTURE.md` contains current
 file sizes, line counts, and curated summaries. Run `pnpm architecture:refresh`
 after adding, removing, renaming, or materially resizing a maintained file.
@@ -315,6 +339,9 @@ resolvable transitive dependencies, Git-sourced JavaScript dependencies, and
 GitHub Actions (retaining immutable action hashes). It raises the Rust
 manifest minimum to the updated stable compiler before resolving crates.
 Thus a direct dependency such as Comrak can move beyond an old `0.x` range.
+On Windows it repairs an npm-managed pnpm shim through npm before verifying the
+active command, so the upgrade is not satisfied by changing an unused pnpm
+installation.
 
 The project requires **pnpm >=12.3.4**, with no exact package-manager pin;
 CI installs `latest` and checks the minimum. Node remains on the supported

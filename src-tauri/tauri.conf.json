@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Markdown Desktop",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "identifier": "com.markdownnative.desktop",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -46,6 +46,9 @@
     "publisher": "Roy Dawson IV",
     "shortDescription": "Read and edit Markdown files.",
     "targets": "all",
+    "macOS": {
+      "minimumSystemVersion": "14.4"
+    },
     "fileAssociations": [
       {
         "ext": ["md", "markdown", "mdown", "mkdown"],

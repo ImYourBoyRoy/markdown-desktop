@@ -13,6 +13,8 @@
   import ContextMenu from './components/ContextMenu.svelte';
   import CommandPalette from './components/CommandPalette.svelte';
   import SettingsModal from './components/SettingsModal.svelte';
+  import MediaPreview from './components/MediaPreview.svelte';
+  import ReaderFullscreenBar from './components/ReaderFullscreenBar.svelte';
   import { runAcceptanceProbeIfEnabled } from './lib/acceptance-app';
   import { mergeFilesystemIssues } from './lib/document-diagnostics';
   import { applyFormatting, type EditResult, type FormatAction, type TextSelection } from './lib/formatting';
@@ -111,9 +113,15 @@
   import { contextCopyText } from './lib/context-copy';
   import { planAssetDrop } from './lib/asset-drop';
   import { documentMetrics } from './lib/document-metrics';
+  import type { MediaPreview as MediaPreviewData } from './lib/media-preview';
   import { performanceCount, performanceSpan } from './lib/performance';
   import { createRenderController } from './lib/render-controller';
-  import { effectiveViewModeForState, sourceViewVisibleForState } from './lib/view-mode';
+  import {
+    effectiveViewModeForState,
+    initialViewStateForPreference,
+    normalizeStartupViewPreference,
+    sourceViewVisibleForState,
+  } from './lib/view-mode';
   import { clampScanDepth, invokeErrorMessage, parseInvokeError } from './lib/invoke-error';
   import {
     aboutUpdateCopy,
@@ -144,14 +152,21 @@
   let activeId = $state<string | undefined>();
   let workspace = $state<WorkspaceInfo | null>(null);
   const storedMode = readBrowserSetting('markdown-native-mode');
-  const initialMode: ViewMode = storedMode === 'source' || storedMode === 'split' ? storedMode : 'rendered';
-  const initialSourceDrawerVisible = readBrowserSetting('markdown-native-source-drawer') === 'true';
-  let mode = $state<ViewMode>(initialMode);
-  // `mode` is the user's preferred view arrangement. `sourceVisible` is the
-  // independently collapsible source drawer used while editing in Render.
-  // Keeping these separate lets the UI report an actual split view without
-  // overloading `mode === 'source'`.
-  let sourceVisible = $state(initialSourceDrawerVisible);
+  const initialStartupViewPreference = normalizeStartupViewPreference(
+    readBrowserSetting('markdown-native-startup-view'),
+  );
+  const initialViewState = initialViewStateForPreference(
+    initialStartupViewPreference,
+    storedMode,
+    readBrowserSetting('markdown-native-source-drawer') === 'true',
+  );
+  let startupViewPreference = $state(initialStartupViewPreference);
+  let mode = $state<ViewMode>(initialViewState.mode);
+  // The startup preference is independent from `mode`, which can change freely
+  // during a session. `sourceVisible` is the collapsible drawer used in Render.
+  // Keeping all three separate preserves both the fixed startup choice and the
+  // actual split state without overloading `mode === 'source'`.
+  let sourceVisible = $state(initialViewState.sourceVisible);
   let theme = $state<Theme>((readBrowserSetting('markdown-native-theme') as Theme) || 'system');
   const storedProfile = readBrowserSetting('markdown-native-profile');
   let markdownProfile = $state<MarkdownProfile>(storedProfile === 'extended' || storedProfile === 'commonmarkStrict' ? storedProfile : 'github');
@@ -167,6 +182,15 @@
   let pendingAssetDrop = $state<PendingAssetDrop | null>(null);
   let leftCollapsed = $state(true);
   let rightCollapsed = $state(true);
+  let readerFullscreen = $state(false);
+  let readerFullscreenReturnState = $state<{
+    mode: ViewMode;
+    sourceVisible: boolean;
+    sourceEditorMounted: boolean;
+  } | null>(null);
+  let readerFullscreenReturnFocus: HTMLElement | null = null;
+  let mediaPreview = $state<MediaPreviewData | null>(null);
+  let mediaPreviewReturnFocus: HTMLElement | null = null;
   let leftPanel = $state<'files' | 'search'>('files');
   let rightPanel = $state<RightPanel>('outline');
   let issueFilter = $state<'all' | 'compatibility'>('all');
@@ -176,7 +200,7 @@
   let editing = $state(readBrowserSetting('markdown-native-editing') !== 'false');
   // Keep the source editor lazy on first rendered view, but once opened treat
   // the drawer as a collapsed pane rather than destroying CodeMirror state.
-  let sourceEditorMounted = $state(initialMode !== 'rendered' || initialSourceDrawerVisible);
+  let sourceEditorMounted = $state(initialViewState.sourceEditorMounted);
   let findQuery = $state('');
   let findReplacement = $state('');
   let findCaseSensitive = $state(false);
@@ -478,6 +502,7 @@
     ['Rendered View', () => setViewMode('rendered')],
     ['Source View', () => setViewMode('source')],
     ['Split View', () => setViewMode('split')],
+    ['Focus Reader', toggleReaderFullscreen],
     ['Save Document', saveActive],
     ['Save As…', () => void saveActiveAs()],
     ['Reload from Disk', () => requestReloadActive()],
@@ -500,6 +525,10 @@
 
   $effect(() => {
     writeBrowserSetting('markdown-native-mode', mode);
+  });
+
+  $effect(() => {
+    writeBrowserSetting('markdown-native-startup-view', startupViewPreference);
   });
 
   $effect(() => {
@@ -1362,6 +1391,65 @@
     sourceEditorMounted = true;
     sourceVisible = !sourceVisible;
     if (wasVisible) void tick().then(() => document.getElementById('toggle-source-drawer')?.focus());
+  }
+
+  function enterReaderFullscreen() {
+    if (!active || readerFullscreen) return;
+    if (!flushPendingVisualEdit()) return;
+    readerFullscreenReturnState = {
+      mode,
+      sourceVisible,
+      sourceEditorMounted,
+    };
+    readerFullscreenReturnFocus = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    if (!setViewMode('rendered')) {
+      readerFullscreenReturnState = null;
+      readerFullscreenReturnFocus = null;
+      return;
+    }
+    readerFullscreen = true;
+    void tick().then(() => document.getElementById('reader-fullscreen-exit')?.focus());
+  }
+
+  function exitReaderFullscreen() {
+    if (!readerFullscreen) return;
+    readerFullscreen = false;
+    const restore = readerFullscreenReturnState;
+    readerFullscreenReturnState = null;
+    if (restore) {
+      mode = restore.mode;
+      sourceVisible = restore.sourceVisible;
+      sourceEditorMounted = restore.sourceEditorMounted;
+    }
+    const returnFocus = readerFullscreenReturnFocus;
+    readerFullscreenReturnFocus = null;
+    void tick().then(() => {
+      if (returnFocus?.isConnected) returnFocus.focus();
+      else document.getElementById('reader-focus-toggle')?.focus();
+    });
+  }
+
+  function toggleReaderFullscreen() {
+    if (readerFullscreen) exitReaderFullscreen();
+    else enterReaderFullscreen();
+  }
+
+  function openMediaPreview(preview: MediaPreviewData) {
+    mediaPreviewReturnFocus = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    mediaPreview = preview;
+  }
+
+  function closeMediaPreview() {
+    mediaPreview = null;
+    const returnFocus = mediaPreviewReturnFocus;
+    mediaPreviewReturnFocus = null;
+    void tick().then(() => {
+      if (returnFocus?.isConnected) returnFocus.focus();
+    });
   }
 
   /**
@@ -2690,6 +2778,16 @@
       openContextMenu(x, y, mapId, sourceTarget);
       return;
     }
+    if (event.key === 'F11') {
+      event.preventDefault();
+      toggleReaderFullscreen();
+      return;
+    }
+    if (event.key === 'Escape' && readerFullscreen) {
+      event.preventDefault();
+      exitReaderFullscreen();
+      return;
+    }
     const modifier = event.ctrlKey || event.metaKey;
     if (modifier && event.key.toLowerCase() === 'f') {
       event.preventDefault();
@@ -3394,7 +3492,7 @@
 
 <svelte:window onkeydown={handleKeydown} oncontextmenu={handleContextMenu} onpointerdown={handleShellClick} />
 
-<div class="app-shell" aria-busy={workspaceLoading}>
+<div class="app-shell" class:reader-fullscreen={readerFullscreen} aria-busy={workspaceLoading}>
   <AppToolbar
     workspaceName={workspace?.name ?? 'No folder open'}
     documentPath={active?.meta.path ?? workspace?.displayPath ?? 'No folder open'}
@@ -3484,6 +3582,17 @@
     />
   {/if}
 
+  {#if readerFullscreen && active}
+    <ReaderFullscreenBar
+      title={active.title}
+      leftCollapsed={leftCollapsed}
+      rightCollapsed={rightCollapsed}
+      onToggleLeft={() => (leftCollapsed = !leftCollapsed)}
+      onToggleRight={() => (rightCollapsed = !rightCollapsed)}
+      onExit={exitReaderFullscreen}
+    />
+  {/if}
+
   <div class="workspace-grid" class:left-collapsed={leftCollapsed} class:right-collapsed={rightCollapsed}>
     <WorkspaceSidebar
       panel={leftPanel}
@@ -3525,6 +3634,7 @@
       effectiveViewMode={effectiveViewMode}
       renderedViewVisible={renderedViewVisible}
       sourceEditorMounted={sourceEditorMounted}
+      readerFullscreen={readerFullscreen}
       markdownProfile={markdownProfile}
       remoteImagesEnabled={remoteImagesEnabled}
       findMapIds={findMapIds}
@@ -3555,6 +3665,7 @@
       onExportHtml={exportHtml}
       onRevealCompatibilityIssues={() => revealIssues('compatibility')}
       onToggleSource={toggleSourceDrawer}
+      onToggleReaderFullscreen={toggleReaderFullscreen}
       onMapReady={revealFindMatch}
       onMapHover={updateVisualHover}
       onMapSelect={updateVisualSelection}
@@ -3572,6 +3683,7 @@
       onSlashCommand={handleSlashCommand}
       onRevealSource={revealMapInSource}
       onOpenLink={openLinkTarget}
+      onOpenMedia={openMediaPreview}
       onSourceHover={updateSourceHover}
       onSourceContextMenu={handleSourceContextMenu}
       onSourceChange={handleSourceChange}
@@ -3662,6 +3774,9 @@
   onRenderedView={() => { contextMenu = null; setViewMode('rendered'); }}
   onSourceView={() => { contextMenu = null; setViewMode('source'); }}
 />
+{#if mediaPreview}
+  <MediaPreview media={mediaPreview} onClose={closeMediaPreview} />
+{/if}
 {#if showRecent}
   <RecentDocuments
     paths={recentDocuments}
@@ -3687,7 +3802,7 @@
 {#if showSettings}
   <SettingsModal
     theme={theme}
-    mode={mode}
+    startupViewPreference={startupViewPreference}
     markdownProfile={markdownProfile}
     compatibilityTarget={compatibilityTarget}
     remoteImagesEnabled={remoteImagesEnabled}
@@ -3697,7 +3812,7 @@
     consolidatingAssets={consolidatingAssets}
     onClose={() => (showSettings = false)}
     onThemeChange={(nextTheme) => (theme = nextTheme)}
-    onViewModeChange={setViewMode}
+    onStartupViewChange={(preference) => (startupViewPreference = preference)}
     onProfileChange={(nextProfile) => (markdownProfile = nextProfile)}
     onCompatibilityTargetChange={changeCompatibilityTarget}
     onRemoteImagesChange={(enabled) => (remoteImagesEnabled = enabled)}

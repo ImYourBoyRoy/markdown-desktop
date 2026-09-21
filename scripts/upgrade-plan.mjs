@@ -16,11 +16,10 @@ export function assertMermaidCompatibility(range) {
   const match = range.trim().match(/^\^(\d+)\.\d+\.\d+$/);
   if (!match) throw new Error(`Unsupported Mermaid dependency range: ${range}; review required`);
   const major = Number(match[1]);
-  if (major >= 12) {
+  if (major > 12) {
     throw new Error(
-      'Mermaid 12 is not an automatic upgrade for this desktop target: it raises the browser '
-      + 'floor and changes diagram defaults. Complete a target-OS/macOS compatibility review '
-      + 'before moving off the Mermaid 11 line.',
+      'Mermaid majors after 12 are not automatic upgrades for this desktop target: review the '
+      + 'browser floor, WebView support, and diagram defaults before moving beyond Mermaid 12.',
     );
   }
 }
@@ -44,7 +43,7 @@ export function parseUpgradeArgs(args) {
 
 export function upgradePlan(platform = process.platform) {
   return [
-    ['pnpm', ['self-update']],
+    ['node', ['scripts/update-pnpm.mjs']],
     ['rustup', ['update', 'stable']],
     ['rustup', ['component', 'add', 'rustfmt', 'clippy', '--toolchain', 'stable']],
     ['node', ['scripts/verify-toolchains.mjs']],

@@ -1,9 +1,10 @@
 <script lang="ts">
-  import type { CompatibilityTarget, MarkdownProfile, Theme, ViewMode } from '../lib/types';
+  import type { CompatibilityTarget, MarkdownProfile, Theme } from '../lib/types';
+  import type { StartupViewPreference } from '../lib/view-mode';
 
   let {
     theme,
-    mode,
+    startupViewPreference,
     markdownProfile,
     compatibilityTarget,
     remoteImagesEnabled,
@@ -13,7 +14,7 @@
     consolidatingAssets,
     onClose,
     onThemeChange,
-    onViewModeChange,
+    onStartupViewChange,
     onProfileChange,
     onCompatibilityTargetChange,
     onRemoteImagesChange,
@@ -23,7 +24,7 @@
     onMakeDefault,
   } = $props<{
     theme: Theme;
-    mode: ViewMode;
+    startupViewPreference: StartupViewPreference;
     markdownProfile: MarkdownProfile;
     compatibilityTarget: CompatibilityTarget;
     remoteImagesEnabled: boolean;
@@ -33,7 +34,7 @@
     consolidatingAssets: boolean;
     onClose: () => void;
     onThemeChange: (theme: Theme) => void;
-    onViewModeChange: (mode: ViewMode) => void;
+    onStartupViewChange: (preference: StartupViewPreference) => void;
     onProfileChange: (profile: MarkdownProfile) => void;
     onCompatibilityTargetChange: (target: CompatibilityTarget) => void;
     onRemoteImagesChange: (enabled: boolean) => void;
@@ -49,7 +50,7 @@
     <div class="settings-header"><div><span class="eyebrow">Preferences</span><h2>Settings</h2></div><button id="settings-close" class="icon-button" type="button" aria-label="Close settings" onclick={onClose}>×</button></div>
     <div class="settings-grid">
       <label for="theme-setting">Theme<select id="theme-setting" value={theme} onchange={(event) => onThemeChange(event.currentTarget.value as Theme)}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
-      <label for="view-setting">Default view<select id="view-setting" value={mode} onchange={(event) => onViewModeChange(event.currentTarget.value as ViewMode)}><option value="rendered">Rendered</option><option value="source">Source</option><option value="split">Split</option></select></label>
+      <label for="startup-view-setting">Startup view<select id="startup-view-setting" value={startupViewPreference} onchange={(event) => onStartupViewChange(event.currentTarget.value as StartupViewPreference)}><option value="remember">Remember last used</option><option value="rendered">Always Rendered</option><option value="source">Always Source</option><option value="split">Always Split</option></select><small>Used when Markdown Desktop launches. You can still switch views any time during a session.</small></label>
       <label for="profile-setting">Editor profile<select id="profile-setting" value={markdownProfile} onchange={(event) => onProfileChange(event.currentTarget.value as MarkdownProfile)}><option value="github">GitHub</option><option value="extended">Extended</option><option value="commonmarkStrict">CommonMark Strict</option></select><small>Controls local parsing, preview, and the current authoring affordances.</small></label>
       <label for="compatibility-target-setting">Check against<select id="compatibility-target-setting" value={compatibilityTarget} onchange={(event) => onCompatibilityTargetChange(event.currentTarget.value as CompatibilityTarget)}><option value="githubReadme">GitHub README (advisory)</option><option value="none">None</option></select><small>Advisory only. It does not change rendering, editing, or saving.</small></label>
       <label for="remote-images-setting">Remote images<select id="remote-images-setting" value={remoteImagesEnabled ? 'enabled' : 'disabled'} onchange={(event) => onRemoteImagesChange(event.currentTarget.value === 'enabled')}><option value="enabled">Enabled with safe fetch policy</option><option value="disabled">Disabled</option></select></label>

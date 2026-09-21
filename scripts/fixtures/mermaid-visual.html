@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Markdown Desktop Mermaid visual fixture</title>
+    <style>
+      :root {
+        --panel: #fcfbf7;
+        --panel-2: #f1ede4;
+        --text: #2b2b29;
+        --muted: #5f5d57;
+        --accent: #85500f;
+        --hover: #e9e2d5;
+        --font-sans: system-ui, sans-serif;
+        color: var(--text);
+        background: #e9e4da;
+        font-family: var(--font-sans);
+      }
+
+      body {
+        margin: 0;
+      }
+
+      main {
+        box-sizing: border-box;
+        margin: 0 auto;
+        max-width: 1080px;
+        padding: clamp(24px, 5vw, 48px);
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+      }
+
+      #status {
+        color: var(--muted);
+        margin: 0 0 28px;
+      }
+
+      #host {
+        min-height: 420px;
+        padding: 24px;
+        border: 1px solid color-mix(in srgb, var(--accent) 48%, transparent);
+        border-radius: 14px;
+        background: var(--panel);
+        box-shadow: 0 12px 32px rgb(43 43 41 / 12%);
+      }
+
+      pre {
+        white-space: pre-wrap;
+      }
+
+      .diagram-output {
+        display: grid;
+        gap: 14px;
+        justify-items: center;
+      }
+
+      .diagram-output svg {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+
+      .diagram-preview-trigger {
+        border: 1px solid var(--accent);
+        border-radius: 8px;
+        padding: 8px 12px;
+        color: var(--text);
+        background: var(--panel-2);
+        font: inherit;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Mermaid visual verification</h1>
+      <p id="status">Loading the Mermaid fence from <code>fixtures/mermaid/visual.md</code>…</p>
+      <section id="host" aria-label="Rendered Mermaid fixture"></section>
+    </main>
+    <script type="module" src="./mermaid-visual.ts"></script>
+  </body>
+</html>

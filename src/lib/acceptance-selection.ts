@@ -165,7 +165,7 @@ export async function dragRenderedBlockProbe(renderedPane: HTMLElement | null): 
   const movingHandle = handles[0];
   const targetHandle = handles[1];
   if (!movingHandle || !targetHandle) return false;
-  const targetMapId = targetHandle.dataset.mapId;
+  const targetMapId = targetHandle.dataset.blockMapId;
   if (!targetMapId) return false;
   const target = [...renderedPane.querySelectorAll<HTMLElement>('[data-map-id]')]
     .find((element) => element.dataset.mapId === targetMapId

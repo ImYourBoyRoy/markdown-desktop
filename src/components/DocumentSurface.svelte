@@ -5,6 +5,7 @@
   import type { SlashCommand } from '../lib/slash';
   import type { VisualStructurePatch } from '../lib/visual-structure';
   import type { SourceDocumentChange } from '../lib/source-sync';
+  import type { MediaPreview } from '../lib/media-preview';
   import { recentDocumentDirectory, recentDocumentName } from '../lib/recent-documents';
   import MarkdownEditor from './MarkdownEditor.svelte';
   import MarkdownView from './MarkdownView.svelte';
@@ -28,6 +29,7 @@
     effectiveViewMode,
     renderedViewVisible,
     sourceEditorMounted,
+    readerFullscreen,
     markdownProfile,
     remoteImagesEnabled,
     findMapIds,
@@ -58,6 +60,7 @@
     onExportHtml,
     onRevealCompatibilityIssues,
     onToggleSource,
+    onToggleReaderFullscreen,
     onMapReady,
     onMapHover,
     onMapSelect,
@@ -75,6 +78,7 @@
     onSlashCommand,
     onRevealSource,
     onOpenLink,
+    onOpenMedia,
     onSourceHover,
     onSourceContextMenu,
     onSourceChange,
@@ -100,6 +104,7 @@
     effectiveViewMode: ViewMode;
     renderedViewVisible: boolean;
     sourceEditorMounted: boolean;
+    readerFullscreen: boolean;
     markdownProfile: MarkdownProfile;
     remoteImagesEnabled: boolean;
     findMapIds: string[];
@@ -130,6 +135,7 @@
     onExportHtml: () => void;
     onRevealCompatibilityIssues: () => void;
     onToggleSource: () => void;
+    onToggleReaderFullscreen: () => void;
     onMapReady: () => void;
     onMapHover: (mapId: string | null) => void;
     onMapSelect: (mapId: string | null, sourceSelection?: TextSelection) => void;
@@ -147,6 +153,7 @@
     onSlashCommand: (mapId: string, command: SlashCommand) => void;
     onRevealSource: (mapId: string) => void;
     onOpenLink: (target: string) => void;
+    onOpenMedia: (media: MediaPreview) => void;
     onSourceHover: (from: number | null, to: number | null) => void;
     onSourceContextMenu: (from: number, to: number, clientX: number, clientY: number) => void;
      onSourceChange: (changes: SourceDocumentChange[]) => void;
@@ -198,11 +205,11 @@
     {/if}
     <div class="document-header">
       <div><span class="doc-type">MARKDOWN DOCUMENT</span><h1>{active.title}</h1></div>
-      <div class="header-actions"><button type="button" onclick={onCopyRendered}>Copy source</button><button type="button" onclick={onExportHtml}>Export HTML</button><button class="compatibility-indicator" class:compatibility-off={compatibilityTarget === 'none'} class:compatibility-error={compatibilitySummary.errors > 0} class:compatibility-warning={compatibilitySummary.errors === 0 && compatibilitySummary.warnings > 0} class:compatibility-info={compatibilitySummary.errors === 0 && compatibilitySummary.warnings === 0 && compatibilitySummary.info > 0} type="button" aria-label={compatibilitySummary.label} title={compatibilitySummary.detail} onclick={onRevealCompatibilityIssues}><span class="compatibility-indicator-dot" aria-hidden="true"></span><span>{compatibilitySummary.label}</span></button>{#if editing}<button id="toggle-source-drawer" type="button" aria-expanded={sourceViewVisible} aria-controls="view-mode-panel" title="Toggle source drawer (Ctrl+Alt+S)" onclick={onToggleSource}>{sourceViewVisible ? 'Hide source' : 'Show source'}</button>{/if}</div>
+      <div class="header-actions"><button type="button" onclick={onCopyRendered}>Copy source</button><button type="button" onclick={onExportHtml}>Export HTML</button><button id="reader-focus-toggle" class="reader-focus-toggle" type="button" aria-pressed={readerFullscreen} title={readerFullscreen ? 'Exit reader focus (F11)' : 'Focus the rendered reader (F11)'} onclick={onToggleReaderFullscreen}>{readerFullscreen ? 'Exit focus' : 'Focus reader'}</button><button class="compatibility-indicator" class:compatibility-off={compatibilityTarget === 'none'} class:compatibility-error={compatibilitySummary.errors > 0} class:compatibility-warning={compatibilitySummary.errors === 0 && compatibilitySummary.warnings > 0} class:compatibility-info={compatibilitySummary.errors === 0 && compatibilitySummary.warnings === 0 && compatibilitySummary.info > 0} type="button" aria-label={compatibilitySummary.label} title={compatibilitySummary.detail} onclick={onRevealCompatibilityIssues}><span class="compatibility-indicator-dot" aria-hidden="true"></span><span>{compatibilitySummary.label}</span></button>{#if editing}<button id="toggle-source-drawer" type="button" aria-expanded={sourceViewVisible} aria-controls="view-mode-panel" title="Toggle source drawer (Ctrl+Alt+S)" onclick={onToggleSource}>{sourceViewVisible ? 'Hide source' : 'Show source'}</button>{/if}</div>
     </div>
     <div id="view-mode-panel" class="document-views" class:split={splitViewVisible} role="tabpanel" aria-label={`${effectiveViewMode} document view`} tabindex="0">
       {#if renderedViewVisible}
-        <div class="rendered-pane">{#key `${active.id}:${renderResetToken}`}<MarkdownView html={active.html} source={active.source} renderedSource={active.renderedSource} renderedBlocks={active.blocks ?? []} sourceMap={active.sourceMap} profile={markdownProfile} editable={editing} incrementalCommitMapId={incrementalCommitMapId} incrementalCommitSourceRange={incrementalCommitSourceRange} highlightedMapIds={findMapIds} activeMapIds={activeFindMapIds} hoveredMapIds={hoveredMapIds} selectedMapIds={selectedMapIds} externalSourceSelection={externalSourceSelection} sourceSelectionActive={sourceSelectionActive} onMapReady={onMapReady} onMapHover={onMapHover} onMapSelect={onMapSelect} onBlockEdit={onBlockEdit} onVisualDraftEdit={onVisualDraftEdit} onVisualDraftCommit={onVisualDraftCommit} onVisualStructureEdit={onVisualStructureEdit} onVisualPaste={onVisualPaste} onVisualEditRejected={onVisualEditRejected} onDetailsSummaryEdit={onDetailsSummaryEdit} onTableEdit={onTableEdit} onBlockMove={onBlockMove} onBlockBeside={onBlockBeside} onSlashCommand={onSlashCommand} onRevealSource={onRevealSource} documentId={active.id} headingSlugs={headingSlugs} allowRemoteImages={remoteImagesEnabled} onOpenLink={onOpenLink} />{/key}</div>
+        <div class="rendered-pane">{#key `${active.id}:${renderResetToken}`}<MarkdownView html={active.html} source={active.source} renderedSource={active.renderedSource} renderedBlocks={active.blocks ?? []} sourceMap={active.sourceMap} profile={markdownProfile} editable={editing} incrementalCommitMapId={incrementalCommitMapId} incrementalCommitSourceRange={incrementalCommitSourceRange} highlightedMapIds={findMapIds} activeMapIds={activeFindMapIds} hoveredMapIds={hoveredMapIds} selectedMapIds={selectedMapIds} externalSourceSelection={externalSourceSelection} sourceSelectionActive={sourceSelectionActive} onMapReady={onMapReady} onMapHover={onMapHover} onMapSelect={onMapSelect} onBlockEdit={onBlockEdit} onVisualDraftEdit={onVisualDraftEdit} onVisualDraftCommit={onVisualDraftCommit} onVisualStructureEdit={onVisualStructureEdit} onVisualPaste={onVisualPaste} onVisualEditRejected={onVisualEditRejected} onDetailsSummaryEdit={onDetailsSummaryEdit} onTableEdit={onTableEdit} onBlockMove={onBlockMove} onBlockBeside={onBlockBeside} onSlashCommand={onSlashCommand} onRevealSource={onRevealSource} documentId={active.id} headingSlugs={headingSlugs} allowRemoteImages={remoteImagesEnabled} onOpenLink={onOpenLink} onOpenMedia={onOpenMedia} />{/key}</div>
       {/if}
       {#if sourceEditorMounted}
         <div class="source-pane" class:source-hidden={!sourceViewVisible} aria-hidden={!sourceViewVisible} inert={!sourceViewVisible}>
