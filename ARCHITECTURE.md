@@ -214,7 +214,7 @@ file sizes; lines are logical source lines with a terminal newline excluded.
 Refresh it after source or documentation changes so cold models can trust the
 routing table below.
 
-Inventory totals: 258 files / 51,474 lines / 2,096,304 B. Runtime (excluding this generator): 163 files / 30,491 lines / 1,264,176 B. Tests/benchmarks: 70 files / 6,309 lines / 253,662 B.
+Inventory totals: 258 files / 51,501 lines / 2,097,980 B. Runtime (excluding this generator): 163 files / 30,491 lines / 1,264,176 B. Tests/benchmarks: 70 files / 6,309 lines / 253,662 B.
 
 ### Read first
 
@@ -523,9 +523,9 @@ These files define toolchains, dependency graphs, packaging, permissions, CI, an
 | `.github/workflows/release.yml` | 479 | 24,928 B | Signed six-family release build, publication, and post-publication verification. |
 | `.gitignore` | 81 | 1,061 B | Generated output, local credentials, runtime state, and continuity-file boundaries. |
 | `AGENTS.md` | 86 | 6,931 B | Repository operating contract, invariants, required workflows, and safety boundaries. |
-| `IMPLEMENTATION_STATUS.md` | 805 | 61,321 B | Current implementation checkpoint and evidence summary. |
+| `IMPLEMENTATION_STATUS.md` | 816 | 62,104 B | Current implementation checkpoint and evidence summary. |
 | `LICENSE` | 21 | 1,086 B | MIT license text. |
-| `MEMORY.md` | 837 | 91,399 B | Local continuity record of architecture decisions, validation, risks, and next actions. |
+| `MEMORY.md` | 853 | 92,292 B | Local continuity record of architecture decisions, validation, risks, and next actions. |
 | `README.md` | 421 | 29,078 B | Published user/developer guide for installation, usage, commands, releases, and limitations. |
 | `SECURITY.md` | 52 | 3,567 B | Security model, audit findings, upstream advisories, and unresolved platform boundaries. |
 | `docs/PHASE-0-PERFORMANCE.md` | 137 | 6,049 B | Phase 0 performance matrix, baseline, budgets, and evidence limits. |

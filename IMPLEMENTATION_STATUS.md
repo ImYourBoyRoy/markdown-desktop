@@ -7,7 +7,7 @@ clone or handoff.
 
 Updated: 2026-09-21
 
-## Release v1.1.0 candidate (2026-09-21)
+## Release v1.1.0 published (2026-09-21)
 
 - Version metadata is aligned at `1.1.0` in `package.json`, `src-tauri/Cargo.toml`,
   `src-tauri/Cargo.lock`, and `src-tauri/tauri.conf.json`.
@@ -18,8 +18,19 @@ Updated: 2026-09-21
 - Local release verification passed after the bump: 331 frontend tests / 2
   skipped, zero Svelte diagnostics, renderer smoke, updater audit, Windows
   `1.1.0` MSI/NSIS bundling, and packaged acceptance 17/17.
-- Publication remains gated on the pushed `main` CI run followed by the signed
-  six-platform tag workflow and its post-publication updater verification.
+- Main CI run [`35589789004`](https://github.com/ImYourBoyRoy/markdown-desktop/actions/runs/35589789004)
+  passed quality/security gates and native smoke on Windows x64/ARM64, macOS
+  Intel/Apple Silicon, and Linux x64/ARM64.
+- Release run [`35591268944`](https://github.com/ImYourBoyRoy/markdown-desktop/actions/runs/35591268944)
+  passed all six release builds, publication, and post-publication updater
+  verification. The public release is
+  [`v1.1.0`](https://github.com/ImYourBoyRoy/markdown-desktop/releases/tag/v1.1.0),
+  an explicit non-draft, non-prerelease with 29 assets; `latest.json` reports
+  version `1.1.0` and signed metadata for every platform/package entry.
+- The annotated `v1.1.0` tag resolves to release commit
+  `1132c9cf94e541e334a4064d9adfab342f774cd8`. Apple Developer
+  signing/notarization remains intentionally deferred; this is distinct from
+  the signed updater metadata verified by the release workflow.
 
 ## Fresh dependency/toolchain validation (2026-09-21)
 
