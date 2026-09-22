@@ -7,7 +7,7 @@ clone or handoff.
 
 Updated: 2026-09-21
 
-## Release v1.1.1 preparation (2026-09-21)
+## Release v1.1.1 published (2026-09-21)
 
 - Version metadata is aligned at `1.1.1` in `package.json`,
   `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, and
@@ -21,8 +21,17 @@ Updated: 2026-09-21
   passed / 2 skipped), Svelte diagnostics (zero errors/warnings), production
   build, visual acceptance (90/90), accessibility source audit, architecture
   check, and Windows x64 MSI/NSIS bundling.
-- Publication remains pending the commit, `v1.1.1` tag, and remote CI/release
-  verification.
+- Commit `46afb4e44118a9bffd7636319c0a9db1fdc79fd6` is on `main`, and the
+  annotated `v1.1.1` tag resolves to that exact commit locally and remotely.
+- [Main CI run 35686193053](https://github.com/ImYourBoyRoy/markdown-desktop/actions/runs/35686193053)
+  passed all seven jobs: quality/security plus Windows x64/ARM64, macOS
+  Intel/Apple Silicon, and Linux x64/ARM64 native smoke coverage.
+- [Release run 35686693103](https://github.com/ImYourBoyRoy/markdown-desktop/actions/runs/35686693103)
+  passed all six platform builds and the publish-and-verify job.
+- [Public release v1.1.1](https://github.com/ImYourBoyRoy/markdown-desktop/releases/tag/v1.1.1)
+  is non-draft and non-prerelease with 29 assets. Its signed `latest.json`
+  reports version `1.1.1`, contains 18 signed platform entries, and every
+  updater URL resolves to an asset in the published release.
 
 ## Release v1.1.0 published (2026-09-21)
 

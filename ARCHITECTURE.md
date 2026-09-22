@@ -225,7 +225,7 @@ file sizes; lines are logical source lines with a terminal newline excluded.
 Refresh it after source or documentation changes so cold models can trust the
 routing table below.
 
-Inventory totals: 256 files / 52,083 lines / 2,129,695 B. Runtime (excluding this generator): 161 files / 30,805 lines / 1,280,842 B. Tests/benchmarks: 70 files / 6,482 lines / 261,088 B.
+Inventory totals: 256 files / 52,092 lines / 2,130,465 B. Runtime (excluding this generator): 161 files / 30,805 lines / 1,280,842 B. Tests/benchmarks: 70 files / 6,482 lines / 261,088 B.
 
 ### Read first
 
@@ -532,7 +532,7 @@ These files define toolchains, dependency graphs, packaging, permissions, CI, an
 | `.github/workflows/release.yml` | 479 | 24,928 B | Signed six-family release build, publication, and post-publication verification. |
 | `.gitignore` | 81 | 1,061 B | Generated output, local credentials, runtime state, and continuity-file boundaries. |
 | `AGENTS.md` | 86 | 6,931 B | Repository operating contract, invariants, required workflows, and safety boundaries. |
-| `IMPLEMENTATION_STATUS.md` | 833 | 63,000 B | Current implementation checkpoint and evidence summary. |
+| `IMPLEMENTATION_STATUS.md` | 842 | 63,770 B | Current implementation checkpoint and evidence summary. |
 | `LICENSE` | 21 | 1,086 B | MIT license text. |
 | `MEMORY.md` | 905 | 97,235 B | Local continuity record of architecture decisions, validation, risks, and next actions. |
 | `README.md` | 432 | 30,243 B | Published user/developer guide for installation, usage, commands, releases, and limitations. |
