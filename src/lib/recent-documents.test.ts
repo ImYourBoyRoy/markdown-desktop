@@ -4,6 +4,7 @@ import {
   normalizeRecentDocumentPaths,
   recentDocumentDirectory,
   recentDocumentName,
+  removeRecentDocumentPath,
   rememberRecentDocument,
 } from './recent-documents';
 
@@ -31,5 +32,14 @@ describe('recent Markdown documents', () => {
     expect(recentDocumentDirectory('C:\\Docs\\README.md')).toBe('C:/Docs');
     expect(recentDocumentName('/home/roy/README.md')).toBe('README.md');
     expect(recentDocumentDirectory('/home/roy/README.md')).toBe('/home/roy');
+  });
+
+  it('removes one history entry without changing neighboring entries', () => {
+    const paths = ['C:/Docs/README.md', 'C:/Docs/Plan.md', '/home/roy/notes.md'];
+    expect(removeRecentDocumentPath(paths, 'c:\\docs\\readme.md')).toEqual([
+      'C:/Docs/Plan.md',
+      '/home/roy/notes.md',
+    ]);
+    expect(removeRecentDocumentPath(paths, '/missing.md')).toEqual(paths);
   });
 });

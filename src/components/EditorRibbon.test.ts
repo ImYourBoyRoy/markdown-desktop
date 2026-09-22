@@ -47,8 +47,8 @@ describe('EditorRibbon visual editing controls', () => {
     expect((screen.getByRole('textbox', { name: 'Code fence language' }) as HTMLInputElement).disabled).toBe(false);
   });
 
-  it('keeps every ribbon tab reachable through the compact tab menu', async () => {
-    const { rerender } = render(EditorRibbon, {
+  it('keeps every ribbon section directly visible and keyboard navigable', async () => {
+    render(EditorRibbon, {
       props: {
         editing: true,
         selection: { from: 0, to: 0 },
@@ -57,14 +57,14 @@ describe('EditorRibbon visual editing controls', () => {
       },
     });
 
-    await fireEvent.click(screen.getByText('Tabs'));
-    const menu = screen.getByRole('menu', { name: 'All editor ribbon tabs' });
-    expect(menu).toBeTruthy();
-    expect(screen.getAllByRole('menuitem').map((item) => item.textContent))
-      .toEqual(['Home (current)', 'Insert', 'Layout', 'Block', 'Review']);
+    expect(screen.queryByText('Tabs')).toBeNull();
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent))
+      .toEqual(['Home', 'Insert', 'Layout', 'Block', 'Review']);
 
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Review' }));
-    await rerender({ editing: true });
+    await fireEvent.keyDown(screen.getByRole('tab', { name: 'Home' }), { key: 'ArrowRight' });
+    expect(screen.getByRole('tab', { name: 'Insert' }).getAttribute('aria-selected')).toBe('true');
+
+    await fireEvent.click(screen.getByRole('tab', { name: 'Review' }));
     expect(screen.getByRole('tab', { name: 'Review' }).getAttribute('aria-selected')).toBe('true');
   });
 });

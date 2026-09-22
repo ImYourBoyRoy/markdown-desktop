@@ -1,26 +1,30 @@
 .ribbon { display: flex; flex-direction: column; flex: 0 0 auto; min-height: 0; border-bottom: 1px solid var(--border); background: var(--panel); }
 .ribbon.disabled { opacity: .55; }
-.ribbon-tabbar { display: flex; align-items: end; gap: 4px; min-height: 31px; padding: 4px 14px 0; border-bottom: 1px solid var(--border); overflow: visible; }
-.ribbon-tabs { display: flex; align-items: end; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
-.ribbon-tabs button { flex: 0 0 auto; border: 0; border-bottom: 2px solid transparent; border-radius: 5px 5px 0 0; padding: 7px 12px 6px; color: var(--muted); background: transparent; font-size: 11px; font-weight: 700; cursor: pointer; }
-.ribbon-tabs button:hover, .ribbon-tabs button:focus-visible { color: var(--text); background: var(--hover); }
-.ribbon-tabs button.active { border-bottom-color: var(--accent); color: var(--heading); background: var(--panel-2); }
-.ribbon-panel { display: flex; align-items: center; gap: 10px; min-height: 66px; padding: 8px 14px; overflow-x: auto; }
-.ribbon-group { display: grid; gap: 4px; padding-right: 10px; border-right: 1px solid var(--border); }
+.ribbon-tabbar { display: flex; align-items: stretch; gap: 16px; min-height: 48px; padding: 7px 18px 0; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--app-bg) 76%, var(--panel) 24%); }
+.ribbon-context { display: grid; flex: 0 0 auto; place-items: center; min-width: 70px; padding-right: 16px; border-right: 1px solid var(--border); color: var(--faint); font-size: 10px; font-weight: 800; letter-spacing: .12em; }
+.ribbon-tabs { display: flex; align-items: stretch; gap: 6px; min-width: 0; flex: 1 1 auto; overflow-x: auto; scrollbar-width: none; }
+.ribbon-tabs::-webkit-scrollbar { display: none; }
+.ribbon-tabs button { display: flex; flex: 0 0 auto; align-items: center; justify-content: center; min-width: 88px; min-height: 40px; border: 1px solid transparent; border-bottom: 3px solid transparent; border-radius: 9px 9px 0 0; padding: 8px 16px 7px; color: var(--muted); background: transparent; font-size: 12px; font-weight: 750; letter-spacing: .01em; cursor: pointer; transition: border-color 120ms ease, color 120ms ease, background-color 120ms ease; }
+.ribbon-tabs button:hover, .ribbon-tabs button:focus-visible { border-color: var(--border); border-bottom-color: var(--accent); color: var(--text); background: var(--hover); }
+.ribbon-tabs button.active { border-color: var(--border); border-bottom-color: var(--accent); color: var(--heading); background: var(--panel); box-shadow: 0 -1px 0 color-mix(in srgb, var(--accent) 28%, transparent); }
+.ribbon-panel { display: flex; align-items: stretch; gap: 12px; min-height: 74px; padding: 10px 18px; background: var(--panel); }
+.ribbon-command-scroll { display: flex; flex: 1 1 auto; align-items: center; gap: 12px; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
+.ribbon-panel-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; padding-left: 12px; border-left: 1px solid var(--border); }
+.ribbon-group { display: grid; flex: 0 0 auto; align-content: center; gap: 5px; min-height: 44px; padding-right: 12px; border-right: 1px solid var(--border); }
 .ribbon-label { color: var(--faint); font-size: 9px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
-.ribbon-actions { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
-.ribbon button, .ribbon select, .ribbon input { border: 1px solid var(--border); border-radius: 6px; padding: 6px 9px; color: var(--muted); background: var(--panel-2); font-size: 11px; cursor: pointer; }
+.ribbon-actions { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+.ribbon button, .ribbon select, .ribbon input { min-height: 32px; border: 1px solid var(--border); border-radius: 7px; padding: 6px 10px; color: var(--muted); background: var(--panel-2); font-size: 11px; cursor: pointer; }
 .ribbon input { width: 110px; cursor: text; }
 .ribbon select { min-width: 104px; cursor: pointer; }
 .ribbon button:hover:not(:disabled), .ribbon button:focus-visible, .ribbon select:focus-visible, .ribbon input:focus-visible { border-color: var(--accent); color: var(--text); }
 .ribbon button:disabled { cursor: default; }
 .ribbon button.pressed { border-color: var(--accent); color: var(--heading); background: color-mix(in srgb, var(--accent) 17%, var(--panel-2)); }
 .ribbon-note, .ribbon-selection { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.ribbon-selection { max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
 .checkbox-control { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; white-space: nowrap; }
 .checkbox-control input { width: 14px; height: 14px; accent-color: var(--accent); }
-.ribbon-selection { padding: 0 6px; }
-.ribbon-spacer { flex: 1; min-width: 8px; }
-.ribbon-save { align-self: center; border-color: var(--action-border) !important; color: var(--action-text) !important; background: var(--action-bg) !important; font-weight: 700; }
+.ribbon-save, .ribbon-done { min-width: 64px; border-color: var(--action-border) !important; color: var(--action-text) !important; background: var(--action-bg) !important; font-weight: 700; }
+.ribbon-save:hover:not(:disabled), .ribbon-done:hover:not(:disabled) { border-color: var(--accent) !important; background: var(--action-hover) !important; }
 .block-facts { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; white-space: nowrap; }
 .block-facts strong { color: var(--heading); }
 .modal-backdrop { position: fixed; z-index: 24; inset: 0; display: grid; place-items: start center; padding: max(24px, 12vh) 24px 24px; background: rgba(2, 5, 10, .68); backdrop-filter: blur(4px); }
@@ -36,3 +40,21 @@
 .ghost, .confirm { border-radius: 7px; padding: 8px 12px; cursor: pointer; }
 .ghost { border: 1px solid var(--border); color: var(--text); background: var(--panel-2); }
 .confirm { border: 1px solid var(--action-border); color: var(--action-text); background: var(--action-bg); font-weight: 700; }
+@media (max-width: 900px) {
+  .ribbon-tabbar { gap: 10px; padding-right: 10px; padding-left: 10px; }
+  .ribbon-context { min-width: 56px; padding-right: 10px; font-size: 9px; }
+  .ribbon-tabs button { min-width: 78px; padding-right: 12px; padding-left: 12px; }
+  .ribbon-panel { padding-right: 10px; padding-left: 10px; }
+  .ribbon-panel-actions { padding-left: 8px; }
+}
+@media (max-width: 720px) {
+  .ribbon-tabbar { min-height: 44px; }
+  .ribbon-context { min-width: 48px; padding-right: 7px; font-size: 8px; letter-spacing: .08em; }
+  .ribbon-tabs { gap: 3px; }
+  .ribbon-tabs button { min-width: 70px; min-height: 36px; padding-right: 9px; padding-left: 9px; font-size: 11px; }
+  .ribbon-panel { min-height: 68px; gap: 8px; padding-top: 8px; padding-bottom: 8px; }
+  .ribbon-command-scroll { gap: 8px; }
+  .ribbon-group { padding-right: 8px; }
+  .ribbon-panel-actions { gap: 5px; padding-left: 6px; }
+  .ribbon-save, .ribbon-done { min-width: 56px; padding-right: 8px !important; padding-left: 8px !important; }
+}

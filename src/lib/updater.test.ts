@@ -9,6 +9,7 @@ import {
   formatVersionLabel,
   formatUpdateNotes,
   installAppUpdate,
+  updaterErrorMessage,
   setDismissedUpdateVersion,
   shouldShowUpdateBanner,
   updateProgressPercent,
@@ -36,8 +37,15 @@ describe('updater helpers', () => {
 
   it('bounds release notes before displaying them', () => {
     expect(formatUpdateNotes('  Ready to install.  ')).toBe('Ready to install.');
+    expect(formatUpdateNotes('## Download Markdown Desktop\n\n- **Windows x64:** `setup.exe`')).toBe('Download Markdown Desktop\n\n• Windows x64: setup.exe');
     expect(formatUpdateNotes('')).toBeUndefined();
     expect(formatUpdateNotes('x'.repeat(4_100))).toHaveLength(4_000);
+  });
+
+  it('extracts useful updater errors from common native error shapes', () => {
+    expect(updaterErrorMessage(new Error('signature mismatch'))).toBe('signature mismatch');
+    expect(updaterErrorMessage({ message: 'installer failed' })).toBe('installer failed');
+    expect(updaterErrorMessage(undefined)).toContain('signed updater');
   });
 
   it('computes download progress safely', () => {
@@ -89,6 +97,17 @@ describe('updater helpers', () => {
     });
   });
 
+  it('does not close a ready update when a refresh check fails', async () => {
+    const previous = { close: vi.fn().mockResolvedValue(undefined) } as unknown as Update;
+    vi.mocked(check).mockRejectedValue(new Error('network unavailable'));
+
+    await expect(checkForAppUpdate({ previous })).resolves.toMatchObject({
+      state: 'error',
+      message: 'Could not check for updates',
+    });
+    expect(previous.close).not.toHaveBeenCalled();
+  });
+
   it('requires confirmation, reports progress, releases the update resource, and relaunches', async () => {
     const progress: number[] = [];
     const update = {
@@ -111,6 +130,7 @@ describe('updater helpers', () => {
 
     expect(progress).toEqual([0, 25, 100]);
     expect(update.downloadAndInstall).toHaveBeenCalledOnce();
+    expect(update.downloadAndInstall).toHaveBeenCalledWith(expect.any(Function), { restartAfterInstall: true });
     expect(update.close).toHaveBeenCalledOnce();
     expect(relaunch).toHaveBeenCalledOnce();
   });
@@ -126,5 +146,25 @@ describe('updater helpers', () => {
       installed: true,
       relaunched: false,
     });
+  });
+
+  it('keeps a failed update resource open so installation can be retried', async () => {
+    const update = {
+      close: vi.fn().mockResolvedValue(undefined),
+      downloadAndInstall: vi.fn()
+        .mockRejectedValueOnce(new Error('temporary network failure'))
+        .mockResolvedValueOnce(undefined),
+    } as unknown as Update;
+    vi.mocked(relaunch).mockResolvedValue(undefined);
+
+    await expect(installAppUpdate(update, { confirmed: true })).rejects.toThrow('temporary network failure');
+    expect(update.close).not.toHaveBeenCalled();
+
+    await expect(installAppUpdate(update, { confirmed: true })).resolves.toEqual({
+      installed: true,
+      relaunched: true,
+    });
+    expect(update.downloadAndInstall).toHaveBeenCalledTimes(2);
+    expect(update.close).toHaveBeenCalledOnce();
   });
 });

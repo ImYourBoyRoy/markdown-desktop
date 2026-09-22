@@ -24,7 +24,10 @@
     onOpenSearchResult,
     recentDocuments = [],
     activeDocumentPath = '',
+    openingRecentPath,
     onOpenRecent,
+    onRemoveRecent,
+    onClearRecent,
   } = $props<{
     panel?: Panel;
     workspace: WorkspaceInfo | null;
@@ -43,7 +46,10 @@
     onOpenSearchResult: (result: SearchResult) => void;
     recentDocuments?: string[];
     activeDocumentPath?: string;
+    openingRecentPath?: string;
     onOpenRecent: (path: string) => void;
+    onRemoveRecent: (path: string) => void;
+    onClearRecent: () => void;
   }>();
 </script>
 
@@ -92,13 +98,19 @@
     {:else}
       {#if recentDocuments.length}
         <div class="recent-sidebar">
-          <div class="recent-sidebar-title">Recent Markdown files</div>
+          <div class="recent-sidebar-header">
+            <div class="recent-sidebar-title">Recent Markdown files</div>
+            <button class="recent-sidebar-clear" type="button" disabled={Boolean(openingRecentPath)} aria-label="Clear recent Markdown file history" title="Clear recent history" onclick={onClearRecent}>Clear</button>
+          </div>
           <div class="recent-sidebar-list" aria-label="Recent Markdown files">
             {#each recentDocuments as path (path)}
-              <button class="recent-sidebar-item" class:active={path === activeDocumentPath} type="button" title={path} aria-current={path === activeDocumentPath ? 'page' : undefined} onclick={() => onOpenRecent(path)}>
-                <span class="recent-sidebar-icon" aria-hidden="true">◈</span>
-                <span class="recent-sidebar-copy"><strong>{recentDocumentName(path)}</strong><small>{recentDocumentDirectory(path)}</small></span>
-              </button>
+              <div class="recent-sidebar-row" class:active={path === activeDocumentPath}>
+                <button class="recent-sidebar-item" type="button" disabled={openingRecentPath === path} title={path} aria-current={path === activeDocumentPath ? 'page' : undefined} onclick={() => onOpenRecent(path)}>
+                  <span class="recent-sidebar-icon" aria-hidden="true">◈</span>
+                  <span class="recent-sidebar-copy"><strong>{recentDocumentName(path)}</strong><small>{recentDocumentDirectory(path)}</small></span>
+                </button>
+                <button class="recent-sidebar-remove icon-button" type="button" disabled={openingRecentPath === path} aria-label={`Remove ${recentDocumentName(path)} from recent files`} title="Remove from recent history" onclick={() => onRemoveRecent(path)}>×</button>
+              </div>
             {/each}
           </div>
           <button class="recent-sidebar-open" type="button" onclick={onOpenFolder}>Open Folder</button>

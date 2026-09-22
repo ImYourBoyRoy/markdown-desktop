@@ -28,6 +28,21 @@ export function rememberRecentDocument(paths: readonly string[], path: string): 
   return normalizeRecentDocumentPaths([path, ...paths]);
 }
 
+/** Remove one path from history without touching the file on disk. */
+export function removeRecentDocumentPath(paths: readonly string[], path: string): string[] {
+  const normalizedTarget = path.replaceAll('\\', '/');
+  const targetKey = /^[A-Za-z]:\//.test(normalizedTarget) || normalizedTarget.startsWith('//')
+    ? normalizedTarget.toLowerCase()
+    : normalizedTarget;
+  return normalizeRecentDocumentPaths(paths.filter((candidate) => {
+    const normalizedCandidate = candidate.replaceAll('\\', '/');
+    const candidateKey = /^[A-Za-z]:\//.test(normalizedCandidate) || normalizedCandidate.startsWith('//')
+      ? normalizedCandidate.toLowerCase()
+      : normalizedCandidate;
+    return candidateKey !== targetKey;
+  }));
+}
+
 export function recentDocumentName(path: string): string {
   const normalized = path.replaceAll('\\', '/');
   return normalized.split('/').at(-1) || path;

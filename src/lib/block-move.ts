@@ -175,6 +175,46 @@ export function moveMappedBlock(
 }
 
 /**
+ * Delete one visible top-level block without consuming opaque source content.
+ *
+ * The removal range includes the following whitespace when another visible
+ * block follows, or the preceding whitespace when the block is the last
+ * visible block. That keeps adjacent Markdown blocks separated while avoiding
+ * the blank-line buildup produced by deleting only the mapped span.
+ */
+export function deleteMappedBlock(
+  source: string,
+  sourceMap: SourceMap,
+  mapId: string,
+  selectionIndex?: SourceSelectionIndex,
+): EditResult | null {
+  const blocks = rootBlocks(source, sourceMap, selectionIndex);
+  const index = blocks.findIndex((block) => block.mapId === mapId);
+  if (index < 0) return null;
+
+  const block = blocks[index];
+  let from = block.from;
+  let to = block.to;
+  const next = blocks[index + 1];
+  const previous = blocks[index - 1];
+
+  if (next) {
+    const followingGap = source.slice(block.to, next.from);
+    if (/\S/.test(followingGap)) return null;
+    to = next.from;
+  } else if (previous) {
+    const precedingGap = source.slice(previous.to, block.from);
+    if (/\S/.test(precedingGap)) return null;
+    from = previous.to;
+  }
+
+  return {
+    source: `${source.slice(0, from)}${source.slice(to)}`,
+    selection: { from, to: from },
+  };
+}
+
+/**
  * Return whether a visible block can move in the requested direction without
  * crossing opaque source content. This keeps keyboard/ribbon affordances
  * honest while leaving the source-safe transaction as the final authority.

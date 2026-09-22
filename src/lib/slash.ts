@@ -1,4 +1,4 @@
-import type { EditResult, TextSelection } from './formatting';
+import { applyFormatting, type EditResult, type TextSelection } from './formatting';
 import {
   insertDiagram,
   insertMath,
@@ -10,6 +10,13 @@ import type { MarkdownProfile } from './types';
 import { insertTableOfContents } from './toc';
 
 export type SlashCommand =
+  | 'bold'
+  | 'italic'
+  | 'strikethrough'
+  | 'inline-code'
+  | 'underline'
+  | 'subscript'
+  | 'superscript'
   | 'heading-1'
   | 'heading-2'
   | 'heading-3'
@@ -28,6 +35,7 @@ export type SlashCommand =
   | 'alert'
   | 'details'
   | 'mermaid'
+  | 'graphviz'
   | 'math'
   | 'footnote'
   | 'table-of-contents';
@@ -55,20 +63,30 @@ export const slashCommands: readonly SlashCommandOption[] = [
   { id: 'link', label: 'Link', description: 'Insert a safe link', keywords: 'url href' },
   { id: 'rule', label: 'Thematic rule', description: 'Insert a horizontal rule', keywords: 'divider horizontal' },
   { id: 'quote', label: 'Blockquote', description: 'Start a blockquote', keywords: 'quote callout' },
-  { id: 'alert', label: 'GitHub alert', description: 'Insert a Note alert', keywords: 'callout note warning' },
+  { id: 'alert', label: 'Callout / alert', description: 'Insert a GitHub Note callout', keywords: 'callout alert note tip warning important caution' },
   { id: 'details', label: 'Collapsible details', description: 'Insert a details/summary block', keywords: 'collapse disclosure summary' },
   { id: 'mermaid', label: 'Mermaid diagram', description: 'Insert an editable Mermaid fence', keywords: 'chart flow diagram' },
+  { id: 'graphviz', label: 'Graphviz diagram', description: 'Insert an editable DOT graph fence', keywords: 'dot graphviz graph diagram network' },
   { id: 'math', label: 'Math block', description: 'Insert a display math block', keywords: 'equation latex formula' },
   { id: 'footnote', label: 'Footnote', description: 'Insert a footnote marker and definition', keywords: 'reference note citation' },
   { id: 'table-of-contents', label: 'Table of contents', description: 'Insert a heading-linked table of contents', keywords: 'toc outline headings navigation' },
+  { id: 'bold', label: 'Bold text', description: 'Insert editable bold text', keywords: 'strong emphasis formatting' },
+  { id: 'italic', label: 'Italic text', description: 'Insert editable italic text', keywords: 'emphasis formatting' },
+  { id: 'strikethrough', label: 'Strikethrough', description: 'Insert editable struck text', keywords: 'strike delete formatting' },
+  { id: 'inline-code', label: 'Inline code', description: 'Insert editable inline code', keywords: 'code monospace formatting' },
+  { id: 'underline', label: 'Underlined text', description: 'Insert semantic underlined text', keywords: 'ins formatting emphasis' },
+  { id: 'subscript', label: 'Subscript', description: 'Insert semantic subscript text', keywords: 'sub formula formatting' },
+  { id: 'superscript', label: 'Superscript', description: 'Insert semantic superscript text', keywords: 'sup exponent formula formatting' },
 ];
 
 export function slashCommandAvailable(command: SlashCommand, profile: MarkdownProfile = 'github'): boolean {
   if (profile === 'commonmarkStrict') {
     return !new Set<SlashCommand>([
-      'task-list', 'table', 'alert', 'details', 'math', 'footnote',
-    ]).has(command) && command !== 'mermaid';
+      'strikethrough', 'underline', 'subscript', 'superscript',
+      'task-list', 'table', 'alert', 'details', 'mermaid', 'graphviz', 'math', 'footnote',
+    ]).has(command);
   }
+  if (command === 'graphviz') return profile === 'extended';
   if (profile === 'github') return true;
   return true;
 }
@@ -121,6 +139,13 @@ function insertAt(source: string, selection: TextSelection, value: string, curso
 /** Apply only commands that have safe, deterministic defaults without a dialog. */
 export function insertSlashCommand(source: string, selection: TextSelection, command: SlashCommand): EditResult | null {
   switch (command) {
+    case 'bold': return applyFormatting(source, selection, 'bold');
+    case 'italic': return applyFormatting(source, selection, 'italic');
+    case 'strikethrough': return applyFormatting(source, selection, 'strike');
+    case 'inline-code': return applyFormatting(source, selection, 'code');
+    case 'underline': return applyFormatting(source, selection, 'underline');
+    case 'subscript': return applyFormatting(source, selection, 'subscript');
+    case 'superscript': return applyFormatting(source, selection, 'superscript');
     case 'heading-1': case 'heading-2': case 'heading-3':
     case 'heading-4': case 'heading-5': case 'heading-6': {
       const level = Number(command.slice(-1));
@@ -143,6 +168,7 @@ export function insertSlashCommand(source: string, selection: TextSelection, com
     }
     case 'table': return insertTable(source, selection, 2, 2);
     case 'mermaid': return insertDiagram(source, selection, 'mermaid');
+    case 'graphviz': return insertDiagram(source, selection, 'dot');
     case 'math': return insertMath(source, selection, '', true);
     case 'table-of-contents': return insertTableOfContents(source, selection);
     case 'fence': case 'image': case 'link': case 'footnote':

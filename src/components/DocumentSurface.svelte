@@ -75,6 +75,7 @@
     onTableEdit,
     onBlockMove,
     onBlockBeside,
+    onBlockDelete,
     onSlashCommand,
     onRevealSource,
     onOpenLink,
@@ -150,7 +151,8 @@
     onTableEdit: (action: TableEditAction, mapId?: string) => void;
     onBlockMove: (movingMapId: string, targetMapId: string, position: 'before' | 'after') => void;
     onBlockBeside: (movingMapId: string, targetMapId: string) => void;
-    onSlashCommand: (mapId: string, command: SlashCommand) => void;
+    onBlockDelete: (mapId: string) => void;
+    onSlashCommand: (mapId: string, command: SlashCommand, sourceSelection?: TextSelection) => void;
     onRevealSource: (mapId: string) => void;
     onOpenLink: (target: string) => void;
     onOpenMedia: (media: MediaPreview) => void;
@@ -209,7 +211,7 @@
     </div>
     <div id="view-mode-panel" class="document-views" class:split={splitViewVisible} role="tabpanel" aria-label={`${effectiveViewMode} document view`} tabindex="0">
       {#if renderedViewVisible}
-        <div class="rendered-pane">{#key `${active.id}:${renderResetToken}`}<MarkdownView html={active.html} source={active.source} renderedSource={active.renderedSource} renderedBlocks={active.blocks ?? []} sourceMap={active.sourceMap} profile={markdownProfile} editable={editing} incrementalCommitMapId={incrementalCommitMapId} incrementalCommitSourceRange={incrementalCommitSourceRange} highlightedMapIds={findMapIds} activeMapIds={activeFindMapIds} hoveredMapIds={hoveredMapIds} selectedMapIds={selectedMapIds} externalSourceSelection={externalSourceSelection} sourceSelectionActive={sourceSelectionActive} onMapReady={onMapReady} onMapHover={onMapHover} onMapSelect={onMapSelect} onBlockEdit={onBlockEdit} onVisualDraftEdit={onVisualDraftEdit} onVisualDraftCommit={onVisualDraftCommit} onVisualStructureEdit={onVisualStructureEdit} onVisualPaste={onVisualPaste} onVisualEditRejected={onVisualEditRejected} onDetailsSummaryEdit={onDetailsSummaryEdit} onTableEdit={onTableEdit} onBlockMove={onBlockMove} onBlockBeside={onBlockBeside} onSlashCommand={onSlashCommand} onRevealSource={onRevealSource} documentId={active.id} headingSlugs={headingSlugs} allowRemoteImages={remoteImagesEnabled} onOpenLink={onOpenLink} onOpenMedia={onOpenMedia} />{/key}</div>
+        <div class="rendered-pane">{#key `${active.id}:${renderResetToken}`}<MarkdownView html={active.html} source={active.source} renderedSource={active.renderedSource} renderedBlocks={active.blocks ?? []} sourceMap={active.sourceMap} profile={markdownProfile} editable={editing} incrementalCommitMapId={incrementalCommitMapId} incrementalCommitSourceRange={incrementalCommitSourceRange} highlightedMapIds={findMapIds} activeMapIds={activeFindMapIds} hoveredMapIds={hoveredMapIds} selectedMapIds={selectedMapIds} externalSourceSelection={externalSourceSelection} sourceSelectionActive={sourceSelectionActive} onMapReady={onMapReady} onMapHover={onMapHover} onMapSelect={onMapSelect} onBlockEdit={onBlockEdit} onVisualDraftEdit={onVisualDraftEdit} onVisualDraftCommit={onVisualDraftCommit} onVisualStructureEdit={onVisualStructureEdit} onVisualPaste={onVisualPaste} onVisualEditRejected={onVisualEditRejected} onDetailsSummaryEdit={onDetailsSummaryEdit} onTableEdit={onTableEdit} onBlockMove={onBlockMove} onBlockBeside={onBlockBeside} onBlockDelete={onBlockDelete} onSlashCommand={onSlashCommand} onRevealSource={onRevealSource} documentId={active.id} headingSlugs={headingSlugs} allowRemoteImages={remoteImagesEnabled} onOpenLink={onOpenLink} onOpenMedia={onOpenMedia} />{/key}</div>
       {/if}
       {#if sourceEditorMounted}
         <div class="source-pane" class:source-hidden={!sourceViewVisible} aria-hidden={!sourceViewVisible} inert={!sourceViewVisible}>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { adjacentMappedBlockId, canMoveMappedBlock, isMovableRootBlockKind, mappedBlockMoveTargets, moveMappedBlock } from './block-move';
+import { adjacentMappedBlockId, canMoveMappedBlock, deleteMappedBlock, isMovableRootBlockKind, mappedBlockMoveTargets, moveMappedBlock } from './block-move';
 import type { SourceMap } from './types';
 
 function mapFor(source: string, ranges: Array<[string, string, number, number]>): SourceMap {
@@ -31,6 +31,31 @@ describe('moveMappedBlock', () => {
 
     expect(result?.source).toBe('intro\n\n# C\n\n# A\n\n# B\n\noutro');
     expect(result && result.source.slice(result.selection.from, result.selection.to)).toBe('# C');
+  });
+
+  it('deletes a visible block and consumes only its safe surrounding gap', () => {
+    const source = '# A\n\n# B\n\n# C\n';
+    const sourceMap = mapFor(source, [
+      ['a', 'heading', 0, 3],
+      ['b', 'heading', 5, 8],
+      ['c', 'heading', 10, 13],
+    ]);
+
+    const result = deleteMappedBlock(source, sourceMap, 'b');
+
+    expect(result?.source).toBe('# A\n\n# C\n');
+    expect(result?.selection).toEqual({ from: 5, to: 5 });
+  });
+
+  it('preserves opaque source content instead of deleting across it', () => {
+    const source = '# A\n\n<!-- keep -->\n\n# B';
+    const bStart = source.indexOf('# B');
+    const sourceMap = mapFor(source, [
+      ['a', 'heading', 0, 3],
+      ['b', 'heading', bStart, bStart + 3],
+    ]);
+
+    expect(deleteMappedBlock(source, sourceMap, 'b')).toBeNull();
   });
 
   it('supports moving an earlier block after a later block', () => {

@@ -91,7 +91,8 @@
   export let onTableEdit: (action: TableEditAction, mapId?: string) => void = () => undefined;
   export let onBlockMove: (movingMapId: string, targetMapId: string, position: 'before' | 'after') => void = () => undefined;
   export let onBlockBeside: (movingMapId: string, targetMapId: string) => void = () => undefined;
-  export let onSlashCommand: (mapId: string, command: SlashCommand) => void = () => undefined;
+  export let onBlockDelete: (mapId: string) => void = () => undefined;
+  export let onSlashCommand: (mapId: string, command: SlashCommand, sourceSelection?: TextSelection) => void = () => undefined;
   export let onRevealSource: (mapId: string) => void = () => undefined;
   export let onOpenLink: (target: string) => void = () => undefined;
   export let onOpenMedia: (media: MediaPreview) => void = () => undefined;
@@ -130,6 +131,7 @@
   let slashTargetMapId: string | undefined;
   let slashTargetElement: HTMLElement | undefined;
   let slashOriginalHtml = '';
+  let slashSourceSelection: TextSelection | undefined;
   $: filteredSlashCommands = filterSlashCommands(slashQuery, profile);
   let rendered = '';
   let renderVersion = 0;
@@ -370,6 +372,7 @@
     };
     const handlePointerDown = (event: PointerEvent) => {
       if (event.button !== 0 || event.isPrimary === false) return;
+      if (event.target instanceof Element && event.target.closest('.block-handle')) return;
       // A new pointer gesture owns the next click. This also clears the
       // suppression left by a drag whose platform WebView did not emit the
       // customary post-drag click.
@@ -749,6 +752,10 @@
         pointerGesture = undefined;
         return;
       }
+      if (event.target instanceof Element && event.target.closest('.block-handle')) {
+        pointerGesture = undefined;
+        return;
+      }
       if (!pointerGesture || event.pointerId !== pointerGesture.pointerId) {
         if (!(event.target instanceof Node) || !host.contains(event.target)) return;
         scheduleVisualSelectionSync(event.target);
@@ -764,7 +771,7 @@
       if (pointerGesture?.pointerId === event.pointerId) pointerGesture = undefined;
     };
     const handleClick = (event: MouseEvent) => {
-      if (event.target instanceof Element && event.target.closest('.block-drag-handle')) return;
+      if (event.target instanceof Element && event.target.closest('.block-handle')) return;
       // Browsers dispatch a click after a text drag. The click is not a
       // second user intent: honoring it would replace the exact projected
       // range with the containing block (especially for cross-block drags).
@@ -916,13 +923,20 @@
     slashMenu.style.top = `${Math.max(8, targetRect.bottom - shellRect.top + 6)}px`;
   }
 
-  function openSlashMenu(element: HTMLElement, mapId: string, query: string, originalHtml: string) {
+  function openSlashMenu(
+    element: HTMLElement,
+    mapId: string,
+    query: string,
+    originalHtml: string,
+    sourceSelection?: TextSelection,
+  ) {
     slashTargetElement = element;
     slashTargetMapId = mapId;
     // The input event fires after contentEditable has already replaced the
     // block with the slash token. Use the closure's pre-edit HTML snapshot so
     // Cancel/command selection cannot lose supported inline markup.
     slashOriginalHtml = originalHtml;
+    slashSourceSelection = sourceSelection;
     slashQuery = query;
     slashIndex = 0;
     slashOpen = true;
@@ -954,6 +968,7 @@
     slashTargetMapId = undefined;
     slashTargetElement = undefined;
     slashOriginalHtml = '';
+    slashSourceSelection = undefined;
   }
 
   function cancelSlashMenu() {
@@ -972,6 +987,7 @@
       : filteredSlashCommands[slashIndex];
     const mapId = slashTargetMapId;
     const target = slashTargetElement;
+    const sourceSelection = slashSourceSelection;
     if (!option || !mapId) return;
     if (target) {
       // Restore the exact pre-command DOM before blur. Restoring only
@@ -981,7 +997,8 @@
       target.blur();
     }
     closeSlashMenu();
-    onSlashCommand(mapId, option.id);
+    if (sourceSelection) onSlashCommand(mapId, option.id, sourceSelection);
+    else onSlashCommand(mapId, option.id);
   }
 
   function positionSourceReveal(target: HTMLElement | null) {
@@ -1510,9 +1527,11 @@
         if (!(child instanceof HTMLElement) || !block) return;
         const rect = block.getBoundingClientRect();
         dropBounds.push({ block, rect });
-        const handleHeight = child.offsetHeight || 28;
-        child.style.top = `${Math.max(4, rect.top - hostRect.top + (rect.height - handleHeight) / 2)}px`;
-        child.style.left = `${Math.max(4, rect.left - hostRect.left - 26)}px`;
+        // Keep the action group anchored to the block's first line. Centering
+        // it against a tall list made the six-dot grip look detached from the
+        // content it moved, especially in the rendered reader.
+        child.style.top = `${Math.max(4, rect.top - hostRect.top + 2)}px`;
+        child.style.left = `${Math.max(4, rect.left - hostRect.left - 54)}px`;
       });
       if (pointerDrag) pointerDrag.dropBounds = dropBounds;
     };
@@ -1582,6 +1601,12 @@
     blocks.forEach((block, index) => {
       const mapId = block.dataset.mapId;
       if (!mapId) return;
+      const controlGroup = document.createElement('div');
+      controlGroup.className = 'block-handle';
+      controlGroup.dataset.blockMapId = mapId;
+      controlGroup.setAttribute('role', 'group');
+      controlGroup.setAttribute('aria-label', `${block.dataset.mapKind?.replaceAll('_', ' ') ?? 'Markdown'} block actions`);
+
       const handle = document.createElement('button');
       handle.type = 'button';
       handle.className = 'block-drag-handle';
@@ -1658,6 +1683,11 @@
         event.stopPropagation();
       });
       handle.addEventListener('keydown', (event) => {
+        if (event.key === 'Delete' || event.key === 'Backspace') {
+          event.preventDefault();
+          onBlockDelete(mapId);
+          return;
+        }
         if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
         const target = blocks[index + (event.key === 'ArrowUp' ? -1 : 1)];
         const targetMapId = target?.dataset.mapId;
@@ -1665,7 +1695,24 @@
         event.preventDefault();
         onBlockMove(mapId, targetMapId, event.key === 'ArrowUp' ? 'before' : 'after');
       });
-      blockHandleLayer?.append(handle);
+
+      const deleteButton = document.createElement('button');
+      deleteButton.type = 'button';
+      deleteButton.className = 'block-delete-button';
+      deleteButton.setAttribute('aria-label', `Delete ${block.dataset.mapKind?.replaceAll('_', ' ') ?? 'Markdown'} block`);
+      deleteButton.title = 'Delete this Markdown block. Undo is available.';
+      deleteButton.textContent = '×';
+      deleteButton.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      });
+      deleteButton.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onBlockDelete(mapId);
+      });
+      controlGroup.append(handle, deleteButton);
+      blockHandleLayer?.append(controlGroup);
 
       const dragOver = (event: DragEvent) => {
         if (!draggingMapId || draggingMapId === mapId) return;
@@ -1696,7 +1743,7 @@
       block.addEventListener('dragleave', dragLeave);
       block.addEventListener('drop', drop);
       blockHandleCleanup.push(() => {
-        handle.remove();
+        controlGroup.remove();
         block.removeEventListener('dragover', dragOver);
         block.removeEventListener('dragleave', dragLeave);
         block.removeEventListener('drop', drop);
@@ -1992,7 +2039,10 @@
         if (slashTargetMapId === mapId) closeSlashMenu();
         if (!composing && kind !== 'table_cell' && element.dataset.visualDirty === 'true') applyDraft();
       });
-      element.addEventListener('blur', commit);
+      element.addEventListener('blur', () => {
+        if (slashTargetElement === element) closeSlashMenu();
+        commit();
+      });
       taskCheckbox?.addEventListener('change', commitTaskCheckbox);
      });
     enableDetailsSummaryEditing(host, sourceForRender, sourceMapForRender, onDetailsSummaryEdit, onVisualDraftEdit ? applyVisualDraftEdit : undefined, onVisualDraftCommit);
@@ -2155,7 +2205,10 @@
       if (slashTargetMapId === EMPTY_VISUAL_MAP_ID) closeSlashMenu();
       if (!composing) applyDraft();
     });
-    element.addEventListener('blur', commit);
+    element.addEventListener('blur', () => {
+      if (slashTargetElement === element) closeSlashMenu();
+      commit();
+    });
   }
 
   function placeCaretAtVisibleOffset(element: HTMLElement, offset: number): boolean {
@@ -2279,6 +2332,30 @@
       insertionZoneCleanup = decorateBlockInsertionZones(host, sourceForRender, sourceMapForRender, {
         onVisualDraftEdit: applyVisualDraftEdit,
         onVisualDraftCommit,
+        onOpenSlashMenu: (element, query, sourceSelection) => {
+          openSlashMenu(element, EMPTY_VISUAL_MAP_ID, query, '', sourceSelection);
+        },
+        onCloseSlashMenu: (element) => {
+          if (slashTargetElement === element) closeSlashMenu();
+        },
+        onSlashNavigation: (element, delta) => {
+          if (!slashOpen || slashTargetElement !== element) return false;
+          if (filteredSlashCommands.length) {
+            slashIndex = (slashIndex + delta + filteredSlashCommands.length) % filteredSlashCommands.length;
+            updateSlashAccessibility();
+          }
+          return true;
+        },
+        onSlashChoose: (element) => {
+          if (!slashOpen || slashTargetElement !== element) return false;
+          chooseSlashCommand();
+          return true;
+        },
+        onSlashCancel: (element) => {
+          if (!slashOpen || slashTargetElement !== element) return false;
+          cancelSlashMenu();
+          return true;
+        },
       });
     }
     if (version !== renderVersion) {

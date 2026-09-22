@@ -71,11 +71,15 @@
 .table-toolbar button { min-width: 30px; min-height: 24px; padding: 3px 6px; border: 1px solid color-mix(in srgb, var(--action-border) 70%, transparent); border-radius: 5px; color: var(--action-text); background: transparent; font-size: 10px; font-weight: 700; cursor: pointer; }
 .table-toolbar button:hover, .table-toolbar button:focus-visible { border-color: var(--accent); background: var(--hover); outline: none; }
 .block-handle-layer { position: absolute; z-index: 3; inset: 0; pointer-events: none; }
-.block-drag-handle { position: absolute; display: grid; place-items: center; width: 22px; height: 28px; padding: 0; border: 1px solid transparent; border-radius: 6px; color: var(--muted); background: transparent; pointer-events: auto; cursor: grab; opacity: .55; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-user-drag: none; }
+.block-handle { position: absolute; display: flex; align-items: flex-start; gap: 4px; width: max-content; pointer-events: none; }
+.block-drag-handle, .block-delete-button { display: grid; place-items: center; box-sizing: border-box; width: 24px; height: 28px; padding: 0; border: 1px solid transparent; border-radius: 7px; pointer-events: auto; }
+.block-drag-handle { position: relative; color: var(--muted); background: transparent; cursor: grab; opacity: .7; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-user-drag: none; }
 .block-drag-handle::before { content: ''; width: 12px; height: 18px; background: radial-gradient(circle, currentColor 1.35px, transparent 1.6px) 0 0 / 6px 6px; cursor: inherit; pointer-events: none; }
 .block-drag-handle:hover, .block-drag-handle:focus-visible { opacity: 1; border-color: var(--accent); color: var(--accent-strong); background: var(--panel); outline: none; }
 .block-drag-handle:active { cursor: grabbing; }
-.markdown-view:hover .block-drag-handle, .markdown-view:focus-within .block-drag-handle { opacity: .85; }
+.block-delete-button { color: var(--muted); background: var(--panel); cursor: pointer; opacity: 0; transform: scale(.92); transition: opacity 120ms ease, transform 120ms ease, color 120ms ease, border-color 120ms ease, background-color 120ms ease; }
+.block-handle:hover .block-delete-button, .block-handle:focus-within .block-delete-button { opacity: 1; transform: scale(1); }
+.block-delete-button:hover, .block-delete-button:focus-visible { border-color: var(--danger, #b74b4b); color: var(--danger, #b74b4b); background: color-mix(in srgb, var(--danger, #b74b4b) 9%, var(--panel)); outline: none; }
 .block-dragging { opacity: .24; outline: 1px dashed color-mix(in srgb, var(--accent) 72%, transparent); outline-offset: 5px; background-color: color-mix(in srgb, var(--accent) 4%, transparent); }
 .markdown-view.block-drag-preview { position: fixed; z-index: 1000; top: 0; left: 0; display: block; box-sizing: border-box; max-width: none; margin: 0; padding: 0; overflow: hidden; border: 1px solid color-mix(in srgb, var(--accent) 62%, var(--border)); border-radius: 8px; color: var(--text); background: var(--panel); box-shadow: 0 16px 38px rgba(0, 0, 0, .28), 0 4px 10px rgba(0, 0, 0, .14); opacity: .98; pointer-events: none; -webkit-user-select: none; user-select: none; cursor: grabbing; transform-origin: top left; will-change: transform; }
 .markdown-view.block-drag-preview > .block-drag-preview-content { box-sizing: border-box; width: 100%; }

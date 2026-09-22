@@ -1,7 +1,23 @@
 {
   "name": "markdown-desktop",
-  "version": "1.1.0",
-  "description": "A viewer-first desktop application for reading and editing Markdown files.",
+  "version": "1.1.1",
+  "description": "A local-first cross-platform Markdown desktop reader/editor for docs, notes, and AI workflows, with synchronized rendered/source views and Mermaid diagrams.",
+  "keywords": [
+    "markdown",
+    "markdown-editor",
+    "markdown-viewer",
+    "markdown-reader",
+    "markdown-desktop",
+    "desktop-app",
+    "cross-platform",
+    "local-first",
+    "visual-editor",
+    "source-editor",
+    "mermaid",
+    "github-markdown",
+    "documentation",
+    "ai-workflows"
+  ],
   "author": "Roy Dawson IV",
   "homepage": "https://github.com/ImYourBoyRoy/markdown-desktop",
   "repository": {

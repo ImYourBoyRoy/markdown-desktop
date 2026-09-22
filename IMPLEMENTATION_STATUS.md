@@ -7,6 +7,23 @@ clone or handoff.
 
 Updated: 2026-09-21
 
+## Release v1.1.1 preparation (2026-09-21)
+
+- Version metadata is aligned at `1.1.1` in `package.json`,
+  `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, and
+  `src-tauri/tauri.conf.json`.
+- The release includes source-preserving rendered block deletion and visible
+  drag feedback, synchronized rendered/source slash commands, expanded inline
+  and rich-block insertion options, history cleanup controls, updater retry and
+  install handling, and a direct five-section editing ribbon without the
+  redundant Tabs overflow menu.
+- Local validation before publication passed the full frontend suite (341
+  passed / 2 skipped), Svelte diagnostics (zero errors/warnings), production
+  build, visual acceptance (90/90), accessibility source audit, architecture
+  check, and Windows x64 MSI/NSIS bundling.
+- Publication remains pending the commit, `v1.1.1` tag, and remote CI/release
+  verification.
+
 ## Release v1.1.0 published (2026-09-21)
 
 - Version metadata is aligned at `1.1.0` in `package.json`, `src-tauri/Cargo.toml`,

@@ -9,12 +9,27 @@ describe('slash commands', () => {
 
   it('keeps profile-specific syntax out of the strict menu', () => {
     expect(filterSlashCommands('', 'commonmarkStrict').map((command) => command.id))
-      .not.toEqual(expect.arrayContaining(['table', 'task-list', 'alert', 'details', 'math', 'footnote', 'mermaid']));
+      .not.toEqual(expect.arrayContaining(['table', 'task-list', 'alert', 'details', 'math', 'footnote', 'mermaid', 'graphviz']));
     expect(slashCommandAvailable('table', 'github')).toBe(true);
     expect(slashCommandAvailable('math', 'github')).toBe(true);
     expect(slashCommandAvailable('footnote', 'github')).toBe(true);
     expect(slashCommandAvailable('math', 'extended')).toBe(true);
     expect(slashCommandAvailable('mermaid', 'commonmarkStrict')).toBe(false);
+    expect(slashCommandAvailable('graphviz', 'github')).toBe(false);
+    expect(slashCommandAvailable('graphviz', 'extended')).toBe(true);
+    expect(slashCommandAvailable('bold', 'commonmarkStrict')).toBe(true);
+    expect(slashCommandAvailable('strikethrough', 'commonmarkStrict')).toBe(false);
+    expect(slashCommandAvailable('underline', 'extended')).toBe(true);
+  });
+
+  it('offers the complete supported rendered insertion surface in the extended profile', () => {
+    const available = filterSlashCommands('', 'extended').map((command) => command.id);
+    expect(available).toEqual(expect.arrayContaining([
+      'heading-1', 'heading-6', 'bullet-list', 'numbered-list', 'task-list',
+      'table', 'fence', 'image', 'link', 'rule', 'quote', 'alert', 'details',
+      'mermaid', 'graphviz', 'math', 'footnote', 'table-of-contents',
+      'bold', 'italic', 'strikethrough', 'inline-code', 'underline', 'subscript', 'superscript',
+    ]));
   });
 
   it('inserts a table through a source-range replacement', () => {
@@ -30,6 +45,15 @@ describe('slash commands', () => {
     expect(slashCommandNeedsDialog('link')).toBe(true);
     expect(slashCommandNeedsDialog('image')).toBe(true);
     expect(slashCommandNeedsDialog('table')).toBe(false);
+  });
+
+  it('uses the existing source-preserving format helpers for inline slash inserts', () => {
+    expect(insertSlashCommand('', { from: 0, to: 0 }, 'bold')).toEqual({
+      source: '**text**',
+      selection: { from: 2, to: 6 },
+    });
+    expect(insertSlashCommand('', { from: 0, to: 0 }, 'inline-code')?.source).toBe('`text`');
+    expect(insertSlashCommand('keep', { from: 0, to: 4 }, 'italic')?.source).toBe('*keep*');
   });
 
   it('does not offer slash commands from inside fenced source', () => {

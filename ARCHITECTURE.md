@@ -70,6 +70,10 @@ intent. In particular:
 - `WorkspaceSidebar.svelte`, `InspectorSidebar.svelte`, `DocumentTabs.svelte`,
   `AppToolbar.svelte`, and the modal/menu components own their local surface
   markup and accessibility behavior, not document authority.
+- `EditorRibbon.svelte` owns the direct five-section editing navigation. Its
+  command groups scroll independently on narrow windows while Save and Done
+  remain in a fixed action rail; it does not maintain a second overflow tab
+  model.
 
 ### Frontend contracts and controllers
 
@@ -139,7 +143,8 @@ Selection flow is symmetric:
    collapsed to the first object under the pointer.
 4. Any stale source, map ID, hash, or revision is rejected rather than guessed.
 
-Six-dot block handles track the active pointer from the window capture phase so
+Six-dot block handles and their adjacent delete actions belong to a dedicated
+non-contenteditable control layer. Handles track the active pointer from the window capture phase so
 nested editor handlers cannot swallow movement or release events. The drop
 target resolves through the current mapped DOM and a per-gesture block-bounds
 snapshot when pointer capture or WebView hit-testing retargets the event; the
@@ -147,6 +152,12 @@ snapshot is refreshed on containing-scroll and resize events, not per pointer
 move. Nearby whitespace can resolve to its nearest block. A drop then uses
 `src/lib/block-move.ts` to patch only safe mapped source ranges; opaque source
 content crossed by the move remains a hard refusal, not content to relocate.
+Delete uses the same current map/revision guard and removes only the selected
+root block plus a safe adjacent whitespace gap, so undo restores the exact
+source range and opaque Markdown is never crossed. Rendered insertion zones use
+the same `slash.ts` command registry as CodeMirror, including dialog-backed
+commands, and carry an explicit source caret so a command is inserted at the
+visible gap rather than guessed at document end.
 
 Visual edits produce bounded source patches. Unrelated Markdown is never
 reserialized from rendered HTML. Save, undo/redo, recovery, and external-change
@@ -214,7 +225,7 @@ file sizes; lines are logical source lines with a terminal newline excluded.
 Refresh it after source or documentation changes so cold models can trust the
 routing table below.
 
-Inventory totals: 258 files / 51,501 lines / 2,097,980 B. Runtime (excluding this generator): 163 files / 30,491 lines / 1,264,176 B. Tests/benchmarks: 70 files / 6,309 lines / 253,662 B.
+Inventory totals: 256 files / 52,083 lines / 2,129,695 B. Runtime (excluding this generator): 161 files / 30,805 lines / 1,280,842 B. Tests/benchmarks: 70 files / 6,482 lines / 261,088 B.
 
 ### Read first
 
@@ -231,15 +242,15 @@ Inventory totals: 258 files / 51,501 lines / 2,097,980 B. Runtime (excluding thi
 
 | File | Lines | Bytes | Summary |
 | --- | ---: | ---: | --- |
-| `src/App.svelte` | 3,941 | 172,456 B | Stateful shell authority for tabs, modes, selection, lifecycle, commands, conflicts, recovery, and UI orchestration. |
-| `src/components/MarkdownView.svelte` | 2,499 | 114,133 B | Rendered Markdown DOM, mapped selection, visual editing, drag/drop, and rich-content enhancement lifecycle. |
+| `src/App.svelte` | 4,021 | 175,912 B | Stateful shell authority for tabs, modes, selection, lifecycle, commands, conflicts, recovery, and UI orchestration. |
+| `src/components/MarkdownView.svelte` | 2,576 | 117,296 B | Rendered Markdown DOM, mapped selection, visual editing, drag/drop, and rich-content enhancement lifecycle. |
 | `src-tauri/src/markdown.rs` | 1,645 | 60,707 B | Comrak rendering, sanitization, diagnostics, metadata, and render orchestration. |
+| `src/styles/app-shell.css` | 309 | 35,015 B | Application shell layout, panes, toolbar, tabs, dialogs, menus, and shared visual tokens. |
 | `src/lib/source-map.ts` | 826 | 34,452 B | Source-map range ownership, byte/character conversion, and mapped selection resolution. |
-| `src/styles/app-shell.css` | 298 | 33,538 B | Application shell layout, panes, toolbar, tabs, dialogs, menus, and shared visual tokens. |
 | `src-tauri/src/store.rs` | 928 | 33,171 B | Save, conflict, watcher, atomic-write, lifecycle orchestration, and domain reexports. |
 | `src-tauri/src/markdown_source_map.rs` | 903 | 32,478 B | Source-map construction, byte ranges, mapped HTML metadata, and coordinate helpers. |
 | `src-tauri/src/assistant.rs` | 940 | 31,045 B | Deferred assistant/provider boundary and local provider lifecycle types. |
-| `src/components/EditorRibbon.svelte` | 484 | 28,909 B | Editing ribbon actions for formatting, insertion, block movement, and review controls. |
+| `src/components/EditorRibbon.svelte` | 488 | 29,025 B | Editing ribbon actions for formatting, insertion, block movement, and review controls. |
 | `src-tauri/src/store_documents.rs` | 698 | 22,891 B | Document open/read/render and document record/recovery helpers. |
 | `src-tauri/src/store_assets.rs` | 616 | 22,768 B | Asset resolution, staging, safe copy/link, and consolidation commands. |
 | `src/components/AssistantPanel.svelte` | 360 | 19,409 B | Deferred assistant surface and provider-status UI; no provider calls by default. |
@@ -250,38 +261,36 @@ Start with `App.svelte` for state ownership, then move to the focused component 
 
 | File | Lines | Bytes | Summary |
 | --- | ---: | ---: | --- |
-| `src/App.svelte` | 3,941 | 172,456 B | Stateful shell authority for tabs, modes, selection, lifecycle, commands, conflicts, recovery, and UI orchestration. |
+| `src/App.svelte` | 4,021 | 175,912 B | Stateful shell authority for tabs, modes, selection, lifecycle, commands, conflicts, recovery, and UI orchestration. |
 | `src/components/AppToolbar.svelte` | 52 | 2,091 B | Top application toolbar, document identity, navigation, and primary actions. |
 | `src/components/AssistantPanel.svelte` | 360 | 19,409 B | Deferred assistant surface and provider-status UI; no provider calls by default. |
 | `src/components/CommandPalette.svelte` | 29 | 1,585 B | Command-palette dialog and filtered command presentation. |
 | `src/components/ContextMenu.svelte` | 139 | 7,709 B | Themed rendered/source context menu surface. |
-| `src/components/DocumentSurface.svelte` | 223 | 12,856 B | Composes rendered document and lazy source-editor panes with shared selection callbacks. |
+| `src/components/DocumentSurface.svelte` | 225 | 12,982 B | Composes rendered document and lazy source-editor panes with shared selection callbacks. |
 | `src/components/DocumentTabs.svelte` | 37 | 1,344 B | Document tab strip, active state, close affordances, and tab navigation events. |
-| `src/components/EditorRibbon.svelte` | 484 | 28,909 B | Editing ribbon actions for formatting, insertion, block movement, and review controls. |
+| `src/components/EditorRibbon.svelte` | 488 | 29,025 B | Editing ribbon actions for formatting, insertion, block movement, and review controls. |
 | `src/components/FileTree.svelte` | 28 | 1,363 B | Accessible bounded workspace file-tree rendering. |
 | `src/components/InspectorSidebar.svelte` | 78 | 6,028 B | Outline, links, issues, and properties inspector panels. |
 | `src/components/MarkdownEditor.svelte` | 329 | 15,108 B | Lazy CodeMirror adapter with source changes, selections, Find, and coordinate conversion. |
-| `src/components/MarkdownView.svelte` | 2,499 | 114,133 B | Rendered Markdown DOM, mapped selection, visual editing, drag/drop, and rich-content enhancement lifecycle. |
+| `src/components/MarkdownView.svelte` | 2,576 | 117,296 B | Rendered Markdown DOM, mapped selection, visual editing, drag/drop, and rich-content enhancement lifecycle. |
 | `src/components/MediaPreview.svelte` | 100 | 3,666 B | Accessible image and diagram lightbox with outside-click, Escape, close, and bounded zoom controls. |
 | `src/components/ReaderFullscreenBar.svelte` | 29 | 1,000 B | Renderer-focused fullscreen controls with independent sidebar toggles and reversible exit. |
-| `src/components/RecentDocuments.svelte` | 47 | 1,889 B | Recent-document list and removal/open actions. |
-| `src/components/RibbonOverflowMenu.svelte` | 33 | 867 B | Overflow menu for ribbon actions that do not fit the available width. |
+| `src/components/RecentDocuments.svelte` | 52 | 2,163 B | Recent-document list with per-item removal, clear-history, and open actions. |
 | `src/components/SettingsModal.svelte` | 64 | 5,543 B | Settings dialog for profile, compatibility, editing, assets, and application preferences. |
 | `src/components/UpdateBanner.svelte` | 21 | 805 B | Signed-update status and install confirmation banner. |
-| `src/components/WorkspaceSidebar.svelte` | 122 | 6,461 B | Workspace open/scan controls, recent documents, search, and file navigation sidebar. |
+| `src/components/WorkspaceSidebar.svelte` | 134 | 7,296 B | Workspace open/scan controls, removable/clearable recent documents, search, and file navigation sidebar. |
 | `src/main.ts` | 7 | 178 B | Svelte/Tauri application bootstrap and root mount. |
-| `src/styles.css` | 17 | 647 B | Global style entry point importing the split stylesheet modules. |
-| `src/styles/app-shell.css` | 298 | 33,538 B | Application shell layout, panes, toolbar, tabs, dialogs, menus, and shared visual tokens. |
+| `src/styles.css` | 16 | 607 B | Global style entry point importing the split stylesheet modules. |
+| `src/styles/app-shell.css` | 309 | 35,015 B | Application shell layout, panes, toolbar, tabs, dialogs, menus, and shared visual tokens. |
 | `src/styles/assistant-panel.css` | 40 | 4,140 B | Assistant panel styling. |
-| `src/styles/editor-ribbon.css` | 38 | 4,094 B | Editor ribbon and formatting control styling. |
+| `src/styles/editor-ribbon.css` | 60 | 6,400 B | Editor ribbon and formatting control styling. |
 | `src/styles/file-tree.css` | 9 | 843 B | Workspace file-tree styling. |
 | `src/styles/inspector.css` | 6 | 270 B | Inspector sidebar styling. |
 | `src/styles/markdown-editor.css` | 11 | 1,131 B | CodeMirror/source-editor styling. |
-| `src/styles/markdown-view.css` | 91 | 12,528 B | Rendered Markdown, mapped decorations, visual editing, and rich-content styling. |
+| `src/styles/markdown-view.css` | 95 | 13,221 B | Rendered Markdown, mapped decorations, visual editing, and rich-content styling. |
 | `src/styles/media-preview.css` | 26 | 3,003 B | Zoomable image and diagram preview dialog styling with responsive and reduced-motion behavior. |
 | `src/styles/reader-fullscreen.css` | 23 | 2,027 B | Reader-focused fullscreen shell, sidebar controls, and responsive focus-bar styling. |
-| `src/styles/recent-documents.css` | 13 | 1,567 B | Recent-document list styling. |
-| `src/styles/ribbon-overflow.css` | 12 | 1,571 B | Ribbon overflow menu styling. |
+| `src/styles/recent-documents.css` | 17 | 1,950 B | Recent-document list styling. |
 | `src/styles/update-banner.css` | 5 | 493 B | Update banner styling. |
 | `src/vite-env.d.ts` | 11 | 265 B | Vite environment and asset type declarations. |
 
@@ -304,7 +313,7 @@ These modules are the preferred home for pure transitions, source-coordinate rul
 | `src/lib/asset-drop.ts` | 29 | 1,101 B | Pure planning for dropped-asset insertion and grant handling. |
 | `src/lib/asset-path.ts` | 25 | 1,068 B | Asset-folder normalization and safe relative asset path helpers. |
 | `src/lib/assistant-settings.ts` | 80 | 2,906 B | Assistant preference types and persisted setting helpers. |
-| `src/lib/block-move.ts` | 240 | 9,154 B | Source-preserving mapped block movement and valid target calculation. |
+| `src/lib/block-move.ts` | 280 | 10,429 B | Source-preserving mapped block movement and valid target calculation. |
 | `src/lib/block-selection.ts` | 67 | 2,087 B | Rendered block selection and source-span selection helpers. |
 | `src/lib/browser-settings.ts` | 21 | 683 B | Safe local browser-preview setting persistence. |
 | `src/lib/clipboard.ts` | 8 | 335 B | Lazy clipboard conversion boundary for HTML, text, and image data. |
@@ -330,7 +339,7 @@ These modules are the preferred home for pure transitions, source-coordinate rul
 | `src/lib/markdown-view-decoration.ts` | 79 | 3,401 B | Rendered selection, hover, and mapped DOM decoration helpers. |
 | `src/lib/markdown-view-dom-commit.ts` | 134 | 5,618 B | Guarded full and incremental rendered DOM commit planning. |
 | `src/lib/markdown-view-dom.ts` | 284 | 11,540 B | Rendered DOM lookup, mapping, selection, and coordinate helpers. |
-| `src/lib/markdown-view-insertion.ts` | 131 | 5,331 B | Rendered insertion-zone and visual insertion behavior. |
+| `src/lib/markdown-view-insertion.ts` | 166 | 6,615 B | Rendered insertion-zone and visual insertion behavior. |
 | `src/lib/markdown-view-render.ts` | 161 | 6,326 B | Rendered view enhancement/render adapter orchestration. |
 | `src/lib/markdown-view-rich-content.ts` | 186 | 8,412 B | Lazy image, diagram, math, and rich-content enhancement. |
 | `src/lib/markdown-view-visual-editing.ts` | 211 | 7,357 B | Visual-edit lifecycle, caret, composition, and source-patch callbacks. |
@@ -339,7 +348,7 @@ These modules are the preferred home for pure transitions, source-coordinate rul
 | `src/lib/pane-scroll-sync.ts` | 93 | 3,539 B | Two-pane line/marker alignment after coalesced selection-driven scroll. |
 | `src/lib/paste.ts` | 227 | 9,260 B | Semantic clipboard/import conversion and safe Markdown normalization. |
 | `src/lib/performance.ts` | 116 | 3,382 B | Opt-in low-overhead counters and timing spans without source/path recording. |
-| `src/lib/recent-documents.ts` | 40 | 1,549 B | Bounded recent-path normalization and recency ordering. |
+| `src/lib/recent-documents.ts` | 55 | 2,283 B | Bounded recent-path normalization, recency ordering, and safe history removal. |
 | `src/lib/render-controller.ts` | 185 | 6,997 B | Render generations, latest-only coalescing, debounce, stale guards, snapshots, and recovery callbacks. |
 | `src/lib/render-guard.ts` | 9 | 329 B | Pure source/generation equality guard for accepted render results. |
 | `src/lib/rendered-pane-contract.ts` | 41 | 1,292 B | Rendered-pane editing and interaction contract helpers. |
@@ -348,7 +357,7 @@ These modules are the preferred home for pure transitions, source-coordinate rul
 | `src/lib/safe-image.ts` | 48 | 1,813 B | Safe image source and rendered-image policy helpers. |
 | `src/lib/selection-bridge.ts` | 58 | 2,105 B | Exact bidirectional rendered/source selection projection against current maps. |
 | `src/lib/selection-highlight.ts` | 40 | 1,746 B | Non-mutating rendered text-range highlighting with safe fallback. |
-| `src/lib/slash.ts` | 162 | 7,509 B | Slash-command availability, parsing, and source insertion helpers. |
+| `src/lib/slash.ts` | 188 | 9,473 B | Slash-command availability, parsing, and source insertion helpers. |
 | `src/lib/source-context.ts` | 121 | 4,962 B | Source-editor context target and map lookup helpers. |
 | `src/lib/source-history.ts` | 50 | 1,408 B | Bounded source undo/redo history entries and append logic. |
 | `src/lib/source-map.ts` | 826 | 34,452 B | Source-map range ownership, byte/character conversion, and mapped selection resolution. |
@@ -359,7 +368,7 @@ These modules are the preferred home for pure transitions, source-coordinate rul
 | `src/lib/table-edit.ts` | 328 | 13,480 B | Safe GFM table selection context and source-preserving table edits. |
 | `src/lib/toc.ts` | 142 | 4,923 B | Table-of-contents heading tree construction. |
 | `src/lib/types.ts` | 229 | 4,760 B | Shared frontend IPC, document, rendering, workspace, and diagnostics types. |
-| `src/lib/updater.ts` | 198 | 6,455 B | Signed updater state, notes, banner policy, and install lifecycle helpers. |
+| `src/lib/updater.ts` | 221 | 7,513 B | Signed updater checks, retry-safe install lifecycle, readable notes, banner policy, and diagnostics. |
 | `src/lib/view-mode.ts` | 61 | 1,904 B | Startup preference normalization, initial pane state, and active-mode visibility helpers. |
 | `src/lib/visual-draft.ts` | 25 | 980 B | Visual draft state and bounded draft source patch helpers. |
 | `src/lib/visual-edit.ts` | 75 | 3,719 B | Simple rendered block edit classification and Markdown serialization. |
@@ -404,7 +413,7 @@ Use these scripts through the package commands documented in `README.md`; they a
 | --- | ---: | ---: | --- |
 | `scripts/accessibility_audit.mjs` | 118 | 4,346 B | Static accessibility and capability audit used by verification. |
 | `scripts/align-typescript.mjs` | 14 | 971 B | Keeps supported TypeScript package lines aligned with the Svelte toolchain. |
-| `scripts/architecture_inventory.mjs` | 390 | 29,114 B | Generates and checks this architecture file inventory from the current tree. |
+| `scripts/architecture_inventory.mjs` | 388 | 29,025 B | Generates and checks this architecture file inventory from the current tree. |
 | `scripts/block_drag_browser.mjs` | 111 | 5,336 B | Runs an isolated headless Chromium mouse drag against the rendered block handle. |
 | `scripts/build_app.mjs` | 144 | 6,309 B | Stages platform-specific portable and installable application artifacts. |
 | `scripts/build_optional_renderers.mjs` | 47 | 1,656 B | Builds Mermaid and other optional renderer assets outside the startup graph. |
@@ -445,8 +454,8 @@ Test filenames map directly to the production contract they exercise. Benchmark 
 | `scripts/upgrade.test.mjs` | 108 | 6,703 B | Focused regression tests for upgrade. |
 | `src/App.test.ts` | 39 | 1,639 B | Focused regression tests for App. |
 | `src/components/ContextMenu.test.ts` | 106 | 3,982 B | Focused regression tests for ContextMenu. |
-| `src/components/EditorRibbon.test.ts` | 70 | 2,717 B | Focused regression tests for EditorRibbon. |
-| `src/components/MarkdownView.test.ts` | 1,824 | 66,828 B | Focused regression tests for MarkdownView. |
+| `src/components/EditorRibbon.test.ts` | 70 | 2,724 B | Focused regression tests for EditorRibbon. |
+| `src/components/MarkdownView.test.ts` | 1,898 | 69,738 B | Focused regression tests for MarkdownView. |
 | `src/components/MediaPreview.test.ts` | 44 | 1,790 B | Focused regression tests for MediaPreview. |
 | `src/components/SettingsModal.test.ts` | 46 | 1,732 B | Focused regression tests for SettingsModal. |
 | `src/lib/acceptance-bridge.test.ts` | 96 | 3,706 B | Focused regression tests for acceptance bridge. |
@@ -456,7 +465,7 @@ Test filenames map directly to the production contract they exercise. Benchmark 
 | `src/lib/asset-drop.test.ts` | 34 | 966 B | Focused regression tests for asset drop. |
 | `src/lib/asset-path.test.ts` | 28 | 1,214 B | Focused regression tests for asset path. |
 | `src/lib/assistant-settings.test.ts` | 22 | 776 B | Focused regression tests for assistant settings. |
-| `src/lib/block-move.test.ts` | 161 | 6,482 B | Focused regression tests for block move. |
+| `src/lib/block-move.test.ts` | 186 | 7,309 B | Focused regression tests for block move. |
 | `src/lib/block-selection.test.ts` | 30 | 1,445 B | Focused regression tests for block selection. |
 | `src/lib/browser-settings.test.ts` | 27 | 910 B | Focused regression tests for browser settings. |
 | `src/lib/compatibility.test.ts` | 27 | 1,442 B | Focused regression tests for compatibility. |
@@ -487,7 +496,7 @@ Test filenames map directly to the production contract they exercise. Benchmark 
 | `src/lib/paste.test.ts` | 87 | 3,627 B | Focused regression tests for paste. |
 | `src/lib/phase0-performance.test.ts` | 124 | 4,334 B | Focused regression tests for phase0 performance. |
 | `src/lib/phase0-selection-contract.test.ts` | 105 | 4,962 B | Focused regression tests for phase0 selection contract. |
-| `src/lib/recent-documents.test.ts` | 35 | 1,348 B | Focused regression tests for recent documents. |
+| `src/lib/recent-documents.test.ts` | 45 | 1,757 B | Focused regression tests for recent documents. |
 | `src/lib/render-controller.test.ts` | 118 | 4,251 B | Focused regression tests for render controller. |
 | `src/lib/render-guard.test.ts` | 10 | 425 B | Focused regression tests for render guard. |
 | `src/lib/rendered-pane-contract.test.ts` | 21 | 891 B | Focused regression tests for rendered pane contract. |
@@ -496,7 +505,7 @@ Test filenames map directly to the production contract they exercise. Benchmark 
 | `src/lib/safe-image.test.ts` | 42 | 1,691 B | Focused regression tests for safe image. |
 | `src/lib/selection-bridge.test.ts` | 73 | 2,354 B | Focused regression tests for selection bridge. |
 | `src/lib/selection-highlight.test.ts` | 52 | 2,367 B | Focused regression tests for selection highlight. |
-| `src/lib/slash.test.ts` | 41 | 2,327 B | Focused regression tests for slash. |
+| `src/lib/slash.test.ts` | 65 | 3,715 B | Focused regression tests for slash. |
 | `src/lib/source-context.test.ts` | 57 | 2,700 B | Focused regression tests for source context. |
 | `src/lib/source-history.test.ts` | 47 | 2,276 B | Focused regression tests for source history. |
 | `src/lib/source-map.test.ts` | 314 | 14,556 B | Focused regression tests for source map. |
@@ -507,7 +516,7 @@ Test filenames map directly to the production contract they exercise. Benchmark 
 | `src/lib/table-edit.test.ts` | 92 | 4,938 B | Focused regression tests for table edit. |
 | `src/lib/toc.test.ts` | 33 | 1,646 B | Focused regression tests for toc. |
 | `src/lib/types.test.ts` | 9 | 290 B | Focused regression tests for types. |
-| `src/lib/updater.test.ts` | 130 | 5,344 B | Focused regression tests for updater. |
+| `src/lib/updater.test.ts` | 170 | 7,229 B | Focused regression tests for updater. |
 | `src/lib/view-mode.test.ts` | 72 | 2,677 B | Focused regression tests for view mode. |
 | `src/lib/visual-draft.test.ts` | 31 | 784 B | Focused regression tests for visual draft. |
 | `src/lib/visual-edit.test.ts` | 58 | 2,790 B | Focused regression tests for visual edit. |
@@ -523,22 +532,22 @@ These files define toolchains, dependency graphs, packaging, permissions, CI, an
 | `.github/workflows/release.yml` | 479 | 24,928 B | Signed six-family release build, publication, and post-publication verification. |
 | `.gitignore` | 81 | 1,061 B | Generated output, local credentials, runtime state, and continuity-file boundaries. |
 | `AGENTS.md` | 86 | 6,931 B | Repository operating contract, invariants, required workflows, and safety boundaries. |
-| `IMPLEMENTATION_STATUS.md` | 816 | 62,104 B | Current implementation checkpoint and evidence summary. |
+| `IMPLEMENTATION_STATUS.md` | 833 | 63,000 B | Current implementation checkpoint and evidence summary. |
 | `LICENSE` | 21 | 1,086 B | MIT license text. |
-| `MEMORY.md` | 853 | 92,292 B | Local continuity record of architecture decisions, validation, risks, and next actions. |
-| `README.md` | 421 | 29,078 B | Published user/developer guide for installation, usage, commands, releases, and limitations. |
+| `MEMORY.md` | 905 | 97,235 B | Local continuity record of architecture decisions, validation, risks, and next actions. |
+| `README.md` | 432 | 30,243 B | Published user/developer guide for installation, usage, commands, releases, and limitations. |
 | `SECURITY.md` | 52 | 3,567 B | Security model, audit findings, upstream advisories, and unresolved platform boundaries. |
 | `docs/PHASE-0-PERFORMANCE.md` | 137 | 6,049 B | Phase 0 performance matrix, baseline, budgets, and evidence limits. |
 | `docs/PHASE-1-PERFORMANCE.md` | 122 | 6,830 B | Phase 1 optimization results, deltas, and remaining packaged gates. |
 | `mobile_todo.md` | 148 | 7,234 B | Android/mobile product contract, workstreams, non-goals, and acceptance gates. |
-| `package.json` | 108 | 4,526 B | Frontend package metadata, dependency versions, and maintenance/build scripts. |
+| `package.json` | 124 | 4,918 B | Frontend package metadata, dependency versions, and maintenance/build scripts. |
 | `pnpm-lock.yaml` | 4,077 | 134,973 B | Resolved JavaScript dependency graph. |
 | `pnpm-workspace.yaml` | 6 | 101 B | pnpm workspace and build-approval configuration. |
 | `rust-toolchain.toml` | 6 | 238 B | Stable Rust channel and rustfmt/Clippy component selection. |
 | `src-tauri/Cargo.lock` | 6,456 | 156,692 B | Resolved Rust dependency graph. |
-| `src-tauri/Cargo.toml` | 53 | 1,861 B | Rust package metadata, compiler floor, Tauri dependencies, and native features. |
+| `src-tauri/Cargo.toml` | 54 | 1,996 B | Rust package metadata, compiler floor, Tauri dependencies, and native features. |
 | `src-tauri/capabilities/default.json` | 15 | 362 B | Explicit webview permissions and command capabilities. |
-| `src-tauri/tauri.conf.json` | 103 | 3,252 B | Default Tauri window, bundle, CSP, file association, and updater configuration. |
+| `src-tauri/tauri.conf.json` | 103 | 3,433 B | Default Tauri window, bundle, CSP, file association, and updater configuration. |
 | `src-tauri/tauri.release.conf.json` | 6 | 113 B | Release-only signing and updater overlay configuration. |
 | `tsconfig.json` | 18 | 519 B | TypeScript compiler configuration for Svelte and native-aligned types. |
 | `vite.config.ts` | 64 | 1,986 B | Vite/Rolldown entry, lazy chunk, alias, and production build configuration. |

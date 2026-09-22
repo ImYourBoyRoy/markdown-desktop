@@ -115,6 +115,80 @@ describe('MarkdownView visual editing', () => {
     expect(paragraph.innerHTML).toBe('Read <strong>this</strong>');
   });
 
+  it('opens the full slash menu from rendered insertion zones and supports keyboard selection', async () => {
+    const source = '# First\n\n# Second';
+    const sourceMap: SourceMap = {
+      version: 1,
+      sourceHash: 'sha256:rendered-slash-zone',
+      spans: [
+        { mapId: 'first', kind: 'heading', sourceByteStart: 0, sourceByteEnd: 7, attrs: { level: 1 } },
+        { mapId: 'second', kind: 'heading', sourceByteStart: 9, sourceByteEnd: source.length, attrs: { level: 1 } },
+      ],
+    };
+    const onSlashCommand = vi.fn();
+    const { container } = render(MarkdownView, {
+      props: {
+        html: '<h1 data-sourcepos="1:1-1:7">First</h1><h1 data-sourcepos="3:1-3:8">Second</h1>',
+        source,
+        sourceMap,
+        profile: 'extended',
+        editable: true,
+        onSlashCommand,
+      },
+    });
+
+    const zones = await waitFor(() => {
+      const elements = [...container.querySelectorAll<HTMLElement>('.block-insertion-zone')];
+      if (elements.length !== 3) throw new Error('rendered insertion zones not mounted');
+      return elements;
+    });
+    const zone = zones[1]!;
+    zone.textContent = '/graph';
+    await fireEvent.input(zone);
+
+    expect(screen.getByRole('option', { name: /Graphviz diagram/i })).toBeTruthy();
+    await fireEvent.keyDown(zone, { key: 'ArrowDown' });
+    await fireEvent.keyDown(zone, { key: 'Enter' });
+
+    expect(onSlashCommand).toHaveBeenCalledWith('__markdown_empty_document__', 'graphviz', { from: 9, to: 9 });
+    expect(screen.queryByRole('listbox', { name: 'Markdown slash commands' })).toBeNull();
+  });
+
+  it('keeps block deletion beside the block and out of rendered selection', async () => {
+    const source = '# First\n\n# Second';
+    const sourceMap: SourceMap = {
+      version: 1,
+      sourceHash: 'sha256:rendered-delete',
+      spans: [
+        { mapId: 'first', kind: 'heading', sourceByteStart: 0, sourceByteEnd: 7, attrs: { level: 1 } },
+        { mapId: 'second', kind: 'heading', sourceByteStart: 9, sourceByteEnd: source.length, attrs: { level: 1 } },
+      ],
+    };
+    const onBlockDelete = vi.fn();
+    const onMapSelect = vi.fn();
+    const { container } = render(MarkdownView, {
+      props: {
+        html: '<h1 data-sourcepos="1:1-1:7">First</h1><h1 data-sourcepos="3:1-3:8">Second</h1>',
+        source,
+        sourceMap,
+        editable: true,
+        onBlockDelete,
+        onMapSelect,
+      },
+    });
+
+    const firstDelete = await waitFor(() => {
+      const button = container.querySelector<HTMLButtonElement>('[data-block-map-id="first"] .block-delete-button');
+      if (!button) throw new Error('block delete control not mounted');
+      return button;
+    });
+    expect(firstDelete.getAttribute('aria-label')).toBe('Delete heading block');
+    await fireEvent.click(firstDelete);
+
+    expect(onBlockDelete).toHaveBeenCalledWith('first');
+    expect(onMapSelect).not.toHaveBeenCalled();
+  });
+
   it('commits a visual inline edit as one mapped replacement', async () => {
     const fixture = paragraphFixture();
     const onBlockEdit = vi.fn(() => true);

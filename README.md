@@ -1,6 +1,8 @@
 # <img src="./src-tauri/icons/icon.png" alt="" width="40" /> Markdown Desktop
 
-A focused desktop viewer and editor for ordinary Markdown files.
+A local-first cross-platform Markdown desktop reader and editor for documentation,
+notes, and AI-assisted workflows, with synchronized rendered/source views,
+source-preserving visual edits, and Mermaid diagrams.
 
 <p align="center">
   <a href="https://github.com/ImYourBoyRoy/markdown-desktop/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/ImYourBoyRoy/markdown-desktop/actions/workflows/ci.yml/badge.svg?branch=main" /></a>
@@ -24,6 +26,11 @@ A focused desktop viewer and editor for ordinary Markdown files.
 
 Open a file or folder, read the rendered document, edit supported Markdown directly in the visual surface or source drawer, and save back to the same path on disk. There is no proprietary library, sync service, or document conversion step — the Markdown you already keep is the source of truth.
 
+Markdown Desktop is also a human-controlled file layer for AI-assisted
+documentation workflows: inspect generated Markdown, correct it in Rendered or
+Source mode, and save the ordinary file back to disk. The current minimum
+editor does not send documents to an AI provider by default.
+
 <p align="center">
   <img src="./docs/media/workspace-dark.png" alt="Markdown Desktop in the dark theme with the Files and Inspect sidebars visible" width="1600" height="903" />
 </p>
@@ -35,9 +42,9 @@ Open a file or folder, read the rendered document, edit supported Markdown direc
 - Source-authoritative visual editing for safe headings, paragraphs, list items, simple table cells, and supported inline marks/links, plus plain-text details summaries, with source-range undo/redo
 - Visual edits support plain-text and sanitized rich-HTML paste, including Word-style list cleanup, multiline paragraph hard breaks, and IME composition guards so Save, Undo, navigation, and leaving Edit cannot discard an unfinished composition or an unblurred block edit
 - Source-map hover and selection synchronization between the visual and CodeMirror panes, including mapped fences, tables, images, links, and diagrams
-- Rendered text drags preserve the exact UTF-16 source interval across mapped blocks, while block-handle pointer drags reorder only safe source ranges and retain keyboard movement as a fallback
+- Rendered text drags preserve the exact UTF-16 source interval across mapped blocks, while block-handle pointer drags reorder only safe source ranges and retain keyboard movement as a fallback; each root block keeps a top-aligned drag/delete action group so controls never become detached from tall content
 - App-owned in-document **Ctrl+F / Cmd+F** with synchronized source and visual highlights; workspace search remains a separate file/content search
-- Tabbed editing ribbon, slash-command insertion (including a source-preserving heading-linked `/toc`), contextual block properties, fence-language editing and code copy, table row/column tools, sequential block movement, secure reveal of local image assets, native image replacement, keyboard- or pointer-open context menus, modifier-click link opening in both panes, and context-menu copying that respects rendered selection, source selection, or the complete active source
+- Direct-section editing ribbon, the full supported slash-command insertion surface in both Code and Rendered editing (headings, lists, inline emphasis/code, tables, code blocks, links, images, quotes, alerts, details, diagrams, math, footnotes, rules, and `/toc`), contextual block properties, fence-language editing and code copy, table row/column tools, sequential block movement, block deletion with undo, secure reveal of local image assets, native image replacement, keyboard- or pointer-open context menus, modifier-click link opening in both panes, and context-menu copying that respects rendered selection, source selection, or the complete active source
 - Workspace file tree, full-text search, tabs, outline, link/issue panels, and compatibility-profile selection (`github`, `commonmarkStrict`, or `extended`)
 - Atomic saves that keep the file’s encoding, BOM, line endings, and final newline
 - Recovery snapshots and conflict handling when a file changes outside the app
@@ -75,8 +82,10 @@ It can also replace the current match or all matches through bounded source
 patches, with the operation included in the shared undo history. The
 left-sidebar workspace search remains dedicated to finding files and
 content across a workspace. The ribbon is available in visual editing and
-contains Home, Insert, Layout, Block, and Review tabs; a compact Tabs disclosure
-keeps every ribbon tab reachable when the window is narrow. The source drawer can be
+contains directly visible Home, Insert, Layout, Block, and Review sections. The
+tab strip scrolls horizontally when the window is narrow while keeping every
+section directly reachable; Save and Done remain pinned at the right of the
+ribbon command row. The source drawer can be
 shown or hidden from Layout or with **Ctrl+Alt+S**. The themed context menu can
 be opened with the standard **ContextMenu** key or **Shift+F10** when a mapped
 visual block or source selection has focus.
@@ -104,8 +113,10 @@ Use **File → Open Recent…** or choose **Open Recent** from the command palet
 to reopen up to five recently opened Markdown files. The list shows each
 file's full path, is validated natively against the current filesystem when
 opened, and removes entries that no longer exist or are no longer Markdown
-files. Recent history is local app settings; it does not copy or upload the
-documents.
+files. The left Files sidebar and Open Recent dialog both provide a per-file
+remove action and **Clear history**; these actions only remove local history
+metadata and never delete the Markdown files. Recent history is local app
+settings; it does not copy or upload the documents.
 
 Choose **Settings → Startup view** to restore **Remember last used** (the
 default) or always launch in **Rendered**, **Source**, or **Split**. This setting
@@ -412,7 +423,7 @@ explicit provider and explicit bounded context before any Markdown leaves the
 machine. Rendered Markdown is sanitized, and filesystem and remote asset
 access are restricted in the Rust host.
 
-**Help → Check for Updates** (or **About**) checks a signed update manifest from GitHub Releases. A quiet check may run after launch to notify you in the status bar; updates are never downloaded or installed until you confirm. The signing private key is a maintainer secret and is not stored in this repository.
+**Help → Check for Updates** (or **About**) checks a signed update manifest from GitHub Releases. Automatic checks retry briefly after launch if the network is unavailable; updates are never downloaded or installed until you confirm. The confirmation shows readable release notes, and a failed download/install keeps the update available with a retryable error. The signing private key is a maintainer secret and is not stored in this repository.
 
 Upstream dependency advisories that remain in the stable Tauri Linux stack are documented in [SECURITY.md](./SECURITY.md).
 

@@ -8,6 +8,11 @@ import { EMPTY_VISUAL_MAP_ID } from './visual-edit';
 export interface BlockInsertionCallbacks {
   onVisualDraftEdit: (mapId: string, selection: TextSelection, expectedMarkdown: string, replacementMarkdown: string, visualText?: string) => TextSelection | null;
   onVisualDraftCommit: () => void;
+  onOpenSlashMenu?: (element: HTMLElement, query: string, sourceSelection: TextSelection) => void;
+  onCloseSlashMenu?: (element: HTMLElement) => void;
+  onSlashNavigation?: (element: HTMLElement, delta: 1 | -1) => boolean;
+  onSlashChoose?: (element: HTMLElement) => boolean;
+  onSlashCancel?: (element: HTMLElement) => boolean;
 }
 
 function insertionText(source: string, offset: number, text: string): string {
@@ -84,6 +89,27 @@ export function decorateBlockInsertionZones(
       zone.blur();
     };
     zone.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        const handled = callbacks.onSlashNavigation?.(zone, event.key === 'ArrowDown' ? 1 : -1) ?? false;
+        if (handled) {
+          event.preventDefault();
+          return;
+        }
+      }
+      if (event.key === 'Enter') {
+        const handled = callbacks.onSlashChoose?.(zone) ?? false;
+        if (handled) {
+          event.preventDefault();
+          return;
+        }
+      }
+      if (event.key === 'Escape') {
+        const handled = callbacks.onSlashCancel?.(zone) ?? false;
+        if (handled) {
+          event.preventDefault();
+          return;
+        }
+      }
       if (event.key === 'Escape') {
         event.preventDefault();
         cancel();
@@ -94,10 +120,19 @@ export function decorateBlockInsertionZones(
     });
     zone.addEventListener('input', () => {
       zone.dataset.visualDirty = 'true';
+      const match = /^\/([a-z-]*)$/i.exec(zone.textContent ?? '');
+      if (match) {
+        callbacks.onOpenSlashMenu?.(zone, match[1], { from: offset, to: offset });
+        return;
+      }
+      callbacks.onCloseSlashMenu?.(zone);
       if (!zone.textContent?.trim()) return;
       applyDraft();
     });
-    zone.addEventListener('blur', commit);
+    zone.addEventListener('blur', () => {
+      callbacks.onCloseSlashMenu?.(zone);
+      commit();
+    });
     if (before) before.parentElement?.insertBefore(zone, before);
     else host.append(zone);
     zones.push(zone);

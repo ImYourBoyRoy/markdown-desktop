@@ -95,7 +95,7 @@
     restoreRenderedSnapshot as restoreRenderedSnapshotInCache,
   } from './lib/rendered-snapshot-cache';
   import { editGfmTable, editGfmTableCell, tableSelectionContext, type TableEditAction } from './lib/table-edit';
-  import { isMovableRootBlockKind, mappedBlockMoveTargets, moveMappedBlock, type BlockMovePosition } from './lib/block-move';
+  import { deleteMappedBlock, isMovableRootBlockKind, mappedBlockMoveTargets, moveMappedBlock, type BlockMovePosition } from './lib/block-move';
   import { EMPTY_VISUAL_MAP_ID, markdownForSimpleVisualBlock, type SimpleVisualBlockKind } from './lib/visual-edit';
   import { detailsSummaryPatch } from './lib/details-edit';
   import { fencedCodeBody } from './lib/fence';
@@ -108,7 +108,7 @@
   import { compatibilityStatus, issuesForCompatibilityTarget } from './lib/compatibility';
   import { readBrowserSetting, writeBrowserSetting } from './lib/browser-settings';
   import { syncSplitPaneScroll } from './lib/pane-scroll-sync';
-  import { normalizeRecentDocumentPaths, rememberRecentDocument } from './lib/recent-documents';
+  import { normalizeRecentDocumentPaths, rememberRecentDocument, removeRecentDocumentPath } from './lib/recent-documents';
   import { removeTabFromHistory, replaceTabInHistory } from './lib/tab-history';
   import { contextCopyText } from './lib/context-copy';
   import { planAssetDrop } from './lib/asset-drop';
@@ -130,6 +130,7 @@
     formatUpdateNotes,
     getAppVersion,
     installAppUpdate,
+    updaterErrorMessage,
     setDismissedUpdateVersion,
     shouldShowUpdateBanner,
     type UpdateUiState,
@@ -222,6 +223,7 @@
   let updateProgress = $state(0);
   let appVersion = $state('…');
   let showUpdateBanner = $state(false);
+  let updateErrorMessage = $state<string | undefined>();
   let showWelcome = $state(true);
   let statusMessage = $state('Ready');
   let statusResetTimer: number | undefined;
@@ -231,6 +233,7 @@
   let sourceSelectionActive = $state(false);
   let searchTimer: number | undefined;
   let quietUpdateTimer: number | undefined;
+  const AUTOMATIC_UPDATE_RETRY_DELAYS_MS = [1500, 6000, 20_000] as const;
   const SOURCE_RENDER_DEBOUNCE_MS = 32;
   const FAST_RENDER_SOURCE_BYTES = 48_000;
   let paletteQuery = $state('');
@@ -732,9 +735,7 @@
           } catch {
             statusMessage = 'Native bridge unavailable';
           }
-          quietUpdateTimer = window.setTimeout(() => {
-            void runUpdateCheck({ quiet: true });
-          }, 4000);
+          scheduleAutomaticUpdateCheck();
         } else {
           appVersion = '0.0.0';
         }
@@ -864,8 +865,15 @@
   }
 
   function removeRecentDocument(path: string) {
-    recentDocuments = recentDocuments.filter((candidate) => candidate !== path);
+    recentDocuments = removeRecentDocumentPath(recentDocuments, path);
     persistRecentDocumentPaths(recentDocuments);
+  }
+
+  function clearRecentDocuments() {
+    if (!recentDocuments.length) return;
+    recentDocuments = [];
+    persistRecentDocumentPaths([]);
+    statusMessage = 'Recent file history cleared';
   }
 
   async function openRecent(path: string) {
@@ -1248,15 +1256,22 @@
     }
   }
 
-  function handleSlashCommand(mapId: string, command: SlashCommand) {
+  function handleSlashCommand(mapId: string, command: SlashCommand, requestedSelection?: TextSelection) {
     if (!active) return;
     if (!slashCommandAvailable(command, markdownProfile)) {
       statusMessage = `/${command.replaceAll('-', ' ')} is unavailable in the ${markdownProfile} profile`;
       return;
     }
-    const selection = mapId === EMPTY_VISUAL_MAP_ID
-      ? { from: active.source.length, to: active.source.length }
-      : mappedSelectionFor(active, mapId);
+    if (!sourceMapIsCurrentFor(active)) {
+      statusMessage = 'Preview is still refreshing; wait before inserting a slash command';
+      return;
+    }
+    const selection = requestedSelection
+      && isValidSourceRange(active.source, requestedSelection.from, requestedSelection.to)
+      ? requestedSelection
+      : mapId === EMPTY_VISUAL_MAP_ID
+        ? { from: active.source.length, to: active.source.length }
+        : mappedSelectionFor(active, mapId);
     if (!selection) {
       statusMessage = 'This visual block is stale; refresh it before inserting';
       return;
@@ -1700,6 +1715,28 @@
     if (moveBlock(movingMapId, targetMapId, 'after')) {
       statusMessage = 'Side-by-side Markdown is not enabled for this profile; placed the block sequentially after the target';
     }
+  }
+
+  function deleteBlock(mapId: string): boolean {
+    if (!active) return false;
+    if (!sourceMapIsCurrentFor(active)) {
+      statusMessage = 'Preview is still refreshing; wait before deleting this block';
+      return false;
+    }
+    const before = active.source;
+    const result = deleteMappedBlock(before, active.sourceMap, mapId, activeSourceSelectionIndex);
+    if (!result) {
+      statusMessage = 'This block cannot be deleted across unmapped Markdown content';
+      return false;
+    }
+    recordSourceChange(active.id, before, result.source, editorSelection, result.selection);
+    editorSelection = result.selection;
+    selectedMapId = undefined;
+    selectedVisualSourceSelection = undefined;
+    sourceSelectionActive = true;
+    void updateSource(result.source, true);
+    statusMessage = 'Deleted the Markdown block; undo is available';
+    return true;
   }
 
   function moveSelectedBlock(direction: 'up' | 'down') {
@@ -2968,7 +3005,19 @@
     if (updateCheckState === 'checking' || updateCheckState === 'installing') return;
     updateCheckState = 'checking';
     updateProgress = 0;
-    const result = await checkForAppUpdate({ quiet, previous: pendingUpdate });
+    updateErrorMessage = undefined;
+    const previousUpdate = pendingUpdate;
+    const result = await checkForAppUpdate({ quiet, previous: previousUpdate });
+    if (result.state === 'error' && previousUpdate) {
+      // A transient check failure must not strand an update that was already
+      // ready to install. checkForAppUpdate keeps that resource open on error.
+      pendingUpdate = previousUpdate;
+      updateCheckState = 'available';
+      showUpdateBanner = shouldShowUpdateBanner(previousUpdate.version);
+      if (manual && result.message) statusMessage = result.message;
+      if (manual) showAbout = true;
+      return;
+    }
     pendingUpdate = result.update;
     updateCheckState = result.state;
     if (result.state === 'available' && result.update) {
@@ -2979,13 +3028,30 @@
       showUpdateBanner = false;
       if (manual) statusMessage = result.message;
     } else if (result.state === 'error') {
+      updateErrorMessage = result.message || undefined;
       if (manual && result.message) statusMessage = result.message;
     }
     if (manual) showAbout = true;
   }
 
+  function scheduleAutomaticUpdateCheck(attempt = 0) {
+    if (!isTauri || attempt >= AUTOMATIC_UPDATE_RETRY_DELAYS_MS.length) return;
+    if (quietUpdateTimer !== undefined) window.clearTimeout(quietUpdateTimer);
+    quietUpdateTimer = window.setTimeout(async () => {
+      quietUpdateTimer = undefined;
+      if (document.visibilityState === 'hidden') {
+        scheduleAutomaticUpdateCheck(attempt + 1);
+        return;
+      }
+      await runUpdateCheck({ quiet: true });
+      if (updateCheckState === 'error') scheduleAutomaticUpdateCheck(attempt + 1);
+    }, AUTOMATIC_UPDATE_RETRY_DELAYS_MS[attempt]);
+  }
+
   function promptInstallUpdate() {
     if (!pendingUpdate || updateCheckState === 'installing') return;
+    showAbout = false;
+    updateErrorMessage = undefined;
     const dirtyCount = tabs.filter((tab) => tab.dirty).length;
     if (dirtyCount > 0) {
       showUpdateDirtyWarn = true;
@@ -2999,6 +3065,7 @@
   function dismissUpdateBanner() {
     if (pendingUpdate) setDismissedUpdateVersion(pendingUpdate.version);
     showUpdateBanner = false;
+    updateErrorMessage = undefined;
   }
 
   async function protectDirtyTabsForUpdate(dirtyTabs: Tab[]): Promise<boolean> {
@@ -3030,6 +3097,7 @@
     showUpdateDirtyWarn = false;
     updateCheckState = 'installing';
     updateProgress = 0;
+    updateErrorMessage = undefined;
     statusMessage = 'Downloading signed update…';
     try {
       const installResult = await installAppUpdate(update, {
@@ -3050,10 +3118,14 @@
         ? 'Update installed. Restarting…'
         : 'Update installed. Restart Markdown Desktop to finish.';
     } catch (error) {
-      updateCheckState = 'error';
-      pendingUpdate = undefined;
-      showUpdateBanner = false;
-      statusMessage = invokeErrorMessage(error) || 'Could not install the update';
+      // Keep the signed update resource and confirmation available so a
+      // transient network/installer failure is retryable from the same UI.
+      updateCheckState = 'available';
+      pendingUpdate = update;
+      showUpdateBanner = shouldShowUpdateBanner(update.version);
+      updateErrorMessage = updaterErrorMessage(error);
+      showUpdateConfirm = true;
+      statusMessage = `Could not install ${formatVersionLabel(update.version)}: ${updateErrorMessage}`;
     }
   }
 
@@ -3612,7 +3684,10 @@
       onOpenSearchResult={openSearchResult}
       recentDocuments={recentDocuments}
       activeDocumentPath={active?.meta.path ?? ''}
+      openingRecentPath={openingRecentPath}
       onOpenRecent={(path) => void openRecent(path)}
+      onRemoveRecent={removeRecentDocument}
+      onClearRecent={clearRecentDocuments}
     />
 
     <DocumentSurface
@@ -3677,10 +3752,11 @@
       onVisualPaste={handleVisualPaste}
       onVisualEditRejected={(message) => (statusMessage = message)}
       onDetailsSummaryEdit={commitDetailsSummary}
-      onTableEdit={applyTableEdit}
-      onBlockMove={moveBlock}
-      onBlockBeside={moveBlockBeside}
-      onSlashCommand={handleSlashCommand}
+       onTableEdit={applyTableEdit}
+       onBlockMove={moveBlock}
+       onBlockBeside={moveBlockBeside}
+       onBlockDelete={deleteBlock}
+       onSlashCommand={handleSlashCommand}
       onRevealSource={revealMapInSource}
       onOpenLink={openLinkTarget}
       onOpenMedia={openMediaPreview}
@@ -3784,6 +3860,7 @@
     onClose={() => (showRecent = false)}
     onOpen={openRecent}
     onRemove={removeRecentDocument}
+    onClear={clearRecentDocuments}
     onOpenFile={() => { showRecent = false; void openFile(); }}
   />
 {/if}
@@ -3858,9 +3935,12 @@
       {#if pendingUpdate.body?.trim()}
         <div class="update-notes"><strong>Release notes</strong><p>{formatUpdateNotes(pendingUpdate.body)}</p></div>
       {/if}
+      {#if updateErrorMessage}
+        <p class="update-error" role="alert">{updateErrorMessage}</p>
+      {/if}
       <div class="default-app-actions">
         <button type="button" class="secondary-button" onclick={() => (showUpdateConfirm = false)}>Cancel</button>
-        <button bind:this={updateConfirmButton} type="button" class="primary-button" disabled={updateCheckState === 'installing'} onclick={() => void confirmInstallUpdate()}>{updateCheckState === 'installing' ? 'Preparing…' : 'Download and install'}</button>
+        <button bind:this={updateConfirmButton} type="button" class="primary-button" disabled={updateCheckState === 'installing'} onclick={() => void confirmInstallUpdate()}>{updateCheckState === 'installing' ? 'Preparing…' : updateErrorMessage ? 'Try again' : 'Download and install'}</button>
       </div>
     </div>
   </div>

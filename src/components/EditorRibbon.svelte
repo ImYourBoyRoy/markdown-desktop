@@ -25,7 +25,6 @@
   import { sourceTextIsInsideFence } from '../lib/slash';
   import { diagramInsertAvailable, diagramInsertUnavailableMessage } from '../lib/markdown-profile';
   import { insertTableOfContents } from '../lib/toc';
-  import RibbonOverflowMenu from './RibbonOverflowMenu.svelte';
 
   type RibbonTab = 'Home' | 'Insert' | 'Layout' | 'Block' | 'Review';
   type DialogKind = InsertKind | null;
@@ -294,12 +293,15 @@
       : event.key === 'End'
         ? tabs.length - 1
         : (current + (event.key === 'ArrowLeft' ? -1 : 1) + tabs.length) % tabs.length;
-    activeTab = tabs[next];
+    const nextTab = tabs[next];
+    activeTab = nextTab;
+    queueMicrotask(() => document.getElementById(`ribbon-${nextTab.toLowerCase()}-tab`)?.focus());
   }
 </script>
 
 <div class="ribbon" class:disabled role="region" aria-label="Markdown editor ribbon">
   <div class="ribbon-tabbar">
+    <div class="ribbon-context" aria-hidden="true">EDITOR</div>
     <div class="ribbon-tabs" role="tablist" aria-label="Editor ribbon tabs">
       {#each tabs as tab}
         <button
@@ -315,11 +317,11 @@
         >{tab}</button>
       {/each}
     </div>
-    <RibbonOverflowMenu tabs={tabs} activeTab={activeTab} onSelectTab={(tab) => (activeTab = tab as RibbonTab)} />
   </div>
 
   <div id="ribbon-panel" class="ribbon-panel" role="tabpanel" aria-labelledby={`ribbon-${activeTab.toLowerCase()}-tab`} tabindex="0">
-    {#if activeTab === 'Home'}
+    <div class="ribbon-command-scroll">
+      {#if activeTab === 'Home'}
       <div class="ribbon-group"><span class="ribbon-label">Text</span><div class="ribbon-actions">
         <button class:pressed={isWrapped('**')} type="button" title={protectedSourceSelection ? 'Inline formatting is source-only inside this block' : 'Bold'} aria-label="Bold" aria-pressed={isWrapped('**')} disabled={editingDisabled} onclick={() => format('bold')}><b>B</b></button>
         <button class:pressed={isWrapped('*')} type="button" title={protectedSourceSelection ? 'Inline formatting is source-only inside this block' : 'Italic'} aria-label="Italic" aria-pressed={isWrapped('*')} disabled={editingDisabled} onclick={() => format('italic')}><i>I</i></button>
@@ -431,12 +433,14 @@
         <button type="button" disabled={disabled} onclick={onIssues}>Open Issues</button>
       </div></div>
       <span class="ribbon-note">Lint is advisory; saves remain available.</span>
-    {/if}
-    <span class="ribbon-spacer"></span>
-    {#if editing}
-      <button class="ribbon-done" type="button" disabled={disabled} title="Finish visual editing" aria-label="Done editing" onclick={onDoneEditing}>Done</button>
-    {/if}
-    <button class="ribbon-save" type="button" disabled={disabled} onclick={onSave}>Save</button>
+      {/if}
+    </div>
+    <div class="ribbon-panel-actions" aria-label="Document actions">
+      {#if editing}
+        <button class="ribbon-done" type="button" disabled={disabled} title="Finish visual editing" aria-label="Done editing" onclick={onDoneEditing}>Done</button>
+      {/if}
+      <button class="ribbon-save" type="button" disabled={disabled} onclick={onSave}>Save</button>
+    </div>
   </div>
 </div>
 

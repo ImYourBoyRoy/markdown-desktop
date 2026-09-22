@@ -40,12 +40,34 @@ function comparableVersion(version: string | undefined | null): string | undefin
   return trimmed.replace(/^v/i, '');
 }
 
-/** Keep release notes plain-text and bounded before placing them in the UI. */
+/** Keep release notes readable, plain-text, and bounded before placing them in the UI. */
 export function formatUpdateNotes(body: string | undefined | null): string | undefined {
-  const notes = (body ?? '').trim();
+  const notes = (body ?? '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, '')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/__(.*?)__/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/^[ \t]*[-*][ \t]+/gm, '• ')
+    .trim();
   if (!notes) return undefined;
   if (notes.length <= MAX_UPDATE_NOTES_LENGTH) return notes;
   return `${notes.slice(0, MAX_UPDATE_NOTES_LENGTH - 1).trimEnd()}…`;
+}
+
+/** Extract a useful user-facing message from Tauri/plugin error shapes. */
+export function updaterErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) return error.message.trim();
+  if (typeof error === 'string' && error.trim()) return error.trim();
+  if (error && typeof error === 'object') {
+    const record = error as Record<string, unknown>;
+    for (const key of ['message', 'detail', 'error']) {
+      const value = record[key];
+      if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+  }
+  return 'The signed updater could not complete the installation.';
 }
 
 export function aboutUpdateCopy(
@@ -124,12 +146,10 @@ export async function checkForAppUpdate(options?: {
     };
   }
 
-  if (options?.previous) {
-    await options.previous.close().catch(() => undefined);
-  }
-
+  const previous = options?.previous;
   try {
     const update = await check({ timeout: CHECK_TIMEOUT_MS });
+    if (previous) await previous.close().catch(() => undefined);
     if (!update) {
       return {
         state: 'current',
@@ -167,6 +187,7 @@ export async function installAppUpdate(
 
   let contentLength = 0;
   let downloaded = 0;
+  let installed = false;
   try {
     await update.downloadAndInstall((event: DownloadEvent) => {
       if (event.event === 'Started') {
@@ -179,11 +200,13 @@ export async function installAppUpdate(
       } else {
         options.onProgress?.(100);
       }
-    });
+    }, { restartAfterInstall: true });
+    installed = true;
   } finally {
-    // Release the native resource after success or failure. Windows may exit
-    // during installation, in which case this finally block is harmless.
-    await update.close().catch(() => undefined);
+    // Keep a failed update resource open so the caller can retry the same
+    // confirmed update. A successful install owns the resource until the
+    // updater has launched or the app has attempted its relaunch.
+    if (installed) await update.close().catch(() => undefined);
   }
   try {
     await relaunch();
