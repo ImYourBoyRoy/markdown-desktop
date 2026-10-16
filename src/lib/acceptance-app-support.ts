@@ -60,8 +60,15 @@ export async function editVisualProbeParagraph(
 
 export async function waitForRenderedDiagram(
   language: 'mermaid' | 'graphviz',
-  timeoutMs = 30_000,
+  timeoutMs = 60_000,
 ): Promise<boolean> {
+  // Diagram enhancement is intentionally lazy. Bring the fixture's diagram
+  // into the rendered scrollport before waiting so the packaged probe tests
+  // the renderer itself instead of whether the initial viewport happened to
+  // intersect the lazy observer's preload margin on a slower runner.
+  const source = [...document.querySelectorAll<HTMLPreElement>('pre')]
+    .find((candidate) => candidate.querySelector(`code.language-${language}`));
+  source?.scrollIntoView({ block: 'center', inline: 'nearest' });
   const deadline = performance.now() + timeoutMs;
   while (performance.now() < deadline) {
     const output = [...document.querySelectorAll<HTMLElement>('.diagram-output')]

@@ -376,7 +376,7 @@ file sizes; lines are logical source lines with a terminal newline excluded.
 Refresh it after source or documentation changes so cold models can trust the
 routing table below.
 
-Inventory totals: 296 files / 58,441 lines / 2,342,934 B. Runtime (excluding this generator): 187 files / 36,827 lines / 1,532,278 B. Tests/benchmarks: 86 files / 7,763 lines / 314,482 B.
+Inventory totals: 296 files / 58,449 lines / 2,343,497 B. Runtime (excluding this generator): 187 files / 36,835 lines / 1,532,841 B. Tests/benchmarks: 86 files / 7,763 lines / 314,482 B.
 
 ### Read first
 
@@ -397,7 +397,7 @@ Inventory totals: 296 files / 58,441 lines / 2,342,934 B. Runtime (excluding thi
 | `src/components/MarkdownView.svelte` | 2,631 | 118,264 B | Rendered Markdown DOM, mapped selection, visual editing, drag/drop, and rich-content enhancement lifecycle. |
 | `src-tauri/src/markdown.rs` | 1,674 | 62,047 B | Comrak rendering, sanitization, diagnostics, metadata, and render orchestration. |
 | `src/lib/source-map.ts` | 983 | 41,494 B | Source-map range ownership, byte/character conversion, and mapped selection resolution. |
-| `src/styles/app-shell.css` | 346 | 38,936 B | Application shell layout, panes, toolbar, tabs, dialogs, menus, and shared visual tokens. |
+| `src/styles/app-shell.css` | 347 | 38,982 B | Application shell layout, panes, toolbar, tabs, dialogs, menus, and shared visual tokens. |
 | `src-tauri/src/store.rs` | 1,068 | 38,125 B | Save, conflict, watcher, atomic-write, lifecycle orchestration, and domain reexports. |
 | `src/components/EditorRibbon.svelte` | 612 | 36,440 B | Editing ribbon actions for formatting, insertion, block movement, and review controls. |
 | `src-tauri/src/markdown_source_map.rs` | 906 | 32,607 B | Source-map construction, byte ranges, mapped HTML metadata, and coordinate helpers. |
@@ -433,7 +433,7 @@ Start with `App.svelte` for state ownership, then move to the focused component 
 | `src/components/WorkspaceSidebar.svelte` | 134 | 7,497 B | Workspace open/scan controls, removable/clearable recent documents, search, and file navigation sidebar. |
 | `src/main.ts` | 7 | 178 B | Svelte/Tauri application bootstrap and root mount. |
 | `src/styles.css` | 16 | 607 B | Global style entry point importing the split stylesheet modules. |
-| `src/styles/app-shell.css` | 346 | 38,936 B | Application shell layout, panes, toolbar, tabs, dialogs, menus, and shared visual tokens. |
+| `src/styles/app-shell.css` | 347 | 38,982 B | Application shell layout, panes, toolbar, tabs, dialogs, menus, and shared visual tokens. |
 | `src/styles/assistant-panel.css` | 40 | 4,140 B | Assistant panel styling. |
 | `src/styles/editor-ribbon.css` | 73 | 7,504 B | Editor ribbon and formatting control styling. |
 | `src/styles/file-tree.css` | 9 | 843 B | Workspace file-tree styling. |
@@ -452,7 +452,7 @@ These modules are the preferred home for pure transitions, source-coordinate rul
 
 | File | Lines | Bytes | Summary |
 | --- | ---: | ---: | --- |
-| `src/lib/acceptance-app-support.ts` | 102 | 4,287 B | Shared app-facing callbacks and helpers used by packaged acceptance probes. |
+| `src/lib/acceptance-app-support.ts` | 109 | 4,804 B | Shared app-facing callbacks and helpers used by packaged acceptance probes. |
 | `src/lib/acceptance-app.ts` | 308 | 14,120 B | Acceptance-probe orchestration through the real application shell. |
 | `src/lib/acceptance-bridge.ts` | 353 | 14,589 B | Browser/native acceptance bridge and deterministic probe state. |
 | `src/lib/acceptance-input.ts` | 83 | 3,756 B | Synthetic keyboard, pointer, composition, and DOM input helpers. |

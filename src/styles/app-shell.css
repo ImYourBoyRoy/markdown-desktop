@@ -286,6 +286,7 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; col
 .conflict-icon::before { content: '!'; }
 .recovery-icon::before { content: '↺'; }
 .conflict-modal p { color: var(--muted); line-height: 1.6; }
+#shutdown-description { color: var(--text); }
 .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 20px 0; }
 .compare-grid span { color: var(--muted); font-size: 10px; }
 .compare-grid pre { max-height: 200px; overflow: auto; padding: 10px; border: 1px solid var(--border); border-radius: 7px; color: var(--text); background: var(--code-bg); font: 10px/1.5 var(--font-mono); white-space: pre-wrap; }
