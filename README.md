@@ -185,12 +185,14 @@ pnpm tauri build
 The latest local release-candidate checkpoint (2026-10-16) used Node 26.9.0,
 pnpm 12.14.0, and stable Rust/Cargo 1.99.1. The `1.1.2` Windows x64 candidate
 passed the dependency verification gate, `pnpm tauri build`, `pnpm build:app`,
-and packaged acceptance on three runs (20/20 checks each time). WCAGate covered
-4,143 surfaces with zero findings and no suppressions; the dependency is current
-at upstream revision `30be59d61db6f1cc3c5e80701fb28a0346588ca7`. This is local Windows evidence
-for an unpublished candidate; the release matrix, exact-commit GitHub CI,
-signing, target-OS accessibility, and live updater-install checks still require
-their respective environments.
+and packaged acceptance at 20/20 checks. WCAGate covered 4,143 surfaces with
+zero active findings; its one bounded shutdown-dialog `cantTell` suppression is
+fingerprinted, expiry-bound, and backed by the tracked manual contrast evidence
+in `wcag-audit/manual-evidence.json`. The dependency is current at upstream
+revision `30be59d61db6f1cc3c5e80701fb28a0346588ca7`. This is local Windows
+evidence for an unpublished candidate; the release matrix, exact-commit GitHub
+CI, signing, target-OS accessibility, and live updater-install checks still
+require their respective environments.
 
 `pnpm full:upgrade` refreshes WCAGate to the latest upstream `main` commit,
 locks that exact revision, and reruns the accessibility gate before the rest of

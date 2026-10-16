@@ -45,6 +45,7 @@ export interface AcceptanceRunnerDeps {
   getEditorSelection?(): { from: number; to: number };
   readSplitPaneScroll?(): { source: number; rendered: number };
   isRenderedBadgeHighlighted?(): boolean;
+  splitTypingLatencyBudgetMs?: number;
 }
 
 function snapshot(tab: Tab): AcceptanceTabSnapshot {
@@ -121,6 +122,7 @@ export async function runPackagedAcceptance(deps: AcceptanceRunnerDeps): Promise
     getEditorSelection: deps.getEditorSelection,
     readSplitPaneScroll: deps.readSplitPaneScroll,
     isRenderedBadgeHighlighted: deps.isRenderedBadgeHighlighted,
+    splitTypingLatencyBudgetMs: deps.splitTypingLatencyBudgetMs,
   };
 
   return runAcceptanceSuite(ctx);

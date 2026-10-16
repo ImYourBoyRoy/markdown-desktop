@@ -5,6 +5,9 @@ dist/
 .vite/
 .wcag-audit-results/
 wcag-audit/
+wcag-audit/*
+!wcag-audit/
+!wcag-audit/manual-evidence.json
 coverage/
 src-tauri/target/
 src-tauri/gen/

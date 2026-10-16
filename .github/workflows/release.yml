@@ -188,6 +188,11 @@ jobs:
 
       - name: Run packaged interaction acceptance (Windows x64)
         if: matrix.name == 'Windows x64'
+        env:
+          # Hosted Windows VMs have a slower, variable WebView compositor than
+          # the local release workstation. Keep the local 150 ms default while
+          # giving this synthetic, non-OS-input probe an explicit CI budget.
+          MARKDOWN_DESKTOP_ACCEPTANCE_LATENCY_BUDGET_MS: '250'
         run: node scripts/packaged_acceptance.mjs --require-binary
 
       - name: Upload staged platform artifacts

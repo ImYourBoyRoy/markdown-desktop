@@ -376,7 +376,7 @@ file sizes; lines are logical source lines with a terminal newline excluded.
 Refresh it after source or documentation changes so cold models can trust the
 routing table below.
 
-Inventory totals: 296 files / 58,449 lines / 2,343,497 B. Runtime (excluding this generator): 187 files / 36,835 lines / 1,532,841 B. Tests/benchmarks: 86 files / 7,763 lines / 314,482 B.
+Inventory totals: 296 files / 58,481 lines / 2,345,320 B. Runtime (excluding this generator): 187 files / 36,847 lines / 1,533,548 B. Tests/benchmarks: 86 files / 7,763 lines / 314,482 B.
 
 ### Read first
 
@@ -453,11 +453,11 @@ These modules are the preferred home for pure transitions, source-coordinate rul
 | File | Lines | Bytes | Summary |
 | --- | ---: | ---: | --- |
 | `src/lib/acceptance-app-support.ts` | 109 | 4,804 B | Shared app-facing callbacks and helpers used by packaged acceptance probes. |
-| `src/lib/acceptance-app.ts` | 308 | 14,120 B | Acceptance-probe orchestration through the real application shell. |
-| `src/lib/acceptance-bridge.ts` | 353 | 14,589 B | Browser/native acceptance bridge and deterministic probe state. |
+| `src/lib/acceptance-app.ts` | 309 | 14,177 B | Acceptance-probe orchestration through the real application shell. |
+| `src/lib/acceptance-bridge.ts` | 357 | 14,840 B | Browser/native acceptance bridge and deterministic probe state. |
 | `src/lib/acceptance-input.ts` | 83 | 3,756 B | Synthetic keyboard, pointer, composition, and DOM input helpers. |
 | `src/lib/acceptance-runner-types.ts` | 11 | 305 B | Types shared by acceptance runners and probe steps. |
-| `src/lib/acceptance-runner.ts` | 165 | 7,148 B | Reusable acceptance step runner and reporting. |
+| `src/lib/acceptance-runner.ts` | 167 | 7,252 B | Reusable acceptance step runner and reporting. |
 | `src/lib/acceptance-selection.ts` | 272 | 10,401 B | Selection-specific acceptance probes and exact source/render assertions. |
 | `src/lib/app-settings.ts` | 168 | 6,102 B | Typed persisted application settings with native and browser fallback boundaries. |
 | `src/lib/app-shell.ts` | 79 | 2,849 B | Shared shell contracts, tab construction, and source-map selection helpers. |
@@ -486,7 +486,7 @@ These modules are the preferred home for pure transitions, source-coordinate rul
 | `src/lib/inert-media-html.ts` | 8 | 493 B | Deactivation of browser resource attributes before rendered HTML mounting. |
 | `src/lib/inserts.ts` | 341 | 14,492 B | Source-preserving Markdown insertion, image, heading, and block helpers. |
 | `src/lib/invoke-error.ts` | 72 | 2,248 B | Typed normalization of Tauri invoke errors and scan-depth input. |
-| `src/lib/ipc.ts` | 309 | 10,535 B | Typed frontend/native command wrappers and opaque grant/document boundaries. |
+| `src/lib/ipc.ts` | 309 | 10,561 B | Typed frontend/native command wrappers and opaque grant/document boundaries. |
 | `src/lib/large-document-mount.ts` | 231 | 7,747 B | Bounded trusted-HTML fragment mounting with global source-map attachment. |
 | `src/lib/latest-task-queue.ts` | 36 | 1,132 B | Single-flight latest-request queue with stale-key invalidation. |
 | `src/lib/line-ending-coords.ts` | 114 | 3,639 B | CRLF/LF and UTF-16/UTF-8 coordinate conversion at the editor boundary. |
@@ -547,7 +547,7 @@ Rust owns filesystem, security, decoding, rendering, persistence, workspace inde
 
 | File | Lines | Bytes | Summary |
 | --- | ---: | ---: | --- |
-| `src-tauri/src/acceptance.rs` | 46 | 1,693 B | Native acceptance fixture setup and probe command boundary. |
+| `src-tauri/src/acceptance.rs` | 51 | 1,962 B | Native acceptance fixture setup and probe command boundary. |
 | `src-tauri/src/asset_ops.rs` | 427 | 15,187 B | Native local/remote asset validation and filesystem operations. |
 | `src-tauri/src/assistant.rs` | 940 | 31,045 B | Deferred assistant/provider boundary and local provider lifecycle types. |
 | `src-tauri/src/default_app.rs` | 435 | 14,297 B | Platform default-Markdown-application detection and registration helpers. |
@@ -721,12 +721,12 @@ These files define toolchains, dependency graphs, packaging, permissions, CI, an
 
 | File | Lines | Bytes | Summary |
 | --- | ---: | ---: | --- |
-| `.github/workflows/ci.yml` | 170 | 4,910 B | Quality, security, cross-platform build, and test automation. |
-| `.github/workflows/release.yml` | 500 | 25,733 B | Signed six-family release build, publication, and post-publication verification. |
-| `.gitignore` | 81 | 982 B | Generated output, local credentials, runtime state, and continuity-file boundaries. |
-| `IMPLEMENTATION_STATUS.md` | 1,106 | 80,960 B | Current implementation checkpoint and evidence summary. |
+| `.github/workflows/ci.yml` | 175 | 5,221 B | Quality, security, cross-platform build, and test automation. |
+| `.github/workflows/release.yml` | 505 | 26,044 B | Signed six-family release build, publication, and post-publication verification. |
+| `.gitignore` | 84 | 1,041 B | Generated output, local credentials, runtime state, and continuity-file boundaries. |
+| `IMPLEMENTATION_STATUS.md` | 1,111 | 81,255 B | Current implementation checkpoint and evidence summary. |
 | `LICENSE` | 21 | 1,086 B | MIT license text. |
-| `README.md` | 230 | 20,229 B | Published user/developer guide for installation, usage, commands, releases, and limitations. |
+| `README.md` | 232 | 20,369 B | Published user/developer guide for installation, usage, commands, releases, and limitations. |
 | `SECURITY.md` | 102 | 6,336 B | Security model, audit findings, upstream advisories, and unresolved platform boundaries. |
 | `docs/PHASE-0-PERFORMANCE.md` | 137 | 6,049 B | Phase 0 performance matrix, baseline, budgets, and evidence limits. |
 | `docs/PHASE-1-PERFORMANCE.md` | 139 | 7,889 B | Phase 1 optimization results, deltas, and remaining packaged gates. |

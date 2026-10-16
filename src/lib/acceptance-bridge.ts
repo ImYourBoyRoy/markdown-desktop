@@ -72,6 +72,7 @@ export interface AcceptanceRunnerContext {
   getEditorSelection?(): { from: number; to: number };
   readSplitPaneScroll?(): { source: number; rendered: number };
   isRenderedBadgeHighlighted?(): boolean;
+  splitTypingLatencyBudgetMs?: number;
 }
 
 function normalizeAcceptanceSource(value: string): string {
@@ -299,10 +300,13 @@ export async function runAcceptanceSuite(ctx: AcceptanceRunnerContext): Promise<
 
     await ctx.setViewMode('split');
     const latencyMs = await ctx.measureSplitTypingLatency(5);
+    const latencyBudgetMs = Number.isFinite(ctx.splitTypingLatencyBudgetMs) && (ctx.splitTypingLatencyBudgetMs ?? 0) > 0
+      ? ctx.splitTypingLatencyBudgetMs!
+      : 150;
     steps.push(step(
       'split-typing-latency',
-      Number.isFinite(latencyMs) && latencyMs < 150,
-      `Average synthetic split edit through render and animation frames: ${Number.isFinite(latencyMs) ? latencyMs.toFixed(1) : 'Infinity'} ms (budget 150 ms; not OS input evidence)`,
+      Number.isFinite(latencyMs) && latencyMs < latencyBudgetMs,
+      `Average synthetic split edit through render and animation frames: ${Number.isFinite(latencyMs) ? latencyMs.toFixed(1) : 'Infinity'} ms (budget ${latencyBudgetMs.toFixed(0)} ms; not OS input evidence)`,
       latencyMs,
     ));
 

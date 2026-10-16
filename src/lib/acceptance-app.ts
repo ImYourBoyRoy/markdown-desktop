@@ -261,6 +261,7 @@ export async function runAcceptanceProbeIfEnabled(deps: AcceptanceAppDeps): Prom
     getEditorSelection: () => deps.getEditorSelection(),
     readSplitPaneScroll: () => readSplitPaneScroll(),
     isRenderedBadgeHighlighted: () => renderedImageIsHighlighted(deps.getRenderedPane()),
+    splitTypingLatencyBudgetMs: context.latencyBudgetMs,
   });
   } catch (error) {
     report = {

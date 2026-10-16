@@ -240,7 +240,7 @@ export function startupPaths() {
 }
 
 export function acceptanceContext() {
-  return invoke<{ enabled: boolean; outputPath?: string }>('acceptance_context');
+  return invoke<{ enabled: boolean; outputPath?: string; latencyBudgetMs?: number }>('acceptance_context');
 }
 
 export function writeAcceptanceResult(outputPath: string, payload: string) {

@@ -18,7 +18,10 @@ Updated: 2026-10-16
   3.4.17, Playwright 1.64.1, Vitest 5.0.5, axe-core 4.14.0, and Mermaid 12.2.0.
   `pnpm verify:dependencies` passed with zero typecheck diagnostics, 425
   frontend tests passed with 2 intentional skips, 104 Rust tests passed with 1
-  ignored benchmark, 4,143 WCAGate surfaces and 0 findings with no suppressions,
+  ignored benchmark, 4,143 WCAGate surfaces and 0 active findings. The
+  shutdown-dialog `axe/color-contrast` cantTell is covered by one fingerprinted,
+  expiry-bound suppression backed by `wcag-audit/manual-evidence.json` after
+  measured dark/light contrast ratios of 13.59:1 and 13.70:1,
   renderer/media/lifecycle/updater checks, npm audit with no known
   vulnerabilities, cargo-deny policy checks, and cargo audit with two visible
   upstream warnings.
@@ -32,10 +35,11 @@ Updated: 2026-10-16
   refresh during every `pnpm full:upgrade` before the frozen install and gates.
 - `pnpm tauri build`, `pnpm build:app`, and
   `pnpm smoke:packaged -- --require-binary` passed for the Windows x64
-  candidate. Packaged acceptance passed all 20 checks on three runs; the
-  split-typing probe measured 116.0 ms, 119.7 ms, and 124.2 ms against its
-  150 ms budget after the acceptance fixture was reduced to a deterministic
-  96-fragment large-mount workload.
+  candidate. Packaged acceptance passed all 20 checks on the rebuilt binary at
+  115.4 ms with the local 150 ms default and 115.6 ms with the explicit hosted
+  CI 250 ms budget. The acceptance probe now scrolls lazy diagrams into view
+  before waiting and reports the active budget without changing the local
+  performance floor.
 - `pnpm outdated` now reports only the direct TypeScript 6.0.3 to 7.0.2
   major-line difference. Direct TypeScript remains on 6.x because
   `svelte-check 4.7.6` declares a `^5 || ^6` compiler peer range;
@@ -47,7 +51,8 @@ Updated: 2026-10-16
   updater-install, and exact-commit GitHub CI gates remain release-workflow
   gates for the target environments. `pnpm install --frozen-lockfile` succeeds
   but reports pnpm's WCAGate skill-approval notice; no approval mutation was
-  made. The candidate is ready for the exact-commit GitHub release workflow.
+  made. The candidate is ready for the next exact-commit GitHub release
+  workflow attempt.
 
 ## 2026-10-06 review-remediation checkpoint
 

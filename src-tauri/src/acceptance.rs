@@ -10,6 +10,7 @@ use crate::store::CommandError;
 pub struct AcceptanceContext {
     pub enabled: bool,
     pub output_path: Option<String>,
+    pub latency_budget_ms: Option<f64>,
 }
 
 #[tauri::command]
@@ -17,6 +18,10 @@ pub fn acceptance_context() -> AcceptanceContext {
     AcceptanceContext {
         enabled: std::env::var("MARKDOWN_DESKTOP_ACCEPTANCE").ok().as_deref() == Some("1"),
         output_path: std::env::var("MARKDOWN_DESKTOP_ACCEPTANCE_OUT").ok(),
+        latency_budget_ms: std::env::var("MARKDOWN_DESKTOP_ACCEPTANCE_LATENCY_BUDGET_MS")
+            .ok()
+            .and_then(|value| value.parse::<f64>().ok())
+            .filter(|value| value.is_finite() && *value > 0.0),
     }
 }
 

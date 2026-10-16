@@ -99,5 +99,18 @@ export default {
     { type: 'json', file: 'latest.json' },
     { type: 'results', file: 'results.html' },
   ],
-  suppressions: [],
+  suppressions: [
+    {
+      fingerprint: '7190eeab8156236bcc194768',
+      ruleId: 'axe/color-contrast',
+      outcomes: ['cantTell'],
+      adapter: 'playwright-axe',
+      routeOrScene: 'shutdown-dialog',
+      justification: 'Manual AA contrast verified for #shutdown-description on the shutdown-dialog WCAGate scenario. The dialog panel is solid and the translucent backdrop remains outside the text surface; axe cannot compute the backdrop-filter composite reliably. See wcag-audit/manual-evidence.json → frost-glass-contrast. This suppression is limited to this known cantTell fingerprint and does not suppress failed contrast findings.',
+      owner: 'Roy Dawson IV',
+      ticket: 'A11Y-SHUTDOWN-1.1.2',
+      createdAt: '2026-10-16T22:40:00.000Z',
+      expiresAt: '2027-01-16T22:40:00.000Z',
+    },
+  ],
 };
