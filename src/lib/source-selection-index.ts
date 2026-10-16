@@ -127,7 +127,7 @@ export interface SourceSelectionIndex {
 
 export const visualSourceSelectionKinds = new Set<MappedSpan['kind']>([
   'heading', 'paragraph', 'list', 'list_item', 'task_item', 'blockquote', 'alert',
-  'code_block', 'table', 'html_layout_table', 'html_block', 'html_link', 'html_image',
+  'code_block', 'table', 'html_layout_table', 'html_block', 'html_link', 'html_image', 'html_video', 'html_iframe',
   'image', 'link', 'math', 'thematic_break', 'details', 'strong', 'emphasis', 'strikethrough',
   'underline', 'subscript', 'superscript', 'highlight', 'inline_code',
 ]);

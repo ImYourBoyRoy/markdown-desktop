@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const rootOverride = process.argv.find((value) => value.startsWith('--root='))?.slice('--root='.length);
+const root = rootOverride ? path.resolve(rootOverride) : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const architecturePath = path.join(root, 'ARCHITECTURE.md');
 const generatedStart = '<!-- BEGIN GENERATED FILE INVENTORY -->';
 const generatedEnd = '<!-- END GENERATED FILE INVENTORY -->';
@@ -10,9 +11,7 @@ const sourceRoots = ['src', 'src-tauri/src', 'scripts'];
 const keyFiles = [
   'README.md',
   'mobile_todo.md',
-  'AGENTS.md',
   'IMPLEMENTATION_STATUS.md',
-  'MEMORY.md',
   'SECURITY.md',
   'package.json',
   'pnpm-workspace.yaml',
@@ -44,13 +43,14 @@ const summaries = new Map(Object.entries({
   'src/components/CommandPalette.svelte': 'Command-palette dialog and filtered command presentation.',
   'src/components/ContextMenu.svelte': 'Themed rendered/source context menu surface.',
   'src/components/DocumentSurface.svelte': 'Composes rendered document and lazy source-editor panes with shared selection callbacks.',
+  'src/components/DocumentLoading.svelte': 'Accessible two-phase document-open and preview-mount loading surface.',
   'src/components/DocumentTabs.svelte': 'Document tab strip, active state, close affordances, and tab navigation events.',
   'src/components/EditorRibbon.svelte': 'Editing ribbon actions for formatting, insertion, block movement, and review controls.',
   'src/components/FileTree.svelte': 'Accessible bounded workspace file-tree rendering.',
   'src/components/InspectorSidebar.svelte': 'Outline, links, issues, and properties inspector panels.',
   'src/components/MarkdownEditor.svelte': 'Lazy CodeMirror adapter with source changes, selections, Find, and coordinate conversion.',
   'src/components/MarkdownView.svelte': 'Rendered Markdown DOM, mapped selection, visual editing, drag/drop, and rich-content enhancement lifecycle.',
-  'src/components/MediaPreview.svelte': 'Accessible image and diagram lightbox with outside-click, Escape, close, and bounded zoom controls.',
+  'src/components/MediaPreview.svelte': 'Accessible image, video, embed, and diagram lightbox with outside-click, Escape, close, and bounded zoom controls.',
   'src/components/RecentDocuments.svelte': 'Recent-document list with per-item removal, clear-history, and open actions.',
   'src/components/ReaderFullscreenBar.svelte': 'Renderer-focused fullscreen controls with independent sidebar toggles and reversible exit.',
   'src/components/SettingsModal.svelte': 'Settings dialog for profile, compatibility, editing, assets, and application preferences.',
@@ -63,7 +63,7 @@ const summaries = new Map(Object.entries({
   'src/styles/inspector.css': 'Inspector sidebar styling.',
   'src/styles/markdown-editor.css': 'CodeMirror/source-editor styling.',
   'src/styles/markdown-view.css': 'Rendered Markdown, mapped decorations, visual editing, and rich-content styling.',
-  'src/styles/media-preview.css': 'Zoomable image and diagram preview dialog styling with responsive and reduced-motion behavior.',
+  'src/styles/media-preview.css': 'Zoomable image, video, embed, and diagram preview dialog styling with responsive and reduced-motion behavior.',
   'src/styles/recent-documents.css': 'Recent-document list styling.',
   'src/styles/reader-fullscreen.css': 'Reader-focused fullscreen shell, sidebar controls, and responsive focus-bar styling.',
   'src/styles/update-banner.css': 'Update banner styling.',
@@ -88,22 +88,30 @@ const summaries = new Map(Object.entries({
   'src/lib/compatibility.ts': 'Compatibility-target issue filtering and calm status summaries.',
   'src/lib/context-copy.ts': 'Context-menu copy resolution for rendered, source, and complete-document content.',
   'src/lib/details-edit.ts': 'Safe source patching for HTML details-summary visual edits.',
-  'src/lib/document-diagnostics.ts': 'Merge and freshness helpers for filesystem/reference diagnostics.',
+  'src/lib/document-diagnostics.ts': 'Idle-safe local Markdown diagnostics plus filesystem/reference issue merge helpers.',
   'src/lib/document-metrics.ts': 'Bounded document size, line, and character metrics.',
+  'src/lib/document-loading.ts': 'Generation-guarded loading phases and human-readable document-size formatting.',
+  'src/lib/document-recovery-controller.ts': 'Serialized, bounded-latency recovery snapshots and shutdown draining.',
+  'src/lib/inert-media-html.ts': 'Deactivation of browser resource attributes before rendered HTML mounting.',
+  'src/lib/media-asset-cache.ts': 'Bounded media reuse with coalesced requests and retryable failures.',
   'src/lib/document-revision.ts': 'Source/render revision tuple, mapping-source selection, and stale-map guards.',
   'src/lib/document-tab-revision.ts': 'Pure tab transitions for source edits, render completion, snapshots, and visual history.',
   'src/lib/fence.ts': 'Fenced-code context and body extraction helpers.',
   'src/lib/find.ts': 'Document Find matching and source-map projection to rendered IDs.',
   'src/lib/formatting.ts': 'Source-range formatting actions and bounded text-edit results.',
   'src/lib/html-sub-spans.ts': 'Source-aware HTML sub-span extraction for mapped rendered content.',
+  'src/lib/image-editor.ts': 'Source-preserving direct-image property parsing and safe layout serialization.',
   'src/lib/inserts.ts': 'Source-preserving Markdown insertion, image, heading, and block helpers.',
   'src/lib/invoke-error.ts': 'Typed normalization of Tauri invoke errors and scan-depth input.',
   'src/lib/ipc.ts': 'Typed frontend/native command wrappers and opaque grant/document boundaries.',
   'src/lib/latest-task-queue.ts': 'Single-flight latest-request queue with stale-key invalidation.',
+  'src/lib/link-editor.ts': 'Source-preserving direct, shared-reference, and constrained raw-HTML link property editing.',
   'src/lib/line-ending-coords.ts': 'CRLF/LF and UTF-16/UTF-8 coordinate conversion at the editor boundary.',
+  'src/lib/large-document-mount.ts': 'Bounded trusted-HTML fragment mounting with global source-map attachment.',
   'src/lib/markdown-profile.ts': 'Markdown profile and diagram capability policy.',
   'src/lib/markdown-tooltip.ts': 'Delayed accessible tooltip state and content helpers.',
   'src/lib/markdown-view-block-editing.ts': 'Rendered block editing and source-patch adapters.',
+  'src/lib/markdown-view-block-controls.ts': 'Rendered block grip, delete, drag-preview, keyboard-move, and drop-target lifecycle.',
   'src/lib/markdown-view-decoration.ts': 'Rendered selection, hover, and mapped DOM decoration helpers.',
   'src/lib/markdown-view-dom-commit.ts': 'Guarded full and incremental rendered DOM commit planning.',
   'src/lib/markdown-view-dom.ts': 'Rendered DOM lookup, mapping, selection, and coordinate helpers.',
@@ -111,6 +119,7 @@ const summaries = new Map(Object.entries({
   'src/lib/markdown-view-render.ts': 'Rendered view enhancement/render adapter orchestration.',
   'src/lib/markdown-view-rich-content.ts': 'Lazy image, diagram, math, and rich-content enhancement.',
   'src/lib/media-preview.ts': 'Display-only media preview types and bounded zoom-step helpers.',
+  'src/lib/media.ts': 'Validated local/direct/provider media insertion, embed normalization, and source-safe reference policy.',
   'src/lib/markdown-view-visual-editing.ts': 'Visual-edit lifecycle, caret, composition, and source-patch callbacks.',
   'src/lib/mermaid-runtime.ts': 'Lazy Mermaid runtime facade used by the optional renderer build.',
   'src/lib/pane-scroll-sync.ts': 'Two-pane line/marker alignment after coalesced selection-driven scroll.',
@@ -121,17 +130,20 @@ const summaries = new Map(Object.entries({
   'src/lib/render-guard.ts': 'Pure source/generation equality guard for accepted render results.',
   'src/lib/rendered-pane-contract.ts': 'Rendered-pane editing and interaction contract helpers.',
   'src/lib/rendered-snapshot-cache.ts': 'Bounded reuse/restoration of already-produced rendered snapshots.',
+  'src/lib/reference-editor.ts': 'Shared Markdown reference-definition discovery and bounded occurrence/definition transactions.',
   'src/lib/rich-visual-edit.ts': 'Rich rendered element visual-edit planning and source replacement.',
   'src/lib/safe-image.ts': 'Safe image source and rendered-image policy helpers.',
   'src/lib/selection-bridge.ts': 'Exact bidirectional rendered/source selection projection against current maps.',
   'src/lib/selection-highlight.ts': 'Non-mutating rendered text-range highlighting with safe fallback.',
   'src/lib/slash.ts': 'Slash-command availability, parsing, and source insertion helpers.',
+  'src/lib/source-completions.ts': 'Context-aware source completion contexts for commands, anchors, references, paths, fences, HTML, and words.',
   'src/lib/source-context.ts': 'Source-editor context target and map lookup helpers.',
   'src/lib/source-history.ts': 'Bounded source undo/redo history entries and append logic.',
   'src/lib/source-map.ts': 'Source-map range ownership, byte/character conversion, and mapped selection resolution.',
   'src/lib/source-patch.ts': 'Validated source-range patch application without whole-document reserialization.',
   'src/lib/source-selection-index.ts': 'Indexed source-map overlap queries for repeated selection projection.',
   'src/lib/source-sync.ts': 'CodeMirror change-range synchronization into authoritative source text.',
+  'src/lib/spellcheck.ts': 'Local WebView spell-check attributes and bounded visual-editor exclusions.',
   'src/lib/tab-history.ts': 'Pure back/forward tab-history removal and replacement.',
   'src/lib/table-edit.ts': 'Safe GFM table selection context and source-preserving table edits.',
   'src/lib/toc.ts': 'Table-of-contents heading tree construction.',
@@ -139,8 +151,11 @@ const summaries = new Map(Object.entries({
   'src/lib/updater.ts': 'Signed updater checks, retry-safe install lifecycle, readable notes, banner policy, and diagnostics.',
   'src/lib/view-mode.ts': 'Startup preference normalization, initial pane state, and active-mode visibility helpers.',
   'src/lib/visual-draft.ts': 'Visual draft state and bounded draft source patch helpers.',
+  'src/lib/visual-editor-contract.ts': 'Shared rendered-block capability vocabulary for editing, properties, movement, deletion, and source escape hatches.',
   'src/lib/visual-edit.ts': 'Simple rendered block edit classification and Markdown serialization.',
   'src/lib/visual-structure.ts': 'Mapped heading/list/table structure editing patches.',
+  'src/lib/visual-text-transaction.ts': 'Source-preserving visible-text transactions for rendered Markdown editing.',
+  'src/lib/project-links.ts': 'Explicit HTTPS project, author, and Venmo links used by About/support actions.',
 
   'src-tauri/src/main.rs': 'Native process entry point delegating to the Tauri library.',
   'src-tauri/src/lib.rs': 'Tauri builder, plugin order, menus, command registration, and app lifecycle.',
@@ -153,6 +168,9 @@ const summaries = new Map(Object.entries({
   'src-tauri/src/document_lint.rs': 'Filesystem/reference linting independent from the expensive render path.',
   'src-tauri/src/workspace_scan.rs': 'Bounded workspace traversal and Markdown descendant tree construction.',
   'src-tauri/src/asset_ops.rs': 'Native local/remote asset validation and filesystem operations.',
+  'src-tauri/src/media_stream.rs': 'Document-owned opaque media grants and bounded native byte-range serving.',
+  'src-tauri/src/reference_validation.rs': 'Comrak proof of a shared reference definition before source-range editing.',
+  'scripts/media_privacy_browser.mjs': 'Real-browser initial-load and lazy-loading remote-media privacy regression gate.',
   'src-tauri/src/default_app.rs': 'Platform default-Markdown-application detection and registration helpers.',
   'src-tauri/src/assistant.rs': 'Deferred assistant/provider boundary and local provider lifecycle types.',
   'src-tauri/src/github_host_oracle.rs': 'GitHub README compatibility fixture/oracle implementation.',
@@ -169,7 +187,9 @@ const summaries = new Map(Object.entries({
 
   'scripts/accessibility_audit.mjs': 'Static accessibility and capability audit used by verification.',
   'scripts/align-typescript.mjs': 'Keeps supported TypeScript package lines aligned with the Svelte toolchain.',
+  'scripts/app_lifecycle_browser.mjs': 'Runs the real browser lifecycle fixture for recovery, shutdown, preview, and save failure flows.',
   'scripts/architecture_inventory.mjs': 'Generates and checks this architecture file inventory from the current tree.',
+  'scripts/architecture_inventory.test.mjs': 'Regression test for architecture inventory line-ending and local-file filtering behavior.',
   'scripts/block_drag_browser.mjs': 'Runs an isolated headless Chromium mouse drag against the rendered block handle.',
   'scripts/build_app.mjs': 'Stages platform-specific portable and installable application artifacts.',
   'scripts/build_optional_renderers.mjs': 'Builds Mermaid and other optional renderer assets outside the startup graph.',
@@ -179,7 +199,9 @@ const summaries = new Map(Object.entries({
   'scripts/native_smoke.mjs': 'Runs native command and packaged-runtime smoke checks.',
   'scripts/normalize-workflow-comments.mjs': 'Normalizes workflow comments used by upgrade maintenance.',
   'scripts/optional_renderer_smoke.mjs': 'Verifies optional renderer assets produce bounded SVG output.',
+  'scripts/renderer_budget.mjs': 'Enforces explicit size budgets for embedded optional renderer assets and lazy chunks.',
   'scripts/packaged_acceptance.mjs': 'Launches the release binary and exercises real WebView acceptance flows.',
+  'scripts/wcag_browser.mjs': 'Starts the review fixture and runs the WCAGate browser evidence gate.',
   'scripts/phase0_baseline.mjs': 'Runs Phase 0/1 frontend and native performance baseline probes.',
   'scripts/purge_build_environment.mjs': 'Safely purges project build output and optionally rebuilds within existing ranges.',
   'scripts/render_commit_benchmark.mjs': 'Runs the opt-in rendered DOM commit benchmark.',
@@ -192,6 +214,7 @@ const summaries = new Map(Object.entries({
   'scripts/upgrade-process.mjs': 'Executes one resumable upgrade process step.',
   'scripts/upgrade-snapshot.mjs': 'Creates/restores project metadata snapshots for upgrade rollback.',
   'scripts/update-pnpm.mjs': 'Updates the active pnpm installation and verifies the resolved stable command.',
+  'scripts/update-wcagate.mjs': 'Resolves and pins the current WCAGate upstream main revision for reproducible upgrades.',
   'scripts/verify_dependencies.mjs': 'Runs the project dependency, security, build, accessibility, and native gates.',
   'scripts/verify-toolchains.mjs': 'Checks Node, pnpm, Rust, Cargo, and required toolchain compatibility.',
   'scripts/visual_acceptance.mjs': 'Runs curated visual-editor unit/integration acceptance suites.',
@@ -200,6 +223,9 @@ const summaries = new Map(Object.entries({
   'scripts/fixtures/block-drag.html': 'Vite-served browser fixture page for real mouse-driven block-move verification.',
   'scripts/fixtures/mermaid-visual.ts': 'Loads the Mermaid Markdown fixture through the production rich-content renderer and asserts visible native SVG labels.',
   'scripts/fixtures/mermaid-visual.html': 'Vite-served visual fixture page for inspecting the Mermaid Markdown rendering path.',
+  'scripts/fixtures/app-review.html': 'Vite-served application review fixture shell for lifecycle and accessibility evidence.',
+  'scripts/fixtures/app-review.ts': 'Simulated native bridge and real App shell fixture used by browser review gates.',
+  'scripts/fixtures/acceptance-video.webm.base64': 'Small checked-in media fixture used to exercise packaged local-video streaming.',
 
   'README.md': 'Published user/developer guide for installation, usage, commands, releases, and limitations.',
   'mobile_todo.md': 'Android/mobile product contract, workstreams, non-goals, and acceptance gates.',
@@ -262,12 +288,11 @@ function summaryFor(filePath) {
 }
 
 function metricsFor(filePath) {
-  const content = fs.readFileSync(path.join(root, filePath));
-  const text = content.toString('utf8');
+  const text = fs.readFileSync(path.join(root, filePath), 'utf8').replace(/\r\n|\r/g, '\n');
   const logicalLines = text.length === 0
     ? 0
     : text.split(/\r\n|\n|\r/).length - (/(?:\r\n|\n|\r)$/.test(text) ? 1 : 0);
-  return { path: filePath, lines: logicalLines, bytes: content.length, test: isTestFile(filePath) };
+  return { path: filePath, lines: logicalLines, bytes: Buffer.byteLength(text, 'utf8'), test: isTestFile(filePath) };
 }
 
 function formatNumber(value) {
@@ -364,7 +389,7 @@ function replaceGeneratedSection(document) {
   return `${before}\n\n${generatedStart}\n${generated}\n${generatedEnd}\n\n${after}\n`;
 }
 
-const current = fs.readFileSync(architecturePath, 'utf8');
+const current = fs.readFileSync(architecturePath, 'utf8').replace(/\r\n|\r/g, '\n');
 const next = replaceGeneratedSection(current);
 if (process.argv.includes('--check')) {
   if (current !== next) {

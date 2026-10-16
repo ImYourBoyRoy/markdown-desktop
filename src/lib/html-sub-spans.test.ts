@@ -82,4 +82,48 @@ describe('html sub-spans', () => {
     expect(subSpans[1]?.tag).toBe('img');
     expect(subSpans[0]?.sourceByteStart).toBeLessThan(subSpans[1]?.sourceByteStart);
   });
+
+  it('keeps raw video and approved embed objects addressable', () => {
+    const source = '<video controls src="assets/demo.mp4"></video>\n\n<iframe src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ"></iframe>';
+    const sourceMap: SourceMap = {
+      version: 1,
+      sourceHash: 'sha256:media',
+      spans: [{
+        mapId: 'media-html',
+        kind: 'html_block',
+        sourceByteStart: 0,
+        sourceByteEnd: new TextEncoder().encode(source).byteLength,
+        attrs: {},
+      }],
+    };
+    const descriptors = mappedHtmlElementDescriptors(source, sourceMap);
+    expect(descriptors.map((descriptor) => descriptor.mapId)).toEqual([
+      'media-html#html-video-0',
+      'media-html#html-iframe-0',
+    ]);
+    expect(descriptors.map((descriptor) => descriptor.value)).toEqual([
+      'assets/demo.mp4',
+      'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ',
+    ]);
+  });
+
+  it('maps a standard source child to its enclosing video object', () => {
+    const source = '<video controls>\n  <source src="assets/demo.webm" type="video/webm">\n</video>';
+    const sourceMap: SourceMap = {
+      version: 1,
+      sourceHash: 'sha256:source-child',
+      spans: [{
+        mapId: 'source-child-html',
+        kind: 'html_block',
+        sourceByteStart: 0,
+        sourceByteEnd: new TextEncoder().encode(source).byteLength,
+        attrs: {},
+      }],
+    };
+    expect(mappedHtmlElementDescriptors(source, sourceMap)).toMatchObject([{
+      mapId: 'source-child-html#html-video-0',
+      tag: 'source',
+      value: 'assets/demo.webm',
+    }]);
+  });
 });

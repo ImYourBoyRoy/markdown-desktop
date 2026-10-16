@@ -25,6 +25,13 @@ import type {
 
 export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
+export function completeShutdown() { return invoke<void>('complete_shutdown'); }
+export function setUpdateShutdownApproval(approved: boolean) { return invoke<void>('set_update_shutdown_approval', { approved }); }
+
+export function validateReferenceEdit(source: string, edit: { occurrenceFrom: number; occurrenceTo: number; definitionFrom: number; definitionTo: number; label: string }) {
+  return invoke<boolean>('validate_reference_edit', { source, edit });
+}
+
 export function lintDocumentReferences(documentId: string, sourceMap: SourceMap, profile: string, compatibilityTarget: CompatibilityTarget) {
   return invoke<Issue[]>('lint_document_references', { documentId, sourceMap, profile, compatibilityTarget });
 }
@@ -118,12 +125,24 @@ export function resolveAsset(documentId: string, target: string) {
   return invoke<AssetResult>('resolve_asset', { documentId, target });
 }
 
+export function documentBacklinks(workspaceId: string, documentId: string) {
+  return invoke<SearchResult[]>('document_backlinks', { workspaceId, documentId });
+}
+
+export function resolveMediaAsset(documentId: string, target: string) {
+  return invoke<AssetResult>('resolve_media_asset', { documentId, target });
+}
+
 export function revealAsset(documentId: string, target: string) {
   return invoke<void>('reveal_asset', { documentId, target });
 }
 
 export function fetchRemoteAsset(url: string) {
   return invoke<AssetResult>('fetch_remote_asset', { url });
+}
+
+export function fetchRemoteMedia(url: string) {
+  return invoke<AssetResult>('fetch_remote_media', { url });
 }
 
 export function saveRecovery(

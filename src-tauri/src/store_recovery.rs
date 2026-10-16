@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, State};
 
 #[tauri::command]
-pub fn save_recovery(
+pub async fn save_recovery(
     app: AppHandle,
     state: State<'_, SharedState>,
     document_id: String,
@@ -26,7 +26,21 @@ pub fn save_recovery(
             "recovery snapshot exceeds the 50 MB safety limit".into(),
         ));
     }
-    let recovery_folder = recovery_dir(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        save_recovery_snapshot(&app, record, document_id, source, base_revision)
+    })
+    .await
+    .map_err(|error| CommandError::Message(format!("recovery worker failed: {error}")))?
+}
+
+fn save_recovery_snapshot(
+    app: &AppHandle,
+    record: StoredDocument,
+    document_id: String,
+    source: String,
+    base_revision: String,
+) -> Result<(), CommandError> {
+    let recovery_folder = recovery_dir(app)?;
     fs::create_dir_all(&recovery_folder).map_err(|e| CommandError::Message(e.to_string()))?;
     let payload = RecoverySnapshot {
         document_id: document_id.clone(),
@@ -35,7 +49,7 @@ pub fn save_recovery(
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs(),
-        source: source.to_owned(),
+        source,
         base_revision,
         encoding: Some(record.encoding),
         bom: Some(record.bom),
@@ -53,9 +67,15 @@ pub fn save_recovery(
 }
 
 #[tauri::command]
-pub fn clear_recovery(app: AppHandle, document_id: String) -> Result<(), CommandError> {
-    let dir = recovery_dir(&app)?;
-    let path = recovery_path(&dir, &document_id)?;
+pub async fn clear_recovery(app: AppHandle, document_id: String) -> Result<(), CommandError> {
+    tauri::async_runtime::spawn_blocking(move || clear_recovery_file(&app, &document_id))
+        .await
+        .map_err(|error| CommandError::Message(format!("recovery worker failed: {error}")))?
+}
+
+fn clear_recovery_file(app: &AppHandle, document_id: &str) -> Result<(), CommandError> {
+    let dir = recovery_dir(app)?;
+    let path = recovery_path(&dir, document_id)?;
     match fs::remove_file(path) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -65,8 +85,14 @@ pub fn clear_recovery(app: AppHandle, document_id: String) -> Result<(), Command
 }
 
 #[tauri::command]
-pub fn list_recovery(app: AppHandle) -> Result<Vec<RecoveryInfo>, CommandError> {
-    let dir = recovery_dir(&app)?;
+pub async fn list_recovery(app: AppHandle) -> Result<Vec<RecoveryInfo>, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || list_recovery_files(&app))
+        .await
+        .map_err(|error| CommandError::Message(format!("recovery worker failed: {error}")))?
+}
+
+fn list_recovery_files(app: &AppHandle) -> Result<Vec<RecoveryInfo>, CommandError> {
+    let dir = recovery_dir(app)?;
     if !dir.exists() {
         return Ok(Vec::new());
     }
@@ -79,7 +105,7 @@ pub fn list_recovery(app: AppHandle) -> Result<Vec<RecoveryInfo>, CommandError> 
         if entry.path().extension().and_then(|value| value.to_str()) != Some("json") {
             continue;
         }
-        let Ok(bytes) = fs::read(entry.path()) else {
+        let Ok(bytes) = read_snapshot_bytes(&entry.path()) else {
             continue;
         };
         let Ok(snapshot) = serde_json::from_slice::<RecoverySnapshot>(&bytes) else {
@@ -99,16 +125,20 @@ pub fn list_recovery(app: AppHandle) -> Result<Vec<RecoveryInfo>, CommandError> 
 }
 
 #[tauri::command]
-pub fn read_recovery(
+pub async fn read_recovery(
     app: AppHandle,
     document_id: String,
 ) -> Result<RecoverySnapshot, CommandError> {
-    load_recovery_snapshot(&recovery_dir(&app)?, &document_id)
+    tauri::async_runtime::spawn_blocking(move || {
+        load_recovery_snapshot(&recovery_dir(&app)?, &document_id)
+    })
+    .await
+    .map_err(|error| CommandError::Message(format!("recovery worker failed: {error}")))?
 }
 
 #[tauri::command]
-pub fn discard_recovery(app: AppHandle, document_id: String) -> Result<(), CommandError> {
-    clear_recovery(app, document_id)
+pub async fn discard_recovery(app: AppHandle, document_id: String) -> Result<(), CommandError> {
+    clear_recovery(app, document_id).await
 }
 
 #[tauri::command]
@@ -119,7 +149,7 @@ pub async fn restore_recovery(
     profile: Option<String>,
     compatibility_target: Option<String>,
 ) -> Result<OpenedDocument, CommandError> {
-    let snapshot = load_recovery_snapshot(&recovery_dir(&app)?, &document_id)?;
+    let snapshot = read_recovery(app.clone(), document_id).await?;
     let profile = profile.unwrap_or_else(|| "github".into());
     let compatibility_target =
         markdown::normalize_compatibility_target(compatibility_target.as_deref());
@@ -145,11 +175,15 @@ pub async fn restore_recovery(
         );
         return Ok(OpenedDocument {
             source: snapshot.source,
+            // Saving recovered edits must compare against the disk revision
+            // they were based on, not the revision observed at restoration.
+            revision: snapshot.base_revision,
             html: rendered.html,
             headings: rendered.headings,
             links: rendered.links,
             issues: rendered.issues,
             source_map: rendered.source_map,
+            blocks: rendered.blocks,
             ..opened
         });
     }
@@ -211,6 +245,32 @@ pub(crate) fn load_recovery_snapshot(
     document_id: &str,
 ) -> Result<RecoverySnapshot, CommandError> {
     let path = recovery_path(dir, document_id)?;
-    let bytes = fs::read(&path).map_err(|e| CommandError::Message(e.to_string()))?;
+    let bytes = read_snapshot_bytes(&path)?;
     serde_json::from_slice(&bytes).map_err(|e| CommandError::Message(e.to_string()))
+}
+
+fn read_snapshot_bytes(path: &Path) -> Result<Vec<u8>, CommandError> {
+    use std::io::Read;
+    const LIMIT: u64 = 301 * 1024 * 1024;
+    let file = fs::File::open(path).map_err(|error| CommandError::Message(error.to_string()))?;
+    if file
+        .metadata()
+        .map_err(|error| CommandError::Message(error.to_string()))?
+        .len()
+        > LIMIT
+    {
+        return Err(CommandError::Message(
+            "recovery snapshot exceeds the safety limit".into(),
+        ));
+    }
+    let mut bytes = Vec::new();
+    file.take(LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| CommandError::Message(error.to_string()))?;
+    if bytes.len() as u64 > LIMIT {
+        return Err(CommandError::Message(
+            "recovery snapshot exceeds the safety limit".into(),
+        ));
+    }
+    Ok(bytes)
 }

@@ -1,8 +1,8 @@
 use super::*;
 use crate::asset_ops::{
-    asset_folder_paths, copy_image_source, image_target_byte_range, local_asset_candidate,
-    normalize_image_extension, opened_document_record, read_bounded_image, rollback_created_assets,
-    validated_dropped_image, write_asset_file, write_asset_file_with_path,
+    MAX_MEDIA_BYTES, asset_folder_paths, copy_image_source, image_target_byte_range,
+    local_asset_candidate, normalize_image_extension, opened_document_record, read_bounded_image,
+    rollback_created_assets, validated_dropped_image, write_asset_file, write_asset_file_with_path,
 };
 use crate::model::{AssetResult, ConsolidateAssetsResult, DroppedImageInfo, StagedAssetResult};
 use crate::security;
@@ -36,14 +36,12 @@ pub fn resolve_asset(
         .and_then(|id| state.lock().ok()?.workspaces.get(id).cloned())
         .map(|workspace| workspace.root)
         .unwrap_or_else(|| record.path.parent().unwrap_or(Path::new(".")).to_path_buf());
-    let clean_target = target.split(['#', '?']).next().unwrap_or_default();
     let base = record.path.parent().unwrap_or(Path::new("."));
-    let candidate = base.join(clean_target.replace('/', std::path::MAIN_SEPARATOR_STR));
-    let relative_from_root = candidate
-        .strip_prefix(&root)
-        .map_err(|_| CommandError::Message("asset escapes the authorized workspace".into()))?;
-    let canonical = security::safe_child(&root, &relative_from_root.to_string_lossy())
-        .map_err(|e| CommandError::Message(format!("asset is missing: {e}")))?;
+    let canonical = crate::asset_ops::resolve_local_reference(
+        base,
+        record.workspace_id.as_ref().map(|_| root.as_path()),
+        &target,
+    )?;
     let bytes = read_bounded_image(&canonical)
         .map_err(|error| CommandError::Message(format!("asset could not be read: {error}")))?;
     let mime = mime_guess::from_path(&canonical)
@@ -58,6 +56,56 @@ pub fn resolve_asset(
     Ok(AssetResult {
         asset_id: stable_id(&canonical.to_string_lossy()),
         data_uri: format!("data:{mime};base64,{}", BASE64.encode(bytes)),
+        mime,
+    })
+}
+
+#[tauri::command]
+pub fn resolve_media_asset(
+    state: State<'_, SharedState>,
+    document_id: String,
+    target: String,
+) -> Result<AssetResult, CommandError> {
+    let record = opened_document_record(&state, &document_id)?;
+    let clean_target = target.split(['#', '?']).next().unwrap_or_default().trim();
+    let lower_target = clean_target.to_ascii_lowercase();
+    if clean_target.is_empty()
+        || lower_target.starts_with("http://")
+        || lower_target.starts_with("https://")
+        || lower_target.starts_with("data:")
+        || lower_target.starts_with("file:")
+        || lower_target.starts_with("javascript:")
+        || lower_target.starts_with("vbscript:")
+    {
+        return Err(CommandError::Message(
+            "only document-relative video assets can be resolved locally".into(),
+        ));
+    }
+    let root = record
+        .workspace_id
+        .as_ref()
+        .and_then(|id| state.lock().ok()?.workspaces.get(id).cloned())
+        .map(|workspace| workspace.root)
+        .unwrap_or_else(|| record.path.parent().unwrap_or(Path::new(".")).to_path_buf());
+    let canonical = crate::asset_ops::resolve_local_reference(
+        record.path.parent().unwrap_or(Path::new(".")),
+        record.workspace_id.as_ref().map(|_| root.as_path()),
+        &target,
+    )?;
+    let mime = mime_guess::from_path(&canonical)
+        .first_or_octet_stream()
+        .essence_str()
+        .to_owned();
+    if !mime.starts_with("video/") {
+        return Err(CommandError::Message(
+            "only video assets can be rendered".into(),
+        ));
+    }
+    let stream_url =
+        crate::media_stream::grant(state.inner(), &document_id, &canonical, &root, &mime)?;
+    Ok(AssetResult {
+        asset_id: stable_id(&canonical.to_string_lossy()),
+        data_uri: stream_url,
         mime,
     })
 }
@@ -184,6 +232,68 @@ pub fn fetch_remote_asset(url: String) -> Result<AssetResult, CommandError> {
     if bytes.len() > 8 * 1024 * 1024 {
         return Err(CommandError::Message(
             "remote image exceeds the 8 MB safety limit".into(),
+        ));
+    }
+    Ok(AssetResult {
+        asset_id: stable_id(&url),
+        data_uri: format!("data:{mime};base64,{}", BASE64.encode(bytes)),
+        mime,
+    })
+}
+
+#[tauri::command]
+pub fn fetch_remote_media(url: String) -> Result<AssetResult, CommandError> {
+    let parsed = security::validate_remote_url(&url)?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| CommandError::Message("remote URL has no host".into()))?;
+    let pinned_address = security::resolve_public_host(&parsed)?;
+    let mut client_builder = Client::builder()
+        .timeout(std::time::Duration::from_secs(12))
+        .redirect(reqwest::redirect::Policy::none());
+    if host.parse::<std::net::IpAddr>().is_err() {
+        client_builder = client_builder.resolve(host, pinned_address);
+    }
+    let client = client_builder
+        .build()
+        .map_err(|e| CommandError::Message(e.to_string()))?;
+    let mut response = client
+        .get(parsed)
+        .header("accept", "video/mp4,video/webm,video/ogg,video/*;q=0.9")
+        .send()
+        .map_err(|e| CommandError::Message(format!("remote video failed: {e}")))?;
+    if !response.status().is_success() {
+        return Err(CommandError::Message(format!(
+            "remote video returned {}",
+            response.status()
+        )));
+    }
+    let mime = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .unwrap_or_default()
+        .to_owned();
+    if !mime.starts_with("video/") {
+        return Err(CommandError::Message(
+            "remote resource is not a supported video".into(),
+        ));
+    }
+    if response.content_length().unwrap_or(0) > MAX_MEDIA_BYTES {
+        return Err(CommandError::Message(
+            "remote video exceeds the 32 MB preview safety limit".into(),
+        ));
+    }
+    let mut bytes = Vec::new();
+    response
+        .by_ref()
+        .take(MAX_MEDIA_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| CommandError::Message(e.to_string()))?;
+    if bytes.len() as u64 > MAX_MEDIA_BYTES {
+        return Err(CommandError::Message(
+            "remote video exceeds the 32 MB preview safety limit".into(),
         ));
     }
     Ok(AssetResult {

@@ -1,10 +1,12 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import type { CompletionContext, CompletionResult } from '@codemirror/autocomplete';
+  import type { Completion, CompletionContext, CompletionResult } from '@codemirror/autocomplete';
   import { tags } from '@lezer/highlight';
   import type { ViewUpdate } from '@codemirror/view';
   import type { Decoration as CodeMirrorDecoration } from '@codemirror/view';
-  import { filterSlashCommands, sourceTextIsInsideFence, type SlashCommand } from '../lib/slash';
+  import { sourceCompletionContext } from '../lib/source-completions';
+  import { spellcheckContentAttributes } from '../lib/spellcheck';
+  import type { SlashCommand } from '../lib/slash';
   import { contextMenuSelectionForPosition, sourceContextTargetAtPosition } from '../lib/source-context';
   import {
     editorInsertToSource,
@@ -20,6 +22,10 @@
   export let source = '';
   export let lineEnding = 'LF';
   export let profile: MarkdownProfile = 'github';
+  export let headingSlugs: string[] = [];
+  export let completionPaths: string[] = [];
+  export let spellcheckEnabled = true;
+  export let spellcheckLocale = 'en-US';
   export let sourceMap: SourceMap = { version: 1, sourceHash: '', spans: [] };
   export let onChange: (changes: SourceDocumentChange[]) => void = () => undefined;
   export let onSelection: (from: number, to: number) => void = () => undefined;
@@ -46,6 +52,10 @@
   let scrollSelectionIntoView: ((from: number, to: number) => void) | undefined;
   let pendingHoverPoint: { x: number; y: number } | null | undefined;
   let hoverSchedule: (() => void) | undefined;
+  let applyEditorSpellcheck: ((enabled: boolean, locale: string) => void) | undefined;
+  let editorSpellcheckKey = '';
+  let editorHasFocus = false;
+  let removeEditorFocusListeners: (() => void) | undefined;
 
   function flushScheduledHover() {
     hoverSchedule?.();
@@ -81,7 +91,7 @@
   }
 
   onMount(async () => {
-    const [{ EditorState, StateEffect, StateField, RangeSetBuilder }, { EditorView, Decoration, keymap, lineNumbers, highlightActiveLine, drawSelection }, { defaultKeymap, history, indentWithTab }, { markdown }, { syntaxHighlighting, HighlightStyle }, { autocompletion }] = await Promise.all([
+    const [{ EditorState, Compartment, StateEffect, StateField, RangeSetBuilder }, { EditorView, Decoration, keymap, lineNumbers, highlightActiveLine, drawSelection }, { defaultKeymap, history, indentWithTab }, { markdown }, { syntaxHighlighting, HighlightStyle }, { autocompletion }] = await Promise.all([
       import('@codemirror/state'),
       import('@codemirror/view'),
       import('@codemirror/commands'),
@@ -129,29 +139,34 @@
       provide: (field) => EditorView.decorations.from(field),
     });
 
-    const slashCompletion = (context: CompletionContext): CompletionResult | null => {
-      const line = context.state.doc.lineAt(context.pos);
-      const before = line.text.slice(0, context.pos - line.from);
-      const match = /^\s*\/([a-z-]*)$/i.exec(before);
-      if (!match || sourceTextIsInsideFence(context.state.doc.sliceString(0, context.pos))) return null;
-      const query = match[1];
-      const options = filterSlashCommands(query, profile);
+    const spellcheckCompartment = new Compartment();
+    const sourceCompletion = (context: CompletionContext): CompletionResult | null => {
+      const sourcePosition = editorOffsetToSourceOffset(editorSource, context.pos, lineEnding);
+      const completion = sourceCompletionContext(editorSource, sourcePosition, profile, headingSlugs, context.explicit, completionPaths);
+      if (!completion) return null;
       return {
-        from: context.pos - query.length,
-        options: options.map((option) => ({
-          label: `/${option.label}`,
-          detail: option.description,
-          type: 'keyword',
-          apply: (_view: import('@codemirror/view').EditorView) => {
-            const editorFrom = line.from + before.search(/\//);
-            const authored = editorSelectionToSourceSelection(
-              editorSource,
-              { from: editorFrom, to: context.pos },
-              lineEnding,
-            );
-            onSourceSlashCommand(option.id, authored);
-          },
+        from: sourceOffsetToEditorOffset(editorSource, completion.from, lineEnding),
+        options: completion.options.map((option) => ({
+          label: option.label,
+          detail: option.detail,
+          type: option.type,
+          apply: option.slashCommand
+            ? (_view: import('@codemirror/view').EditorView) => {
+              // Keep the slash outside CodeMirror's query replacement range,
+              // but pass the complete authored command to the application
+              // transaction when the option is selected.
+              const authored = { from: Math.max(0, completion.from - 1), to: completion.to };
+              onSourceSlashCommand(option.slashCommand!, authored);
+            }
+            : option.applyText !== undefined
+              ? (view: import('@codemirror/view').EditorView, _completion: Completion, from: number, to: number) => {
+                const insert = option.applyText!;
+                const cursor = from + (option.cursorOffset ?? insert.length);
+                view.dispatch({ changes: { from, to, insert }, selection: { anchor: cursor } });
+              }
+            : option.applyText ?? option.label,
         })),
+        validFor: completion.validFor,
       };
     };
 
@@ -167,10 +182,16 @@
         markdown(),
         syntaxHighlighting(markdownHighlightStyle, { fallback: true }),
         EditorView.lineWrapping,
+        EditorView.contentAttributes.of({ 'aria-label': 'Markdown source' }),
+        // The source pane is often mounted beside the rendered editor. Keep
+        // the browser dictionary off until CodeMirror actually owns focus so
+        // large source updates do not trigger a second full-text scan while a
+        // user is typing in the rendered surface.
+        spellcheckCompartment.of(EditorView.contentAttributes.of(spellcheckContentAttributes(false, spellcheckLocale))),
         // Undo/redo is owned by the application so source edits and visual
         // range patches share one history and render lifecycle.
         keymap.of([...defaultKeymap, indentWithTab]),
-        autocompletion({ override: [slashCompletion], activateOnTyping: true }),
+        autocompletion({ override: [sourceCompletion], activateOnTyping: true }),
         findHighlightField,
         EditorView.updateListener.of((update: ViewUpdate) => {
           if (update.docChanged) {
@@ -206,6 +227,31 @@
       ],
     });
     view = new EditorView({ state, parent: host });
+    applyEditorSpellcheck = (enabled, locale) => {
+      view?.dispatch({
+        effects: spellcheckCompartment.reconfigure(
+          EditorView.contentAttributes.of(spellcheckContentAttributes(enabled && editorHasFocus, locale)),
+        ),
+      });
+    };
+    editorSpellcheckKey = `${spellcheckEnabled}:${spellcheckLocale}`;
+    const handleEditorFocusIn = () => {
+      if (editorHasFocus) return;
+      editorHasFocus = true;
+      applyEditorSpellcheck?.(spellcheckEnabled, spellcheckLocale);
+    };
+    const handleEditorFocusOut = () => {
+      if (!editorHasFocus) return;
+      editorHasFocus = false;
+      applyEditorSpellcheck?.(spellcheckEnabled, spellcheckLocale);
+    };
+    host.addEventListener('focusin', handleEditorFocusIn);
+    host.addEventListener('focusout', handleEditorFocusOut);
+    removeEditorFocusListeners = () => {
+      host.removeEventListener('focusin', handleEditorFocusIn);
+      host.removeEventListener('focusout', handleEditorFocusOut);
+      removeEditorFocusListeners = undefined;
+    };
     scrollSelectionIntoView = (from, to) => {
       view?.dispatch({
         effects: EditorView.scrollIntoView(from, { y: 'center', yMargin: 72 }),
@@ -230,6 +276,14 @@
     };
     if (autofocus) view.focus();
   });
+
+  $: if (view && applyEditorSpellcheck) {
+    const nextKey = `${spellcheckEnabled}:${spellcheckLocale}`;
+    if (nextKey !== editorSpellcheckKey) {
+      editorSpellcheckKey = nextKey;
+      applyEditorSpellcheck(spellcheckEnabled, spellcheckLocale);
+    }
+  }
 
   $: if (view && source !== editorSource) {
     const change = sourceDocumentChange(editorSource, source);
@@ -292,6 +346,9 @@
     destroyed = true;
     flushScheduledHover();
     host?.removeEventListener('click', handleModifiedLinkClick);
+    removeEditorFocusListeners?.();
+    removeEditorFocusListeners = undefined;
+    applyEditorSpellcheck = undefined;
     view?.destroy();
   });
 

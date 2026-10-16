@@ -106,6 +106,10 @@ export function createRenderController(options: RenderControllerOptions): Render
       }
     } catch {
       if (isLatest() && currentGeneration(tabId) === request.renderGeneration) {
+        // A failed latest render cannot ever produce a DOM revision that owns
+        // this visual-edit token. Clear it now so the next unrelated render
+        // does not retry an incremental patch against stale markup.
+        if (options.getActiveId() === tabId) options.setIncrementalCommit(undefined, undefined);
         options.setStatusMessage('Preview refresh failed; retry the edit or reopen the document.');
       }
     } finally {
@@ -147,6 +151,7 @@ export function createRenderController(options: RenderControllerOptions): Render
 
   async function rerender(tabId: string, source: string, profile: MarkdownProfile): Promise<void> {
     const renderGeneration = nextGeneration(tabId);
+    if (options.getActiveId() === tabId) options.setIncrementalCommit(undefined, undefined);
     try {
       const rendered = await options.renderSource(source, profile, tabId, options.getCompatibilityTarget());
       const current = options.getTabs().find((tab) => tab.id === tabId);
@@ -161,7 +166,7 @@ export function createRenderController(options: RenderControllerOptions): Render
           : tab));
       }
     } catch {
-      options.setStatusMessage('Preview refresh is available in the desktop build');
+      options.setStatusMessage('Preview refresh failed; retry the edit or reopen the document.');
     }
   }
 

@@ -36,8 +36,8 @@
 
 <header class="app-toolbar">
   <div class="nav-controls">
-    <button class="icon-button" type="button" aria-label="Go back" title="Back (Alt+Left)" disabled={!canGoBack} onclick={onBack}>←</button>
-    <button class="icon-button" type="button" aria-label="Go forward" title="Forward (Alt+Right)" disabled={!canGoForward} onclick={onForward}>→</button>
+    <button class="icon-button" type="button" aria-label="Go back" title="Back (Alt+Left)" disabled={!canGoBack} onclick={onBack}><span class="nav-glyph nav-back" aria-hidden="true"></span></button>
+    <button class="icon-button" type="button" aria-label="Go forward" title="Forward (Alt+Right)" disabled={!canGoForward} onclick={onForward}><span class="nav-glyph nav-forward" aria-hidden="true"></span></button>
   </div>
   <div class="breadcrumb" title={documentPath}>
     <span class="crumb-root">{workspaceName}</span>
@@ -46,7 +46,7 @@
       {#if dirty}<span class="dirty-dot" title="Unsaved changes"></span>{/if}
     {/if}
   </div>
-  <button class="command-trigger" type="button" aria-label="Search and command palette" onclick={onOpenPalette}><span class="command-glyph" aria-hidden="true"></span> Search or command… <kbd>{paletteShortcut}</kbd></button>
-  <button class="toolbar-edit" type="button" disabled={!hasActiveDocument} aria-label={editing ? 'Switch to reading view' : 'Switch to visual editing'} onclick={onToggleEditing}>{editing ? 'Read' : 'Edit'}</button>
-  <button class="icon-button" type="button" aria-label="Open settings" title="Settings" onclick={onOpenSettings}>•••</button>
+  <button class="command-trigger" type="button" aria-label={`Search or command… ${paletteShortcut}`} title="Search and command palette" onclick={onOpenPalette}><span class="command-glyph" aria-hidden="true"></span> Search or command… <kbd>{paletteShortcut}</kbd></button>
+  <button class="toolbar-edit" type="button" disabled={!hasActiveDocument} aria-label={editing ? 'Read — switch to reading view' : 'Edit — switch to visual editing'} onclick={onToggleEditing}>{editing ? 'Read' : 'Edit'}</button>
+  <button class="icon-button" type="button" aria-label="Open settings" title="Settings" onclick={onOpenSettings}><span class="settings-glyph" aria-hidden="true"></span></button>
 </header>

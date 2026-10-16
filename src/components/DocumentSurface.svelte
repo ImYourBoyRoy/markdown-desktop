@@ -6,9 +6,11 @@
   import type { VisualStructurePatch } from '../lib/visual-structure';
   import type { SourceDocumentChange } from '../lib/source-sync';
   import type { MediaPreview } from '../lib/media-preview';
+  import type { DocumentLoadingState } from '../lib/document-loading';
   import { recentDocumentDirectory, recentDocumentName } from '../lib/recent-documents';
   import MarkdownEditor from './MarkdownEditor.svelte';
   import MarkdownView from './MarkdownView.svelte';
+  import DocumentLoading from './DocumentLoading.svelte';
 
   let {
     active,
@@ -28,9 +30,16 @@
     splitViewVisible,
     effectiveViewMode,
     renderedViewVisible,
+    renderedViewBusy,
     sourceEditorMounted,
     readerFullscreen,
+    documentLoading,
+    previewError,
+    onRetryPreview,
     markdownProfile,
+    spellcheckEnabled,
+    spellcheckLocale,
+    completionPaths,
     remoteImagesEnabled,
     findMapIds,
     activeFindMapIds,
@@ -40,6 +49,7 @@
     renderResetToken,
     incrementalCommitMapId,
     incrementalCommitSourceRange,
+    onIncrementalCommitConsumed,
     hoveredSourceSelection,
     externalSourceSelection,
     sourceSelectionActive,
@@ -74,7 +84,6 @@
     onDetailsSummaryEdit,
     onTableEdit,
     onBlockMove,
-    onBlockBeside,
     onBlockDelete,
     onSlashCommand,
     onRevealSource,
@@ -104,9 +113,16 @@
     splitViewVisible: boolean;
     effectiveViewMode: ViewMode;
     renderedViewVisible: boolean;
+    renderedViewBusy: boolean;
     sourceEditorMounted: boolean;
     readerFullscreen: boolean;
+    documentLoading: DocumentLoadingState | null;
+    previewError?: string;
+    onRetryPreview?: () => void;
     markdownProfile: MarkdownProfile;
+    spellcheckEnabled: boolean;
+    spellcheckLocale: string;
+    completionPaths: string[];
     remoteImagesEnabled: boolean;
     findMapIds: string[];
     activeFindMapIds: string[];
@@ -116,6 +132,7 @@
     renderResetToken: number;
     incrementalCommitMapId?: string;
     incrementalCommitSourceRange?: TextSelection;
+    onIncrementalCommitConsumed: (mapId: string) => void;
     hoveredSourceSelection: TextSelection | null;
     externalSourceSelection: TextSelection | null;
     sourceSelectionActive: boolean;
@@ -150,7 +167,6 @@
     onDetailsSummaryEdit: (mapId: string, text: string) => boolean;
     onTableEdit: (action: TableEditAction, mapId?: string) => void;
     onBlockMove: (movingMapId: string, targetMapId: string, position: 'before' | 'after') => void;
-    onBlockBeside: (movingMapId: string, targetMapId: string) => void;
     onBlockDelete: (mapId: string) => void;
     onSlashCommand: (mapId: string, command: SlashCommand, sourceSelection?: TextSelection) => void;
     onRevealSource: (mapId: string) => void;
@@ -165,7 +181,7 @@
   }>();
 </script>
 
-<main class="document-area" aria-label="Document">
+<main class="document-area" aria-label="Document" aria-busy={documentLoading !== null}>
   {#if showWelcome || !active}
     <section class="welcome">
       <img class="welcome-logo" src="/markdown-desktop.png" alt="" aria-hidden="true" />
@@ -205,21 +221,30 @@
         <button type="button" aria-label="Close Find" title="Close (Esc)" onclick={onCloseFind}>×</button>
       </div>
     {/if}
+    {#if onRetryPreview && renderedViewVisible}
+      <div class="preview-retry"><button type="button" onclick={onRetryPreview}>Refresh preview</button></div>
+    {/if}
+    {#if previewError}
+      <div class="preview-retry" role="alert"><span>{previewError}</span><button type="button" onclick={onRetryPreview}>Retry preview</button></div>
+    {/if}
     <div class="document-header">
       <div><span class="doc-type">MARKDOWN DOCUMENT</span><h1>{active.title}</h1></div>
       <div class="header-actions"><button type="button" onclick={onCopyRendered}>Copy source</button><button type="button" onclick={onExportHtml}>Export HTML</button><button id="reader-focus-toggle" class="reader-focus-toggle" type="button" aria-pressed={readerFullscreen} title={readerFullscreen ? 'Exit reader focus (F11)' : 'Focus the rendered reader (F11)'} onclick={onToggleReaderFullscreen}>{readerFullscreen ? 'Exit focus' : 'Focus reader'}</button><button class="compatibility-indicator" class:compatibility-off={compatibilityTarget === 'none'} class:compatibility-error={compatibilitySummary.errors > 0} class:compatibility-warning={compatibilitySummary.errors === 0 && compatibilitySummary.warnings > 0} class:compatibility-info={compatibilitySummary.errors === 0 && compatibilitySummary.warnings === 0 && compatibilitySummary.info > 0} type="button" aria-label={compatibilitySummary.label} title={compatibilitySummary.detail} onclick={onRevealCompatibilityIssues}><span class="compatibility-indicator-dot" aria-hidden="true"></span><span>{compatibilitySummary.label}</span></button>{#if editing}<button id="toggle-source-drawer" type="button" aria-expanded={sourceViewVisible} aria-controls="view-mode-panel" title="Toggle source drawer (Ctrl+Alt+S)" onclick={onToggleSource}>{sourceViewVisible ? 'Hide source' : 'Show source'}</button>{/if}</div>
     </div>
     <div id="view-mode-panel" class="document-views" class:split={splitViewVisible} role="tabpanel" aria-label={`${effectiveViewMode} document view`} tabindex="0">
       {#if renderedViewVisible}
-        <div class="rendered-pane">{#key `${active.id}:${renderResetToken}`}<MarkdownView html={active.html} source={active.source} renderedSource={active.renderedSource} renderedBlocks={active.blocks ?? []} sourceMap={active.sourceMap} profile={markdownProfile} editable={editing} incrementalCommitMapId={incrementalCommitMapId} incrementalCommitSourceRange={incrementalCommitSourceRange} highlightedMapIds={findMapIds} activeMapIds={activeFindMapIds} hoveredMapIds={hoveredMapIds} selectedMapIds={selectedMapIds} externalSourceSelection={externalSourceSelection} sourceSelectionActive={sourceSelectionActive} onMapReady={onMapReady} onMapHover={onMapHover} onMapSelect={onMapSelect} onBlockEdit={onBlockEdit} onVisualDraftEdit={onVisualDraftEdit} onVisualDraftCommit={onVisualDraftCommit} onVisualStructureEdit={onVisualStructureEdit} onVisualPaste={onVisualPaste} onVisualEditRejected={onVisualEditRejected} onDetailsSummaryEdit={onDetailsSummaryEdit} onTableEdit={onTableEdit} onBlockMove={onBlockMove} onBlockBeside={onBlockBeside} onBlockDelete={onBlockDelete} onSlashCommand={onSlashCommand} onRevealSource={onRevealSource} documentId={active.id} headingSlugs={headingSlugs} allowRemoteImages={remoteImagesEnabled} onOpenLink={onOpenLink} onOpenMedia={onOpenMedia} />{/key}</div>
+        <div class="rendered-pane" aria-busy={renderedViewBusy}>{#key `${active.id}:${renderResetToken}`}<MarkdownView html={active.html} source={active.source} renderedSource={active.renderedSource} renderedBlocks={active.blocks ?? []} sourceMap={active.sourceMap} profile={markdownProfile} spellcheckEnabled={spellcheckEnabled} spellcheckLocale={spellcheckLocale} editable={editing} rendering={renderedViewBusy} incrementalCommitMapId={incrementalCommitMapId} incrementalCommitSourceRange={incrementalCommitSourceRange} onIncrementalCommitConsumed={onIncrementalCommitConsumed} highlightedMapIds={findMapIds} activeMapIds={activeFindMapIds} hoveredMapIds={hoveredMapIds} selectedMapIds={selectedMapIds} externalSourceSelection={externalSourceSelection} sourceSelectionActive={sourceSelectionActive} onMapReady={onMapReady} onMapHover={onMapHover} onMapSelect={onMapSelect} onBlockEdit={onBlockEdit} onVisualDraftEdit={onVisualDraftEdit} onVisualDraftCommit={onVisualDraftCommit} onVisualStructureEdit={onVisualStructureEdit} onVisualPaste={onVisualPaste} onVisualEditRejected={onVisualEditRejected} onDetailsSummaryEdit={onDetailsSummaryEdit} onTableEdit={onTableEdit} onBlockMove={onBlockMove} onBlockDelete={onBlockDelete} onSlashCommand={onSlashCommand} onRevealSource={onRevealSource} documentId={active.id} headingSlugs={headingSlugs} allowRemoteImages={remoteImagesEnabled} onOpenLink={onOpenLink} onOpenMedia={onOpenMedia} />{/key}</div>
       {/if}
       {#if sourceEditorMounted}
         <div class="source-pane" class:source-hidden={!sourceViewVisible} aria-hidden={!sourceViewVisible} inert={!sourceViewVisible}>
           {#key `${active.id}:${active.meta.lineEnding}`}
-            <MarkdownEditor source={active.source} sourceMap={active.sourceMap} lineEnding={active.meta.lineEnding} profile={markdownProfile} findMatches={documentFindMatches} activeFindMatch={documentFindMatches.length ? documentFindMatches[activeFindIndex] ?? null : null} hoveredSourceSelection={hoveredSourceSelection} externalSourceSelection={externalSourceSelection} onHover={onSourceHover} onContextMenu={onSourceContextMenu} onOpenLink={onOpenLink} onChange={onSourceChange} onSelection={onSourceSelection} onPaste={onPaste} onSourceSlashCommand={onSourceSlashCommand} />
+            <MarkdownEditor source={active.source} sourceMap={active.sourceMap} lineEnding={active.meta.lineEnding} profile={markdownProfile} headingSlugs={headingSlugs} completionPaths={completionPaths} spellcheckEnabled={spellcheckEnabled} spellcheckLocale={spellcheckLocale} findMatches={documentFindMatches} activeFindMatch={documentFindMatches.length ? documentFindMatches[activeFindIndex] ?? null : null} hoveredSourceSelection={hoveredSourceSelection} externalSourceSelection={externalSourceSelection} onHover={onSourceHover} onContextMenu={onSourceContextMenu} onOpenLink={onOpenLink} onChange={onSourceChange} onSelection={onSourceSelection} onPaste={onPaste} onSourceSlashCommand={onSourceSlashCommand} />
           {/key}
         </div>
       {/if}
     </div>
+  {/if}
+  {#if documentLoading}
+    <DocumentLoading loading={documentLoading} />
   {/if}
 </main>

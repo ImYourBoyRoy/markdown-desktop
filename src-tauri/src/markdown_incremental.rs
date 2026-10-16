@@ -1,7 +1,9 @@
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use comrak::Options;
+use comrak::html::Anchorizer;
 use comrak::nodes::{AstNode, NodeValue};
 use sha2::{Digest, Sha256};
+use url::Url;
 
 use crate::markdown_source_map::{line_starts, node_range};
 
@@ -49,8 +51,37 @@ struct TopLevelBlock<'a> {
 
 pub(crate) fn markdown_sanitizer() -> ammonia::Builder<'static> {
     let mut sanitizer = ammonia::Builder::default();
-    sanitizer.add_tags(["details", "summary", "ins", "sub", "sup"]);
+    sanitizer.add_tags([
+        "details", "summary", "ins", "sub", "sup", "video", "source", "iframe",
+    ]);
     sanitizer.add_tag_attributes("details", ["open"]);
+    sanitizer.add_tag_attributes("img", ["width", "height", "align"]);
+    sanitizer.add_tag_attributes(
+        "video",
+        [
+            "controls",
+            "preload",
+            "playsinline",
+            "poster",
+            "width",
+            "height",
+            "src",
+        ],
+    );
+    sanitizer.add_tag_attributes("source", ["src", "type"]);
+    sanitizer.add_tag_attributes(
+        "iframe",
+        [
+            "src",
+            "title",
+            "width",
+            "height",
+            "loading",
+            "allow",
+            "allowfullscreen",
+            "referrerpolicy",
+        ],
+    );
     // GitHub README badge rows rely on <p align="center">. Ammonia allows
     // align on several tags by default but not on p; restore it explicitly.
     sanitizer.add_tag_attributes("p", ["align"]);
@@ -78,6 +109,79 @@ pub(crate) fn markdown_sanitizer() -> ammonia::Builder<'static> {
         ],
     );
     sanitizer
+}
+
+fn allowed_embed_url(value: &str) -> bool {
+    let Ok(url) = Url::parse(value.trim()) else {
+        return false;
+    };
+    if url.scheme() != "https" {
+        return false;
+    }
+    let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+    let path = url.path();
+    (matches!(
+        host.as_str(),
+        "www.youtube-nocookie.com" | "www.youtube.com"
+    ) && path.starts_with("/embed/"))
+        || (host == "player.vimeo.com" && path.starts_with("/video/"))
+        || (matches!(host.as_str(), "drive.google.com" | "www.drive.google.com")
+            && path.starts_with("/file/")
+            && path.ends_with("/preview"))
+}
+
+fn html_attribute(markup: &str, name: &str) -> Option<String> {
+    let lower = markup.to_ascii_lowercase();
+    let needle = format!("{name}=");
+    let start = lower.find(&needle)? + needle.len();
+    let value = markup[start..].trim_start();
+    if let Some(quoted) = value.strip_prefix('"') {
+        return quoted.split('"').next().map(str::to_owned);
+    }
+    if let Some(quoted) = value.strip_prefix('\'') {
+        return quoted.split('\'').next().map(str::to_owned);
+    }
+    Some(value.split([' ', '\t', '\r', '\n', '>']).next()?.to_owned())
+}
+
+/// Keep provider embeds narrow even though raw HTML is enabled for other safe
+/// Markdown features. CSP is a second boundary; this output boundary also
+/// keeps exported/sanitized HTML from retaining arbitrary remote frames.
+fn strip_unapproved_iframes(raw: &str) -> String {
+    let lower = raw.to_ascii_lowercase();
+    let mut output = String::with_capacity(raw.len());
+    let mut cursor = 0;
+    while let Some(relative_start) = lower[cursor..].find("<iframe") {
+        let start = cursor + relative_start;
+        let after_name = start + "<iframe".len();
+        if !matches!(
+            lower.as_bytes().get(after_name),
+            Some(b'>') | Some(b' ') | Some(b'\t') | Some(b'\r') | Some(b'\n')
+        ) {
+            cursor = after_name;
+            continue;
+        }
+        let Some(relative_end) = lower[after_name..].find('>') else {
+            output.push_str(&raw[cursor..]);
+            return output;
+        };
+        let tag_end = after_name + relative_end;
+        let tag = &raw[start..=tag_end];
+        output.push_str(&raw[cursor..start]);
+        if html_attribute(tag, "src").is_some_and(|src| allowed_embed_url(&src)) {
+            output.push_str(tag);
+            cursor = tag_end + 1;
+            continue;
+        }
+        let content_start = tag_end + 1;
+        if let Some(relative_close) = lower[content_start..].find("</iframe>") {
+            cursor = content_start + relative_close + "</iframe>".len();
+        } else {
+            cursor = content_start;
+        }
+    }
+    output.push_str(&raw[cursor..]);
+    output
 }
 
 pub(crate) fn block_content_hash(
@@ -120,17 +224,103 @@ fn collect_top_level_blocks<'a>(
     blocks
 }
 
+const HTML_VOID_TAGS: [&str; 13] = [
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source",
+    "track",
+];
+
+fn html_tag_end(value: &str, start: usize) -> Option<usize> {
+    let mut quote = None;
+    for (offset, character) in value[start + 1..].char_indices() {
+        match quote {
+            Some(delimiter) if character == delimiter => quote = None,
+            Some(_) => {}
+            None if character == '\'' || character == '"' => quote = Some(character),
+            None if character == '>' => return Some(start + 1 + offset),
+            None => {}
+        }
+    }
+    None
+}
+
+/// Return whether a raw HTML block is self-contained in its AST literal.
+///
+/// Comrak can represent an opening container such as `<details>` and its
+/// closing tag as separate HTML blocks around Markdown children. Formatting
+/// those nodes independently would move the children outside the container,
+/// so only blocks whose tag stack closes inside the same literal may use the
+/// incremental renderer. Malformed HTML conservatively falls back to the full
+/// document renderer.
+fn html_block_is_self_contained(literal: &str) -> bool {
+    let mut stack = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative_start) = literal[cursor..].find('<') {
+        let start = cursor + relative_start;
+        let Some(end) = html_tag_end(literal, start) else {
+            return false;
+        };
+        let markup = &literal[start..=end];
+        cursor = end + 1;
+        if markup.starts_with("<!--") {
+            if !markup.ends_with("-->") {
+                return false;
+            }
+            continue;
+        }
+        if markup.starts_with("<!") || markup.starts_with("<?") {
+            continue;
+        }
+        let bytes = markup.as_bytes();
+        let mut index = 1;
+        let closing = bytes.get(index) == Some(&b'/');
+        if closing {
+            index += 1;
+        }
+        while bytes.get(index).is_some_and(u8::is_ascii_whitespace) {
+            index += 1;
+        }
+        let name_start = index;
+        while bytes
+            .get(index)
+            .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b':' || *byte == b'-')
+        {
+            index += 1;
+        }
+        if index == name_start {
+            return false;
+        }
+        let name = markup[name_start..index].to_ascii_lowercase();
+        if closing {
+            if stack.pop().as_deref() != Some(name.as_str()) {
+                return false;
+            }
+            continue;
+        }
+        let self_closing = markup[..markup.len() - 1].trim_end().ends_with('/');
+        if !self_closing && !HTML_VOID_TAGS.contains(&name.as_str()) {
+            stack.push(name);
+        }
+    }
+    stack.is_empty()
+}
+
 fn document_supports_block_rendering<'a>(root: &'a AstNode<'a>) -> bool {
+    // A top-level raw HTML block is an opaque, self-contained fragment: Comrak
+    // emits it without consulting sibling Markdown nodes, so formatting and
+    // sanitizing that block independently preserves the full-document output.
+    // Inline raw HTML remains document-scoped because it can change the
+    // surrounding paragraph's structure. Footnotes also retain their global
+    // numbering/definition context and must use the full renderer.
     for node in root.descendants() {
         let value = node.data.borrow().value.clone();
-        if matches!(
-            value,
+        match value {
             NodeValue::FootnoteReference(_)
-                | NodeValue::FootnoteDefinition(_)
-                | NodeValue::HtmlBlock(_)
-                | NodeValue::HtmlInline(_)
-        ) {
-            return false;
+            | NodeValue::FootnoteDefinition(_)
+            | NodeValue::HtmlInline(_) => return false,
+            NodeValue::HtmlBlock(block) if !html_block_is_self_contained(&block.literal) => {
+                return false;
+            }
+            _ => {}
         }
     }
     true
@@ -143,6 +333,69 @@ fn format_and_sanitize_block<'a>(
 ) -> String {
     let mut raw = String::new();
     comrak::format_html(node, options, &mut raw).expect("writing to String cannot fail");
+    let raw = strip_unapproved_iframes(&raw);
+    sanitizer.clean(&raw).to_string()
+}
+
+fn escaped_html_text(value: &str) -> String {
+    let mut escaped = String::new();
+    comrak::html::escape(&mut escaped, value).expect("writing to String cannot fail");
+    escaped
+}
+
+/// Format one heading with the document-wide anchorizer while keeping the
+/// existing block cache boundary. Comrak's normal formatter owns an
+/// anchorizer inside its document context, so formatting each top-level block
+/// independently would otherwise reset duplicate-heading suffixes. Rendering
+/// the fragment without IDs and adding the exact Comrak anchor markup here
+/// preserves full-document output while allowing non-heading blocks to reuse
+/// their cached HTML.
+fn format_and_sanitize_heading_block<'a>(
+    node: &'a AstNode<'a>,
+    options: &Options,
+    sanitizer: &mut ammonia::Builder<'static>,
+    anchorizer: &mut Anchorizer,
+) -> String {
+    let heading_text = node.collect_text();
+    let id = anchorizer.anchorize(&heading_text);
+    let prefix = options
+        .extension
+        .header_id_prefix
+        .as_deref()
+        .unwrap_or_default();
+    let href_prefix = if options.extension.header_id_prefix_in_href {
+        prefix
+    } else {
+        ""
+    };
+
+    let mut fragment_options = options.clone();
+    fragment_options.extension.header_id_prefix = None;
+    let mut raw = String::new();
+    comrak::format_html(node, &fragment_options, &mut raw).expect("writing to String cannot fail");
+    let mut raw = strip_unapproved_iframes(&raw);
+    let Some(tag_start) = raw.find("<h") else {
+        return sanitizer.clean(&raw).to_string();
+    };
+    let Some(level) = raw.as_bytes().get(tag_start + 2).copied() else {
+        return sanitizer.clean(&raw).to_string();
+    };
+    if !(b'1'..=b'6').contains(&level) {
+        return sanitizer.clean(&raw).to_string();
+    }
+    let opening_attributes = format!(" id=\"{}{}\"", prefix, id,);
+    raw.insert_str(tag_start + 3, &opening_attributes);
+
+    let level = level as char;
+    let closing = format!("</h{level}>");
+    let Some(closing_start) = raw.rfind(&closing) else {
+        return sanitizer.clean(&raw).to_string();
+    };
+    let escaped_text = escaped_html_text(&heading_text);
+    let anchor = format!(
+        "<a href=\"#{href_prefix}{id}\" aria-label=\"Link to heading '{escaped_text}'\" data-heading-content=\"{escaped_text}\" class=\"anchor\"></a>",
+    );
+    raw.insert_str(closing_start, &anchor);
     sanitizer.clean(&raw).to_string()
 }
 
@@ -155,6 +408,7 @@ fn full_document_html<'a>(
     let mut raw_html = String::new();
     comrak::format_html(root, options, &mut raw_html).expect("writing to String cannot fail");
     let sanitizer = markdown_sanitizer();
+    let raw_html = strip_unapproved_iframes(&raw_html);
     let html = sanitizer.clean(&raw_html).to_string();
     (
         html,
@@ -194,17 +448,6 @@ pub(crate) fn assemble_html<'a>(
         return full_document_html(root, options, profile, compatibility_target);
     }
 
-    // HTML formatting has document-scoped heading ID state. Until that state
-    // is represented in the cache, documents with generated heading IDs use
-    // the whole-document formatter.
-    if options.extension.header_id_prefix.is_some()
-        && root
-            .descendants()
-            .any(|node| matches!(node.data.borrow().value, NodeValue::Heading(_)))
-    {
-        return full_document_html(root, options, profile, compatibility_target);
-    }
-
     let hashes: Vec<String> = blocks
         .iter()
         .map(|block| {
@@ -229,13 +472,21 @@ pub(crate) fn assemble_html<'a>(
     });
 
     let mut sanitizer = markdown_sanitizer();
+    let mut anchorizer = Anchorizer::new();
     let mut html = String::new();
     let mut fragments = Vec::with_capacity(blocks.len());
     let mut reused_any = false;
 
     for (index, block) in blocks.iter().enumerate() {
         let hash = &hashes[index];
-        let fragment_html = if let Some(cached_store) = prior {
+        let is_heading = options.extension.header_id_prefix.is_some()
+            && matches!(block.node.data.borrow().value, NodeValue::Heading(_));
+        let fragment_html = if is_heading {
+            // Heading IDs and duplicate suffixes depend on all prior headings,
+            // so regenerate only this small fragment against the shared
+            // document anchorizer instead of reusing stale cached IDs.
+            format_and_sanitize_heading_block(block.node, options, &mut sanitizer, &mut anchorizer)
+        } else if let Some(cached_store) = prior {
             let cached = &cached_store.fragments[index];
             if cached.content_hash == *hash {
                 reused_any = true;
@@ -363,27 +614,104 @@ mod tests {
     }
 
     #[test]
-    fn document_scoped_html_and_heading_ids_use_full_render() {
+    fn document_scoped_html_still_uses_full_render() {
         let mut options = github_options!();
         options.extension.header_id_prefix = Some(String::new());
-        for source in [
-            format!("<details>\n\n{}\n</details>\n", large_fixture_source()),
-            format!("# Duplicate\n\n# Duplicate\n\n{}", large_fixture_source()),
-        ] {
-            let arena = Arena::new();
-            let root = parse_document(&arena, &source, &options);
-            let (expected, seed, _) = full_document_html(root, &options, "github", "githubReadme");
-            let (actual, _, strategy) = assemble_html(
-                &source,
-                root,
-                &options,
-                Some(&seed),
-                "github",
-                "githubReadme",
-            );
-            assert_eq!(strategy, RenderStrategy::Full);
-            assert_eq!(actual, expected);
-        }
+        let source = format!("<details>\n\n{}\n</details>\n", large_fixture_source());
+        let arena = Arena::new();
+        let root = parse_document(&arena, &source, &options);
+        let (expected, seed, _) = full_document_html(root, &options, "github", "githubReadme");
+        let (actual, _, strategy) = assemble_html(
+            &source,
+            root,
+            &options,
+            Some(&seed),
+            "github",
+            "githubReadme",
+        );
+        assert_eq!(strategy, RenderStrategy::Full);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn inline_html_still_uses_full_document_render() {
+        let source = format!(
+            "Paragraph with <span>inline HTML</span>.\n\n{}",
+            large_fixture_source()
+        );
+        let arena = Arena::new();
+        let options = github_options!();
+        let root = parse_document(&arena, &source, &options);
+        let (_, seed, _) = full_document_html(root, &options, "github", "githubReadme");
+        let (actual, _, strategy) = assemble_html(
+            &source,
+            root,
+            &options,
+            Some(&seed),
+            "github",
+            "githubReadme",
+        );
+        assert_eq!(strategy, RenderStrategy::Full);
+        let (expected, _, _) = full_document_html(root, &options, "github", "githubReadme");
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn self_contained_html_block_uses_incremental_rendering() {
+        let mut options = github_options!();
+        options.extension.header_id_prefix = Some(String::new());
+        let source = format!(
+            "<p align=\"center\"><a href=\"https://example.com\"><img src=\"badge.png\" alt=\"Badge\" /></a></p>\n\n{}",
+            large_fixture_source()
+        );
+        let arena = Arena::new();
+        let root = parse_document(&arena, &source, &options);
+        let (expected, seed, _) = full_document_html(root, &options, "github", "githubReadme");
+        let (actual, _, strategy) = assemble_html(
+            &source,
+            root,
+            &options,
+            Some(&seed),
+            "github",
+            "githubReadme",
+        );
+        assert_eq!(strategy, RenderStrategy::BlockCold);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn incremental_heading_fragments_preserve_document_anchor_ids() {
+        let mut options = github_options!();
+        options.extension.header_id_prefix = Some(String::new());
+        let source = format!("# Duplicate\n\n# Duplicate\n\n{}", large_fixture_source());
+        let arena = Arena::new();
+        let root = parse_document(&arena, &source, &options);
+        let (expected, seed, _) = full_document_html(root, &options, "github", "githubReadme");
+        let (actual, cache, strategy) = assemble_html(
+            &source,
+            root,
+            &options,
+            Some(&seed),
+            "github",
+            "githubReadme",
+        );
+        assert_eq!(strategy, RenderStrategy::BlockCold);
+        assert_eq!(actual, expected);
+
+        let edited = source.replace("Paragraph block", "Edited paragraph block");
+        let arena = Arena::new();
+        let root = parse_document(&arena, &edited, &options);
+        let (actual, _, strategy) = assemble_html(
+            &edited,
+            root,
+            &options,
+            Some(&cache),
+            "github",
+            "githubReadme",
+        );
+        let (expected, _, _) = full_document_html(root, &options, "github", "githubReadme");
+        assert_eq!(strategy, RenderStrategy::Incremental);
+        assert_eq!(actual, expected);
     }
 
     #[test]

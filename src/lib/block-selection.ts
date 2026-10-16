@@ -7,7 +7,7 @@
 import type { TextSelection } from './formatting';
 import { isMovableRootBlockKind } from './block-move';
 
-const EXACT_OBJECT_KINDS = new Set(['link', 'image', 'html_link', 'html_image']);
+const EXACT_OBJECT_KINDS = new Set(['link', 'image', 'html_link', 'html_image', 'html_video', 'html_iframe']);
 
 const BLOCK_SELECTION_KINDS = new Set([
   'heading',

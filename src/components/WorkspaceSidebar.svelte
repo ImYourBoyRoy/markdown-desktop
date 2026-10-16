@@ -59,7 +59,7 @@
       <button id="left-files-tab" class:active={panel === 'files'} type="button" role="tab" aria-selected={panel === 'files'} aria-controls={panel === 'files' ? 'left-files-panel' : undefined} tabindex={panel === 'files' ? 0 : -1} onclick={() => onPanelChange('files')} onkeydown={onTablistKeydown}>Files</button>
       <button id="left-search-tab" class:active={panel === 'search'} type="button" role="tab" aria-selected={panel === 'search'} aria-controls={panel === 'search' ? 'left-search-panel' : undefined} tabindex={panel === 'search' ? 0 : -1} onclick={() => onPanelChange('search')} onkeydown={onTablistKeydown}>Search</button>
     </div>
-    <button class="collapse-button panel-collapse-control" type="button" aria-label="Collapse left sidebar" aria-expanded="true" onclick={onCollapse}>‹</button>
+    <button class="collapse-button panel-collapse-control" type="button" aria-label="Collapse left sidebar" aria-expanded="true" onclick={onCollapse}><span class="collapse-glyph collapse-left-glyph" aria-hidden="true"></span></button>
   </div>
   {#if panel === 'files'}
     <div id="left-files-panel" class="sidebar-heading" role="tabpanel" aria-labelledby="left-files-tab" tabindex="0">
@@ -73,7 +73,7 @@
             <button type="button" aria-label="Increase scan depth" disabled={scanDepth >= 12 || treeScanning} onclick={() => onDepthChange(scanDepth + 1)}>+</button>
           </label>
         {/if}
-        <button type="button" aria-label="Refresh workspace" onclick={onRefresh}>↻</button>
+        <button type="button" aria-label="Refresh workspace" onclick={onRefresh}><span class="workspace-refresh-glyph" aria-hidden="true"></span></button>
       </span>
     </div>
     {#if workspace}
@@ -102,14 +102,14 @@
             <div class="recent-sidebar-title">Recent Markdown files</div>
             <button class="recent-sidebar-clear" type="button" disabled={Boolean(openingRecentPath)} aria-label="Clear recent Markdown file history" title="Clear recent history" onclick={onClearRecent}>Clear</button>
           </div>
-          <div class="recent-sidebar-list" aria-label="Recent Markdown files">
+          <div class="recent-sidebar-list" role="group" aria-label="Recent Markdown files">
             {#each recentDocuments as path (path)}
               <div class="recent-sidebar-row" class:active={path === activeDocumentPath}>
                 <button class="recent-sidebar-item" type="button" disabled={openingRecentPath === path} title={path} aria-current={path === activeDocumentPath ? 'page' : undefined} onclick={() => onOpenRecent(path)}>
-                  <span class="recent-sidebar-icon" aria-hidden="true">◈</span>
+                  <span class="recent-sidebar-icon" aria-hidden="true"></span>
                   <span class="recent-sidebar-copy"><strong>{recentDocumentName(path)}</strong><small>{recentDocumentDirectory(path)}</small></span>
                 </button>
-                <button class="recent-sidebar-remove icon-button" type="button" disabled={openingRecentPath === path} aria-label={`Remove ${recentDocumentName(path)} from recent files`} title="Remove from recent history" onclick={() => onRemoveRecent(path)}>×</button>
+                <button class="recent-sidebar-remove icon-button" type="button" disabled={openingRecentPath === path} aria-label={`Remove ${recentDocumentName(path)} from recent files`} title="Remove from recent history" onclick={() => onRemoveRecent(path)}><span class="recent-remove-glyph" aria-hidden="true"></span></button>
               </div>
             {/each}
           </div>

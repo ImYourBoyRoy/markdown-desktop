@@ -11,6 +11,7 @@ function context(host: HTMLElement, current = true): RichContentContext {
     rebuildMappedElementIndex: vi.fn(),
     applyMapHighlights: vi.fn(),
     applyExternalSourceSelection: vi.fn(),
+    refreshBlockHandles: vi.fn(),
   };
 }
 
@@ -28,6 +29,7 @@ describe('rich content replacement', () => {
     expect(richContext.rebuildMappedElementIndex).toHaveBeenCalledOnce();
     expect(richContext.applyMapHighlights).toHaveBeenCalledOnce();
     expect(richContext.applyExternalSourceSelection).toHaveBeenCalledWith({ from: 2, to: 4 });
+    expect(richContext.refreshBlockHandles).toHaveBeenCalledOnce();
   });
 
   it('does not let a stale render replace the current DOM', () => {

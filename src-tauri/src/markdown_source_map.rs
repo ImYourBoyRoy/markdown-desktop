@@ -790,10 +790,12 @@ mod tests {
     }
 
     #[test]
-    fn features_heading_and_list_spans_match_readme_offsets() {
+    fn what_you_get_heading_and_list_spans_match_readme_offsets() {
         let markdown = include_str!("../../README.md");
         let source_map = source_map_for(markdown);
-        let features_at = markdown.find("## Features").expect("Features heading");
+        let what_you_get_at = markdown
+            .find("## What you get")
+            .expect("What you get heading");
         let list_at = markdown
             .find("- **Rendered, Source, and Split**")
             .expect("features list");
@@ -804,10 +806,10 @@ mod tests {
             .iter()
             .find(|span| {
                 span.kind == "heading"
-                    && span.source_byte_start <= features_at
-                    && span.source_byte_end >= features_at + "## Features".len()
+                    && span.source_byte_start <= what_you_get_at
+                    && span.source_byte_end >= what_you_get_at + "## What you get".len()
             })
-            .expect("Features heading span");
+            .expect("What you get heading span");
         let list = source_map
             .spans
             .iter()
@@ -820,7 +822,7 @@ mod tests {
 
         let heading_text = &markdown[heading.source_byte_start..heading.source_byte_end];
         let list_text = &markdown[list.source_byte_start..list.source_byte_end];
-        assert_eq!(heading_text, "## Features");
+        assert_eq!(heading_text, "## What you get");
         assert!(
             list_text.starts_with("- **Rendered, Source, and Split**"),
             "list started with {:?}",
@@ -847,9 +849,10 @@ mod tests {
         let h2 = rendered
             .html
             .split("<h2")
-            .nth(1)
+            .skip(1)
+            .find(|chunk| chunk.contains("What you get"))
             .and_then(|chunk| chunk.split("</h2>").next())
-            .expect("Features h2 html");
+            .expect("What you get h2 html");
         let sourcepos = h2
             .split("data-sourcepos=\"")
             .nth(1)
@@ -878,7 +881,7 @@ mod tests {
                     && span.source_byte_end <= list.source_byte_end
             })
             .collect();
-        assert!(!items.is_empty(), "expected list items under Features");
+        assert!(!items.is_empty(), "expected list items under What you get");
         let first = items[0];
         let last = items[items.len() - 1];
         let first_text = &markdown[first.source_byte_start..first.source_byte_end];

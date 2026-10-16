@@ -8,6 +8,7 @@ import { captureSnapshot, restoreSnapshot } from './upgrade-snapshot.mjs';
 import { parseUpgradeArgs, upgradePlan, versionAtLeast, highestCaretMajor, assertMermaidCompatibility } from './upgrade-plan.mjs';
 import { commandSpec } from './upgrade-process.mjs';
 import { normalizeActionVersionComments } from './workflow-comments.mjs';
+import { parseHeadRevision, updateManifest, WCAGATE_PACKAGE } from './update-wcagate.mjs';
 
 test('stable minimum version comparison rejects prereleases and stale versions', () => {
   assert.equal(versionAtLeast('12.3.4', '12.3.4'), true);
@@ -40,11 +41,20 @@ test('updates manifest ranges before lockfile resolution and runs full gates', (
   assert.ok(plan.indexOf('cargo +stable upgrade --manifest-path src-tauri/Cargo.toml --incompatible allow --pinned allow') < plan.indexOf('cargo +stable update --manifest-path src-tauri/Cargo.toml'));
   assert.ok(plan.includes('node scripts/update-pnpm.mjs'));
   assert.ok(plan.includes('pnpm update --latest --include-github-actions'));
+  assert.ok(plan.indexOf('node scripts/update-wcagate.mjs') < plan.indexOf('pnpm install --lockfile-only'));
   assert.ok(plan.includes('node scripts/normalize-workflow-comments.mjs'));
   assert.ok(plan.includes('pnpm verify:dependencies'));
   assert.ok(plan.includes('pnpm tauri build'));
   assert.match(plan.at(-1), /packaged_acceptance.*--require-binary$/);
   assert.equal(plan.some((step) => /purge|--force|reset --hard/.test(step)), false);
+});
+test('WCAGate refresh accepts only an immutable upstream revision', () => {
+  const revision = '30be59d61db6f1cc3c5e80701fb28a0346588ca7';
+  assert.equal(parseHeadRevision(`${revision}\tHEAD\n`), revision);
+  assert.throws(() => parseHeadRevision('main\tHEAD\n'), /invalid main revision/);
+  const manifest = { devDependencies: { [WCAGATE_PACKAGE]: 'github:imyourboyroy/WCAGate#old' } };
+  assert.equal(updateManifest(manifest, revision), 'github:imyourboyroy/WCAGate#old');
+  assert.equal(manifest.devDependencies[WCAGATE_PACKAGE], `github:imyourboyroy/WCAGate#${revision}`);
 });
 test('workflow action comments keep only the current version after an update', () => {
   const source = '- uses: actions/checkout@abc #v7.0.1  v6\n- uses: dtolnay/rust-toolchain@def # Rust stable\n';

@@ -43,7 +43,63 @@ pub async fn open_workspace(
         ))
     })??;
     queue_workspace_index(&app, state.inner(), &id)?;
+    watch_workspace(&app, state.inner(), &id, &root)?;
     Ok(info)
+}
+
+fn watch_workspace(
+    app: &AppHandle,
+    shared: &SharedState,
+    id: &str,
+    root: &Path,
+) -> Result<(), CommandError> {
+    let (sender, receiver) = std::sync::mpsc::sync_channel::<()>(1);
+    let mut watcher = RecommendedWatcher::new(
+        move |event: notify::Result<notify::Event>| {
+            if let Ok(event) = event
+                && matches!(
+                    event.kind,
+                    EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_)
+                )
+                && event
+                    .paths
+                    .iter()
+                    .any(|path| security::is_markdown(path) || path.extension().is_none())
+            {
+                let _ = sender.try_send(());
+            }
+        },
+        Config::default(),
+    )
+    .map_err(|error| CommandError::Message(error.to_string()))?;
+    watcher
+        .watch(root, RecursiveMode::Recursive)
+        .map_err(|error| CommandError::Message(error.to_string()))?;
+    let handle = app.clone();
+    let workspace_id = id.to_owned();
+    std::thread::Builder::new()
+        .name("workspace-watch".into())
+        .spawn(move || {
+            while receiver.recv().is_ok() {
+                loop {
+                    match receiver.recv_timeout(std::time::Duration::from_millis(400)) {
+                        Ok(()) => continue,
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
+                    }
+                }
+                if let Some(state) = handle.try_state::<SharedState>() {
+                    let _ = queue_workspace_index(&handle, state.inner(), &workspace_id);
+                }
+            }
+        })
+        .map_err(|error| CommandError::Message(error.to_string()))?;
+    let mut state = shared
+        .lock()
+        .map_err(|_| CommandError::Message("workspace state unavailable".into()))?;
+    state.workspace_watchers.clear();
+    state.workspace_watchers.insert(id.to_owned(), watcher);
+    Ok(())
 }
 
 #[tauri::command]
@@ -149,6 +205,11 @@ pub(crate) fn spawn_workspace_index(
         .name(format!("markdown-index-{indexed_id}"))
         .spawn(move || {
             let result = index_workspace(&db_path, &root, depth);
+            if result.is_ok()
+                && let Ok(info) = scan_workspace_tree(&root, &indexed_id, depth)
+            {
+                let _ = app_for_index.emit("workspace-refreshed", info);
+            }
             let mut next_job = None;
             let mut indexing = None;
             if let Some(shared) = app_for_index.try_state::<SharedState>()
@@ -221,7 +282,7 @@ pub(crate) fn spawn_workspace_index(
 }
 
 #[tauri::command]
-pub fn search_workspace(
+pub async fn search_workspace(
     app: AppHandle,
     state: State<'_, SharedState>,
     workspace_id: String,
@@ -240,12 +301,24 @@ pub fn search_workspace(
         .map_err(|e| CommandError::Message(e.to_string()))?
         .join("indexes")
         .join(format!("{workspace_id}.sqlite3"));
-    let match_query = fts_match_query(&query);
+    tauri::async_runtime::spawn_blocking(move || {
+        search_workspace_index(&workspace, &db_path, &query)
+    })
+    .await
+    .map_err(|error| CommandError::Message(format!("search worker failed: {error}")))
+}
+
+fn search_workspace_index(
+    workspace: &StoredWorkspace,
+    db_path: &Path,
+    query: &str,
+) -> Vec<SearchResult> {
+    let match_query = fts_match_query(query);
     if !match_query.is_empty()
         && !workspace.indexing
         && let Ok(connection) = Connection::open(db_path)
         && let Ok(mut statement) = connection.prepare(
-            "SELECT document_id, path, title, snippet(markdown_fts, 1, '[', ']', '…', 12) FROM markdown_fts WHERE markdown_fts MATCH ?1 LIMIT 50",
+            "SELECT document_id, path, title, snippet(markdown_fts, 3, '[', ']', '…', 12), source FROM markdown_fts WHERE markdown_fts MATCH ?1 ORDER BY rank LIMIT 50",
         )
     {
         let rows = statement.query_map(params![match_query], |row| {
@@ -255,7 +328,7 @@ pub fn search_workspace(
                 relative_path: String::new(),
                 title: row.get(2)?,
                 snippet: row.get(3)?,
-                line: 1,
+                line: match_line(&row.get::<_, String>(4)?, query),
             })
         });
         if let Ok(rows) = rows {
@@ -271,11 +344,49 @@ pub fn search_workspace(
                 })
                 .collect::<Vec<_>>();
             if !matches.is_empty() {
-                return Ok(matches);
+                return matches;
             }
         }
     }
-    Ok(search_files(&workspace.root, &query, workspace.scan_depth))
+    search_files(&workspace.root, query, workspace.scan_depth)
+}
+
+fn match_line(source: &str, query: &str) -> usize {
+    let terms = query
+        .split_whitespace()
+        .map(str::to_lowercase)
+        .collect::<Vec<_>>();
+    source
+        .lines()
+        .position(|line| terms.iter().any(|term| line.to_lowercase().contains(term)))
+        .map_or(1, |index| index + 1)
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+    #[test]
+    fn indexed_search_returns_source_snippets_and_the_matching_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.md");
+        fs::write(&path, "# Notes\n\nFind the needle here\n").unwrap();
+        let db = dir.path().join("search.sqlite3");
+        index_workspace(&db, dir.path(), 3).unwrap();
+        let workspace = StoredWorkspace {
+            root: dir.path().to_owned(),
+            scan_depth: 3,
+            indexing: false,
+            index_dirty: false,
+            index_generation: 0,
+        };
+        let results = search_workspace_index(&workspace, &db, "needle");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].line, 3);
+        assert!(results[0].snippet.contains("[needle]"));
+        fs::write(&path, "Changed without the old search term").unwrap();
+        index_workspace(&db, dir.path(), 3).unwrap();
+        assert!(search_workspace_index(&workspace, &db, "needle").is_empty());
+    }
 }
 
 pub(crate) fn fts_match_query(query: &str) -> String {
@@ -285,6 +396,50 @@ pub(crate) fn fts_match_query(query: &str) -> String {
         .map(|token| format!("\"{}\"", token.replace('"', "\"\"")))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+#[tauri::command]
+pub async fn document_backlinks(
+    app: AppHandle,
+    state: State<'_, SharedState>,
+    workspace_id: String,
+    document_id: String,
+) -> Result<Vec<SearchResult>, CommandError> {
+    let (workspace, document) = {
+        let state = state
+            .lock()
+            .map_err(|_| CommandError::Message("workspace state unavailable".into()))?;
+        (
+            state
+                .workspaces
+                .get(&workspace_id)
+                .cloned()
+                .ok_or_else(|| CommandError::Message("workspace is no longer open".into()))?,
+            state
+                .documents
+                .get(&document_id)
+                .cloned()
+                .ok_or_else(|| CommandError::Message("document is no longer open".into()))?,
+        )
+    };
+    if !document.path.starts_with(&workspace.root) {
+        return Ok(Vec::new());
+    }
+    let db_path = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| CommandError::Message(error.to_string()))?
+        .join("indexes")
+        .join(format!("{workspace_id}.sqlite3"));
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<SearchResult>, CommandError> {
+        let connection = Connection::open(db_path).map_err(|error| CommandError::Message(error.to_string()))?;
+        let mut statement = connection.prepare("SELECT source_path, line, label FROM markdown_links WHERE target_path = ?1 ORDER BY source_path, line LIMIT 100").map_err(|error| CommandError::Message(error.to_string()))?;
+        let rows = statement.query_map(params![document.path.to_string_lossy()], |row| {
+            let path: String = row.get(0)?;
+            Ok(SearchResult { document_id: stable_id(&path), relative_path: Path::new(&path).strip_prefix(&workspace.root).unwrap_or(Path::new("")).to_string_lossy().replace('\\', "/"), title: Path::new(&path).file_name().unwrap_or_default().to_string_lossy().into_owned(), path, line: row.get::<_, u32>(1)? as usize, snippet: row.get(2)? })
+        }).map_err(|error| CommandError::Message(error.to_string()))?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|error| CommandError::Message(error.to_string()))
+    }).await.map_err(|error| CommandError::Message(format!("backlink worker failed: {error}")))?
 }
 
 pub(crate) fn scan_workspace_tree(

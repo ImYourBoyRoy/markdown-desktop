@@ -2,6 +2,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
+import { assertRendererBudgets } from './renderer_budget.mjs';
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url));
 const vendorRoot = `${projectRoot}/dist/vendor`;
@@ -24,6 +25,8 @@ for (const [label, path] of [
     throw new Error(`${label} asset is missing or empty: ${path}`);
   }
 }
+
+assertRendererBudgets(projectRoot);
 
 // Mermaid uses browser CSSOM/SVG measurement APIs that are not implemented by
 // jsdom. These shims are deliberately limited to the measurement surface used

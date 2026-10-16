@@ -36,6 +36,17 @@ export interface Issue {
   mapId?: string;
   sourceByteStart?: number;
   sourceByteEnd?: number;
+  fix?: IssueFix;
+}
+
+/** A source-preserving, revision-checked edit offered by local diagnostics. */
+export interface IssueFix {
+  label: string;
+  from: number;
+  to: number;
+  replacement: string;
+  expected: string;
+  sourceHash?: string;
 }
 
 export type SourceMapAttribute = string | number | boolean;

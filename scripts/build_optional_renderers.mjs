@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'vite';
+import { assertRendererBudgets } from './renderer_budget.mjs';
 
 const projectRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const outputDirectory = join(projectRoot, 'dist', 'vendor');
@@ -44,4 +45,5 @@ if (!existsSync(mermaidOutput)) {
   throw new Error(`Mermaid renderer asset was not produced: ${mermaidOutput}`);
 }
 
+assertRendererBudgets(projectRoot);
 console.log(`Optional Mermaid renderer staged at ${mermaidOutput}`);

@@ -84,13 +84,20 @@ describe('visual structure patches', () => {
   });
 
   it('indents simple and rich list items by source prefix only', () => {
-    const source = '- child';
-    expect(indentVisualListItem(source, { from: 0, to: source.length }, 2, 'list_item', 'indent')?.replacement)
+    const source = '- parent\n- child';
+    const childFrom = source.indexOf('- child');
+    expect(indentVisualListItem(source, { from: childFrom, to: source.length }, childFrom + 2, 'list_item', 'indent')?.replacement)
       .toBe('  - child');
     expect(indentVisualListItem('  - child', { from: 0, to: 9 }, 4, 'list_item', 'outdent')?.replacement)
       .toBe('- child');
-    expect(indentVisualListItem('- **child**', { from: 0, to: 11 }, 2, 'list_item', 'indent')?.replacement)
+    const richSource = '- parent\n- **child**';
+    const richFrom = richSource.indexOf('- **child**');
+    expect(indentVisualListItem(richSource, { from: richFrom, to: richSource.length }, richFrom + 2, 'list_item', 'indent')?.replacement)
       .toBe('  - **child**');
+    expect(indentVisualListItem('- child', { from: 0, to: 7 }, 2, 'list_item', 'indent')).toBeNull();
+    const blankSource = '- parent\n\n- child';
+    const blankFrom = blankSource.indexOf('- child');
+    expect(indentVisualListItem(blankSource, { from: blankFrom, to: blankSource.length }, blankFrom + 2, 'list_item', 'indent')).toBeNull();
   });
 
   it('joins adjacent simple paragraphs without crossing an object', () => {

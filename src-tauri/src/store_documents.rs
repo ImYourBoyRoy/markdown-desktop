@@ -168,15 +168,11 @@ pub async fn open_document_link(
             None,
         )
     };
-    let candidate = record
-        .path
-        .parent()
-        .unwrap_or(Path::new("."))
-        .join(clean_target.replace('/', std::path::MAIN_SEPARATOR_STR));
-    let relative = candidate.strip_prefix(&root).map_err(|_| {
-        CommandError::Message("document link escapes the authorized workspace".into())
-    })?;
-    let path = security::safe_child(&root, &relative.to_string_lossy())?;
+    let path = crate::asset_ops::resolve_local_reference(
+        record.path.parent().unwrap_or(Path::new(".")),
+        workspace_id.as_ref().map(|_| root.as_path()),
+        &target,
+    )?;
     if !security::is_markdown(&path) {
         return Err(CommandError::Message(
             "Only Markdown documents can be opened from a link.".into(),
@@ -657,6 +653,7 @@ pub(crate) fn load_opened_document_from_source_with_options(
             links: rendered.links,
             issues,
             source_map: rendered.source_map,
+            blocks: rendered.blocks,
         },
         block_cache: rendered.block_cache,
     })

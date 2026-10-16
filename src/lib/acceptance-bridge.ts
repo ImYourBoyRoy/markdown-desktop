@@ -8,10 +8,13 @@
  */
 import type { TextSelection } from './formatting';
 import { ACCEPTANCE_HTML_BADGE_PROBE, sourceSelectionContainsProbe, sourceSelectionCoversProbe } from './acceptance-selection';
+import { performanceController, performanceEnabled, type PerformanceSnapshot } from './performance';
 
 export const ACCEPTANCE_FIND_TOKEN = 'RUNTIME_FIND_TOKEN';
 export const ACCEPTANCE_VISUAL_PROBE = 'PACKAGED_VISUAL_PROBE';
 export const ACCEPTANCE_IME_PROBE = '日本語入力テスト';
+export const ACCEPTANCE_DELETE_TARGET = 'PACKAGED_DELETE_TARGET_PROBE';
+export const ACCEPTANCE_DELETE_SENTINEL = 'PACKAGED_DELETE_SENTINEL_PROBE';
 export { ACCEPTANCE_HTML_BADGE_PROBE } from './acceptance-selection';
 
 export interface AcceptanceTabSnapshot {
@@ -36,6 +39,7 @@ export interface AcceptanceReport {
   finishedAt: string;
   steps: AcceptanceStepResult[];
   pass: boolean;
+  performance?: PerformanceSnapshot;
 }
 
 export interface AcceptanceRunnerContext {
@@ -56,6 +60,7 @@ export interface AcceptanceRunnerContext {
   simulateIme(mapId: string, composedText: string): Promise<boolean>;
   measureSplitTypingLatency(characters?: number): Promise<number>;
   waitForVisualParagraph?(probe: string, timeoutMs?: number): Promise<void>;
+  waitForRenderedDiagram?(language: 'mermaid' | 'graphviz', timeoutMs?: number): Promise<boolean>;
   closeFind?(): Promise<void>;
   selectRenderedHtmlBadge?(): Promise<boolean>;
   selectSourceHtmlBadge?(): Promise<boolean>;
@@ -63,6 +68,7 @@ export interface AcceptanceRunnerContext {
   selectSourceTextProbe?(): Promise<boolean>;
   selectRenderedCrossBlockTextProbe?(): Promise<boolean>;
   dragRenderedBlock?(): Promise<boolean>;
+  deleteRenderedBlock?(): Promise<boolean>;
   getEditorSelection?(): { from: number; to: number };
   readSplitPaneScroll?(): { source: number; rendered: number };
   isRenderedBadgeHighlighted?(): boolean;
@@ -99,6 +105,17 @@ export async function runAcceptanceSuite(ctx: AcceptanceRunnerContext): Promise<
       await ctx.waitForVisualParagraph(ACCEPTANCE_VISUAL_PROBE);
     }
     steps.push(step('edit-mode', true, 'Visual editing enabled'));
+
+    if (ctx.waitForRenderedDiagram) {
+      const diagramRendered = await ctx.waitForRenderedDiagram('mermaid', 30_000);
+      steps.push(step(
+        'packaged-mermaid-render',
+        diagramRendered,
+        diagramRendered
+          ? 'Mermaid rendered from the packaged offline asset with native SVG labels'
+          : 'Packaged Mermaid output did not become a labelled SVG diagram',
+      ));
+    }
 
     const beforeEdit = tab.source;
     const typed = await ctx.typeInVisualParagraph('probe', `${ACCEPTANCE_VISUAL_PROBE} edited`);
@@ -180,7 +197,7 @@ export async function runAcceptanceSuite(ctx: AcceptanceRunnerContext): Promise<
         renderedPass,
         renderedPass
           ? 'Rendered badge click selected the matching <img> source span'
-          : `renderedSelected=${renderedSelected} selection=${selection.from}:${selection.to}`,
+          : `renderedSelected=${renderedSelected} selection=${selection.from}:${selection.to} sourceSelectionDidNotCoverProbe`,
       ));
     }
 
@@ -193,7 +210,7 @@ export async function runAcceptanceSuite(ctx: AcceptanceRunnerContext): Promise<
         Boolean(sourceSelected && highlighted),
         highlighted
           ? 'Source badge selection highlighted the rendered image'
-          : `sourceSelected=${sourceSelected} highlighted=${highlighted}`,
+          : `sourceSelected=${sourceSelected} highlighted=${highlighted} renderedSelectionDidNotFollowSource`,
       ));
 
       if (ctx.selectRenderedHtmlBadge && ctx.readSplitPaneScroll) {
@@ -299,6 +316,17 @@ export async function runAcceptanceSuite(ctx: AcceptanceRunnerContext): Promise<
           : 'Pointer drag did not produce the expected source move',
       ));
     }
+
+    if (ctx.deleteRenderedBlock) {
+      const deleted = await ctx.deleteRenderedBlock();
+      steps.push(step(
+        'rendered-block-delete',
+        deleted,
+        deleted
+          ? 'Rendered delete control removed its mapped source block and preserved the sentinel block'
+          : 'Rendered delete control did not remove exactly the mapped source block',
+      ));
+    }
   } catch (error) {
     steps.push(step('acceptance-runner', false, error instanceof Error ? error.message : String(error), performance.now() - started));
   }
@@ -307,12 +335,14 @@ export async function runAcceptanceSuite(ctx: AcceptanceRunnerContext): Promise<
 }
 
 function finalize(steps: AcceptanceStepResult[]): AcceptanceReport {
+  const performance = performanceEnabled() ? performanceController().snapshot() : undefined;
   return {
     version: 1,
     platform: typeof navigator !== 'undefined' ? navigator.platform : 'unknown',
     finishedAt: new Date().toISOString(),
     steps,
     pass: steps.length > 0 && steps.every((entry) => entry.pass),
+    ...(performance ? { performance } : {}),
   };
 }
 

@@ -1,9 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { appendSourceHistory } from './source-history';
+import { appendSourceHistory, boundSourceHistory } from './source-history';
 
 const selection = { from: 0, to: 0 };
 
 describe('source history grouping', () => {
+  it('bounds source memory across tabs and redo stacks', () => {
+    const undo = new Map([['old', appendSourceHistory([], 'aaaa', 'bbbb', selection, selection, undefined, 1)]]);
+    const redo = new Map([['new', appendSourceHistory([], 'cccc', 'dddd', selection, selection, undefined, 2)]]);
+    boundSourceHistory([undo, redo], 16);
+    expect(undo.has('old')).toBe(false);
+    expect(redo.has('new')).toBe(true);
+  });
   it('coalesces continuous source typing into one undo entry', () => {
     let history = appendSourceHistory([], '', 'a', selection, { from: 1, to: 1 }, 'source-typing', 1000);
     history = appendSourceHistory(history, 'a', 'ab', { from: 1, to: 1 }, { from: 2, to: 2 }, 'source-typing', 1200);

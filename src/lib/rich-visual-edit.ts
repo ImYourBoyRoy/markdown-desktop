@@ -81,7 +81,7 @@ function serializeNode(node: Node, context: SerializationContext): string | null
   if (tag === 'IMG') {
     const original = element.dataset.markdownSource?.trim();
     if (original) return original;
-    const src = (element.dataset.source || element.getAttribute('src') || '').trim();
+    const src = (element.dataset.source || element.dataset.mediaSrc || element.getAttribute('src') || '').trim();
     if (!src || /^data:/i.test(src) || !isSafeMarkdownUrl(src)) return null;
     const alt = (element.getAttribute('alt') ?? '').replace(/[\[\]\r\n]/g, ' ').replace(/\s+/g, ' ').trim();
     const title = escapeTitle(element.getAttribute('title') ?? '');

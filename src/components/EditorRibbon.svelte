@@ -16,15 +16,17 @@
     setTaskChecked,
     updateAlertType,
     updateFenceLanguage,
-    updateImage,
-    updateLink,
     type InsertKind,
   } from '../lib/inserts';
+  import { convertReferenceImageToHtml, imageLayoutIsAvailable, parseImageObject, updateImageObject } from '../lib/image-editor';
+  import { parseLinkObject, updateLinkObject } from '../lib/link-editor';
+  import { isImageBlockKind, isLinkBlockKind } from '../lib/visual-editor-contract';
   import type { TableEditAction } from '../lib/table-edit';
   import type { MarkdownProfile } from '../lib/types';
   import { sourceTextIsInsideFence } from '../lib/slash';
-  import { diagramInsertAvailable, diagramInsertUnavailableMessage } from '../lib/markdown-profile';
+  import { diagramInsertAvailable } from '../lib/markdown-profile';
   import { insertTableOfContents } from '../lib/toc';
+  import { insertMedia, isSafeMediaPoster, isSafeMediaReference, mediaEmbedFor, type MediaInsertKind } from '../lib/media';
 
   type RibbonTab = 'Home' | 'Insert' | 'Layout' | 'Block' | 'Review';
   type DialogKind = InsertKind | null;
@@ -106,10 +108,17 @@
   let footnoteNote = $state('');
   let mathExpression = $state('');
   let mathBlock = $state(true);
+  let mediaKind = $state<MediaInsertKind>('local');
+  let mediaSource = $state('');
+  let mediaTitle = $state('');
+  let mediaPoster = $state('');
   let blockLanguage = $state('');
   let blockImageAlt = $state('');
   let blockImagePath = $state('');
   let blockImageTitle = $state('');
+  let blockImageWidth = $state('');
+  let blockImageHeight = $state('');
+  let blockImageAlign = $state<'inline' | 'left' | 'center' | 'right'>('inline');
   let blockLinkLabel = $state('');
   let blockLinkHref = $state('');
   let blockLinkTitle = $state('');
@@ -127,6 +136,25 @@
       || ['code_block', 'diagram', 'math', 'html_block', 'html_layout_table', 'front_matter'].includes(selectedBlockKind),
   );
   let editingDisabled = $derived(disabled || protectedSourceSelection);
+  let parsedImage = $derived(isImageBlockKind(selectedBlockKind)
+    ? parseImageObject(source, targetSelection, { kind: selectedBlockKind })
+    : null);
+  let imageObjectEditable = $derived(Boolean(parsedImage && (parsedImage.mode !== 'reference'
+    || !selectedBlockAttrs.src || parsedImage.url === String(selectedBlockAttrs.src))));
+  let imageLayoutAvailable = $derived(
+    imageObjectEditable
+      && imageLayoutIsAvailable(profile)
+  );
+  let imageLayoutRequiresConversion = $derived(parsedImage?.mode === 'reference');
+  let hasExplicitImageLayout = $derived(Boolean(
+    blockImageWidth || blockImageHeight || blockImageAlign !== 'inline',
+  ));
+  let parsedLink = $derived(isLinkBlockKind(selectedBlockKind)
+    ? parseLinkObject(source, targetSelection)
+    : null);
+  let linkObjectEditable = $derived(Boolean(parsedLink && (parsedLink.mode !== 'reference'
+    || !selectedBlockAttrs.target || parsedLink.url === String(selectedBlockAttrs.target))));
+  let linkLabelEditable = $derived(parsedLink?.mode !== 'html');
   let canMoveRowUp = $derived(tableRowIndex !== undefined && tableRowIndex > 0);
   let canMoveRowDown = $derived(tableRowIndex !== undefined
     && tableBodyRowCount !== undefined
@@ -144,16 +172,23 @@
   });
 
   $effect(() => {
-    if (selectedBlockKind === 'image') {
+    if (isImageBlockKind(selectedBlockKind)) {
       blockImageAlt = String(selectedBlockAttrs.alt ?? '');
       blockImagePath = String(selectedBlockAttrs.src ?? '');
       blockImageTitle = String(selectedBlockAttrs.title ?? '');
+      if (parsedImage) {
+        blockImageAlt = parsedImage.alt;
+        blockImagePath = parsedImage.url;
+        blockImageTitle = parsedImage.title;
+        blockImageWidth = parsedImage.width;
+        blockImageHeight = parsedImage.height;
+        blockImageAlign = parsedImage.align;
+      }
     }
-    if (selectedBlockKind === 'link') {
-      const raw = source.slice(targetSelection.from, targetSelection.to);
-      blockLinkLabel = /^\[([\s\S]*?)\]\(/.exec(raw)?.[1] ?? selectedText;
-      blockLinkHref = String(selectedBlockAttrs.target ?? '');
-      blockLinkTitle = String(selectedBlockAttrs.title ?? '');
+    if (isLinkBlockKind(selectedBlockKind)) {
+      blockLinkLabel = parsedLink?.label ?? selectedText;
+      blockLinkHref = parsedLink?.url ?? String(selectedBlockAttrs.target ?? '');
+      blockLinkTitle = parsedLink?.title ?? String(selectedBlockAttrs.title ?? '');
     }
     if (selectedBlockKind === 'alert') blockAlertType = String(selectedBlockAttrs.type ?? 'note').toLowerCase();
   });
@@ -207,6 +242,12 @@
     }
     if (kind === 'footnote') footnoteNote = selectedText;
     if (kind === 'math') mathExpression = selectedText;
+    if (kind === 'media') {
+      mediaKind = 'local';
+      mediaSource = '';
+      mediaTitle = selectedText.trim() || 'Video';
+      mediaPoster = '';
+    }
   }
 
   function closeDialog() {
@@ -247,6 +288,25 @@
       onApply((current) => insertFootnote(current, selection, footnoteLabel, footnoteNote));
     } else if (dialog === 'math') {
       onApply((current) => insertMath(current, selection, mathExpression, mathBlock));
+    } else if (dialog === 'media') {
+      if (!isSafeMediaReference(mediaSource) || !isSafeMediaPoster(mediaPoster)) {
+        dialogError = 'Enter a document-relative video path or an HTTPS media URL.';
+        return;
+      }
+      if (mediaKind === 'local' && /^https?:\/\//i.test(mediaSource.trim())) {
+        dialogError = 'Local video sources must use a document-relative path.';
+        return;
+      }
+      if (mediaKind === 'direct' && !/^https:\/\//i.test(mediaSource.trim())) {
+        dialogError = 'Direct video sources must use an HTTPS URL.';
+        return;
+      }
+      if ((mediaKind === 'youtube' || mediaKind === 'vimeo' || mediaKind === 'drive')
+        && !mediaEmbedFor(mediaSource, mediaKind)) {
+        dialogError = 'Enter a valid YouTube, Vimeo, or Google Drive video URL.';
+        return;
+      }
+      onApply((current) => insertMedia(current, selection, mediaKind, mediaSource, mediaTitle, mediaPoster));
     }
     closeDialog();
   }
@@ -265,13 +325,27 @@
   }
 
   function changeImage() {
-    if (!hasBlockSelection || !isSafeMarkdownUrl(blockImagePath)) return;
-    onApply((current) => updateImage(current, targetSelection, blockImageAlt, blockImagePath, blockImageTitle));
+    if (!hasBlockSelection || !imageObjectEditable || !isSafeMarkdownUrl(blockImagePath)) return;
+    const values = {
+      alt: blockImageAlt,
+      url: blockImagePath,
+      title: blockImageTitle,
+      width: imageLayoutAvailable ? blockImageWidth : '',
+      height: imageLayoutAvailable ? blockImageHeight : '',
+      align: imageLayoutAvailable ? blockImageAlign : 'inline',
+    } as const;
+    onApply((current) => imageLayoutRequiresConversion && hasExplicitImageLayout
+      ? convertReferenceImageToHtml(current, targetSelection, values, { kind: selectedBlockKind })
+      : updateImageObject(current, targetSelection, values, { kind: selectedBlockKind }));
   }
 
   function changeLink() {
-    if (!hasBlockSelection || !isSafeMarkdownUrl(blockLinkHref)) return;
-    onApply((current) => updateLink(current, targetSelection, blockLinkLabel, blockLinkHref, blockLinkTitle));
+    if (!hasBlockSelection || !linkObjectEditable || !isSafeMarkdownUrl(blockLinkHref)) return;
+    onApply((current) => updateLinkObject(current, targetSelection, {
+      label: blockLinkLabel,
+      url: blockLinkHref,
+      title: blockLinkTitle,
+    }));
   }
 
   function changeTask(checked: boolean) {
@@ -323,13 +397,17 @@
     <div class="ribbon-command-scroll">
       {#if activeTab === 'Home'}
       <div class="ribbon-group"><span class="ribbon-label">Text</span><div class="ribbon-actions">
-        <button class:pressed={isWrapped('**')} type="button" title={protectedSourceSelection ? 'Inline formatting is source-only inside this block' : 'Bold'} aria-label="Bold" aria-pressed={isWrapped('**')} disabled={editingDisabled} onclick={() => format('bold')}><b>B</b></button>
-        <button class:pressed={isWrapped('*')} type="button" title={protectedSourceSelection ? 'Inline formatting is source-only inside this block' : 'Italic'} aria-label="Italic" aria-pressed={isWrapped('*')} disabled={editingDisabled} onclick={() => format('italic')}><i>I</i></button>
-        <button class:pressed={isWrapped('<ins>', '<ins>', '</ins>')} type="button" title={supportsGithubExtensions ? 'Underline' : 'Underline is unavailable in CommonMark Strict'} aria-label="Underline" aria-pressed={isWrapped('<ins>', '<ins>', '</ins>')} disabled={editingDisabled || !supportsGithubExtensions} onclick={() => format('underline')}><u>U</u></button>
-        <button class:pressed={isWrapped('~~')} type="button" title="Strikethrough" aria-label="Strikethrough" aria-pressed={isWrapped('~~')} disabled={editingDisabled} onclick={() => format('strike')}><s>S</s></button>
-        <button class:pressed={isWrapped('`')} type="button" title="Inline code" aria-label="Inline code" aria-pressed={isWrapped('`')} disabled={editingDisabled} onclick={() => format('code')}>{'</>'}</button>
-        <button class:pressed={isWrapped('<sub>', '<sub>', '</sub>')} type="button" title={supportsGithubExtensions ? 'Subscript' : 'Subscript is unavailable in CommonMark Strict'} aria-label="Subscript" aria-pressed={isWrapped('<sub>', '<sub>', '</sub>')} disabled={editingDisabled || !supportsGithubExtensions} onclick={() => format('subscript')}>X<sub>2</sub></button>
-        <button class:pressed={isWrapped('<sup>', '<sup>', '</sup>')} type="button" title={supportsGithubExtensions ? 'Superscript' : 'Superscript is unavailable in CommonMark Strict'} aria-label="Superscript" aria-pressed={isWrapped('<sup>', '<sup>', '</sup>')} disabled={editingDisabled || !supportsGithubExtensions} onclick={() => format('superscript')}>X<sup>2</sup></button>
+        <button class:pressed={isWrapped('**')} type="button" title={protectedSourceSelection ? 'Inline formatting is source-only inside this block' : 'Bold'} aria-label="Bold" aria-pressed={isWrapped('**')} disabled={editingDisabled} onclick={() => format('bold')}><span class="format-glyph format-bold" aria-hidden="true"></span></button>
+        <button class:pressed={isWrapped('*')} type="button" title={protectedSourceSelection ? 'Inline formatting is source-only inside this block' : 'Italic'} aria-label="Italic" aria-pressed={isWrapped('*')} disabled={editingDisabled} onclick={() => format('italic')}><span class="format-glyph format-italic" aria-hidden="true"></span></button>
+        {#if supportsGithubExtensions}
+          <button class:pressed={isWrapped('<ins>', '<ins>', '</ins>')} type="button" title="Underline" aria-label="Underline" aria-pressed={isWrapped('<ins>', '<ins>', '</ins>')} disabled={editingDisabled} onclick={() => format('underline')}><span class="format-glyph format-underline" aria-hidden="true"></span></button>
+          <button class:pressed={isWrapped('~~')} type="button" title="Strikethrough" aria-label="Strikethrough" aria-pressed={isWrapped('~~')} disabled={editingDisabled} onclick={() => format('strike')}><span class="format-glyph format-strike" aria-hidden="true"></span></button>
+        {/if}
+        <button class:pressed={isWrapped('`')} type="button" title="Inline code" aria-label="Inline code" aria-pressed={isWrapped('`')} disabled={editingDisabled} onclick={() => format('code')}><span class="format-glyph format-code" aria-hidden="true"></span></button>
+        {#if supportsGithubExtensions}
+          <button class:pressed={isWrapped('<sub>', '<sub>', '</sub>')} type="button" title="Subscript" aria-label="Subscript" aria-pressed={isWrapped('<sub>', '<sub>', '</sub>')} disabled={editingDisabled} onclick={() => format('subscript')}><span class="format-glyph format-subscript" aria-hidden="true"></span></button>
+          <button class:pressed={isWrapped('<sup>', '<sup>', '</sup>')} type="button" title="Superscript" aria-label="Superscript" aria-pressed={isWrapped('<sup>', '<sup>', '</sup>')} disabled={editingDisabled} onclick={() => format('superscript')}><span class="format-glyph format-superscript" aria-hidden="true"></span></button>
+        {/if}
         <button type="button" title="Clear inline formatting" aria-label="Clear inline formatting" disabled={editingDisabled} onclick={() => format('clear')}>Clear</button>
       </div></div>
       <div class="ribbon-group"><span class="ribbon-label">Paragraph</span><div class="ribbon-actions">
@@ -343,25 +421,31 @@
         <button type="button" title="Quote" disabled={editingDisabled} onclick={() => format('quote')}>Quote</button>
         <button type="button" title="Bulleted list" disabled={editingDisabled} onclick={() => format('bullet')}>Bullets</button>
         <button type="button" title="Numbered list" disabled={editingDisabled} onclick={() => format('numbered')}>Numbers</button>
-        <button type="button" title={supportsGithubExtensions ? 'Task list' : 'Task lists are unavailable in CommonMark Strict'} disabled={editingDisabled || !supportsGithubExtensions} onclick={() => format('task')}>Task</button>
+        {#if supportsGithubExtensions}<button type="button" title="Task list" disabled={editingDisabled} onclick={() => format('task')}>Task</button>{/if}
       </div></div>
       <div class="ribbon-selection" aria-live="polite">{selectedBlockKind ? `Selected: ${selectedBlockKind.replaceAll('_', ' ')}` : 'Select text or a Markdown block'}</div>
     {:else if activeTab === 'Insert'}
       <div class="ribbon-group"><span class="ribbon-label">Inline</span><div class="ribbon-actions">
         <button type="button" disabled={editingDisabled} onclick={() => openDialog('link')}>Link</button>
         <button type="button" disabled={editingDisabled} onclick={() => openDialog('image')}>Image</button>
-        <button type="button" title={supportsGithubExtensions ? 'GFM table' : 'Tables are unavailable in CommonMark Strict'} disabled={editingDisabled || !supportsGithubExtensions} onclick={() => openDialog('table')}>Table</button>
-        <button type="button" title={supportsGithubExtensions ? 'Heading-linked table of contents' : 'Table of contents is unavailable in CommonMark Strict'} disabled={editingDisabled || !supportsGithubExtensions} onclick={() => onApply((current) => insertTableOfContents(current, selection))}>TOC</button>
+        {#if supportsGithubExtensions}
+          <button type="button" title="GFM table" disabled={editingDisabled} onclick={() => openDialog('table')}>Table</button>
+          <button type="button" title="Heading-linked table of contents" disabled={editingDisabled} onclick={() => onApply((current) => insertTableOfContents(current, selection))}>TOC</button>
+        {/if}
         <button type="button" disabled={editingDisabled} onclick={() => openDialog('fence')}>Code block</button>
         <button type="button" disabled={editingDisabled} onclick={() => insertQuick('rule')}>Rule</button>
-        <button type="button" title={supportsGithubExtensions ? 'Footnote' : 'Footnotes are unavailable in CommonMark Strict'} disabled={editingDisabled || !supportsGithubExtensions} onclick={() => openDialog('footnote')}>Footnote</button>
+        {#if supportsGithubExtensions}<button type="button" title="Footnote" disabled={editingDisabled} onclick={() => openDialog('footnote')}>Footnote</button>{/if}
       </div></div>
       <div class="ribbon-group"><span class="ribbon-label">Rich blocks</span><div class="ribbon-actions">
-        <button type="button" title={diagramInsertAvailable('mermaid', profile) ? 'Mermaid diagram' : diagramInsertUnavailableMessage('mermaid', profile)} disabled={editingDisabled || !diagramInsertAvailable('mermaid', profile)} onclick={() => insertQuick('mermaid')}>Mermaid</button>
-        <button type="button" title={graphvizAvailable ? 'Extended-profile Graphviz preview' : diagramInsertUnavailableMessage('dot', profile)} disabled={editingDisabled || !graphvizAvailable} onclick={() => insertQuick('dot')}>Graphviz <span aria-hidden="true">(Extended)</span></button>
-        <button type="button" title={supportsGithubExtensions ? 'Math' : 'Math is unavailable in CommonMark Strict'} disabled={editingDisabled || !supportsGithubExtensions} onclick={() => openDialog('math')}>Math</button>
-        <button type="button" title={supportsGithubExtensions ? 'GitHub alert' : 'Alerts are unavailable in CommonMark Strict'} disabled={editingDisabled || !supportsGithubExtensions} onclick={() => onApply((current) => insertAlert(current, selection))}>Alert</button>
-        <button type="button" title={supportsGithubExtensions ? 'Collapsible details' : 'Details are unavailable in CommonMark Strict'} disabled={editingDisabled || !supportsGithubExtensions} onclick={() => onApply((current) => insertDetails(current, selection))}>Details</button>
+        {#if diagramInsertAvailable('mermaid', profile)}<button type="button" title="Mermaid diagram" disabled={editingDisabled} onclick={() => insertQuick('mermaid')}>Mermaid</button>{/if}
+        {#if graphvizAvailable}<button type="button" title="Extended-profile Graphviz preview" disabled={editingDisabled} onclick={() => insertQuick('dot')}>Graphviz <span aria-hidden="true">(Extended)</span></button>{/if}
+        {#if supportsGithubExtensions}
+          <button type="button" title="Local video or approved video embed" disabled={editingDisabled} onclick={() => openDialog('media')}>Media</button>
+          <button type="button" title="Math" disabled={editingDisabled} onclick={() => openDialog('math')}>Math</button>
+          <button type="button" title="GitHub alert" disabled={editingDisabled} onclick={() => onApply((current) => insertAlert(current, selection))}>Alert</button>
+          <button type="button" title="Collapsible details" disabled={editingDisabled} onclick={() => onApply((current) => insertDetails(current, selection))}>Details</button>
+        {/if}
+        {#if !diagramInsertAvailable('mermaid', profile) && !graphvizAvailable && !supportsGithubExtensions}<span class="ribbon-note">This profile uses source editing for extensions.</span>{/if}
       </div></div>
     {:else if activeTab === 'Layout'}
       <div class="ribbon-group"><span class="ribbon-label">Source</span><div class="ribbon-actions">
@@ -374,8 +458,7 @@
         </div></div>
       {/if}
       <div class="ribbon-group"><span class="ribbon-label">Flow</span><div class="ribbon-actions">
-        <button type="button" disabled title="Experimental GitHub HTML layout is not enabled">Columns (experimental)</button>
-        <span class="ribbon-note">Sequential Markdown flow is active</span>
+        <span class="ribbon-note">Markdown keeps a predictable sequential flow. Use explicit HTML in source for custom layouts.</span>
       </div></div>
     {:else if activeTab === 'Block'}
       {#if selectedBlockKind === 'code_block' || selectedBlockKind === 'diagram'}
@@ -384,20 +467,43 @@
           <button type="button" disabled={disabled || !hasBlockSelection || selectedBlockAttrs.fenced !== true} onclick={changeBlockLanguage}>Apply language</button>
           <span class="ribbon-note">{selectedBlockAttrs.fenced === true ? 'Blank means plain text' : 'Indented code is source-only'}</span>
         </div></div>
-      {:else if selectedBlockKind === 'image'}
+      {:else if isImageBlockKind(selectedBlockKind) && imageObjectEditable}
         <div class="ribbon-group"><span class="ribbon-label">Image</span><div class="ribbon-actions">
           <input aria-label="Image alt text" value={blockImageAlt} placeholder="Alt text" disabled={disabled} oninput={(event) => (blockImageAlt = event.currentTarget.value)} />
           <input aria-label="Image path or URL" value={blockImagePath} placeholder="assets/image.png" disabled={disabled} oninput={(event) => (blockImagePath = event.currentTarget.value)} />
           <input aria-label="Image title" value={blockImageTitle} placeholder="Title (optional)" disabled={disabled} oninput={(event) => (blockImageTitle = event.currentTarget.value)} />
           <button type="button" disabled={disabled || !hasBlockSelection || !isSafeMarkdownUrl(blockImagePath)} onclick={changeImage}>Apply image</button>
         </div></div>
-      {:else if selectedBlockKind === 'link'}
+        {#if imageLayoutAvailable}
+          <div class="ribbon-group"><span class="ribbon-label">Image layout</span><div class="ribbon-actions">
+            <input aria-label="Image width in pixels" inputmode="numeric" pattern="[0-9]*" value={blockImageWidth} placeholder="Width (px)" disabled={disabled} oninput={(event) => (blockImageWidth = event.currentTarget.value.replace(/\D/g, '').slice(0, 4))} />
+            <input aria-label="Image height in pixels" inputmode="numeric" pattern="[0-9]*" value={blockImageHeight} placeholder="Height (px)" disabled={disabled} oninput={(event) => (blockImageHeight = event.currentTarget.value.replace(/\D/g, '').slice(0, 4))} />
+            <select aria-label="Image alignment" value={blockImageAlign} disabled={disabled} onchange={(event) => (blockImageAlign = event.currentTarget.value as typeof blockImageAlign)}>
+              <option value="inline">Inline</option><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option>
+            </select>
+            <button type="button" disabled={disabled || !hasBlockSelection || !isSafeMarkdownUrl(blockImagePath) || (imageLayoutRequiresConversion && !hasExplicitImageLayout)} onclick={changeImage}>{imageLayoutRequiresConversion ? 'Use HTML layout' : 'Apply layout'}</button>
+          </div></div>
+          <span class="ribbon-note">Sizing and alignment use explicit HTML attributes; reset both fields to keep ordinary Markdown.</span>
+        {/if}
+        {#if parsedImage?.mode === 'reference'}
+          <span class="ribbon-note">Alt text, destination, and title update the shared definition. “Use HTML layout” converts only this occurrence; other references remain linked.</span>
+        {/if}
+      {:else if isImageBlockKind(selectedBlockKind)}
+        <span class="ribbon-note">This reference-style image is source-assisted so its shared definition is never rewritten accidentally.</span>
+      {:else if isLinkBlockKind(selectedBlockKind) && linkObjectEditable}
         <div class="ribbon-group"><span class="ribbon-label">Link</span><div class="ribbon-actions">
-          <input aria-label="Link label" value={blockLinkLabel} placeholder="Label" disabled={disabled} oninput={(event) => (blockLinkLabel = event.currentTarget.value)} />
+          <input aria-label="Link label" value={blockLinkLabel} placeholder="Label" disabled={disabled || !linkLabelEditable} oninput={(event) => (blockLinkLabel = event.currentTarget.value)} />
           <input aria-label="Link destination" value={blockLinkHref} placeholder="URL or relative path" disabled={disabled} oninput={(event) => (blockLinkHref = event.currentTarget.value)} />
           <input aria-label="Link title" value={blockLinkTitle} placeholder="Title (optional)" disabled={disabled} oninput={(event) => (blockLinkTitle = event.currentTarget.value)} />
           <button type="button" disabled={disabled || !hasBlockSelection || !isSafeMarkdownUrl(blockLinkHref)} onclick={changeLink}>Apply link</button>
         </div></div>
+        {#if parsedLink?.mode === 'reference'}
+          <span class="ribbon-note">Updates the shared reference definition while preserving every occurrence.</span>
+        {:else if parsedLink?.mode === 'html'}
+          <span class="ribbon-note">Only the safe href and title attributes are changed; the authored HTML body stays intact.</span>
+        {/if}
+      {:else if isLinkBlockKind(selectedBlockKind)}
+        <span class="ribbon-note">This reference-style link is source-assisted so its shared definition is never rewritten accidentally.</span>
       {:else if selectedBlockKind === 'task_item'}
         <div class="ribbon-group"><span class="ribbon-label">Task</span><div class="ribbon-actions">
           <label class="checkbox-control"><input type="checkbox" checked={selectedBlockAttrs.checked === true} disabled={disabled || !hasBlockSelection} onchange={(event) => changeTask(event.currentTarget.checked)} /> Completed</label>
@@ -435,7 +541,7 @@
       <span class="ribbon-note">Lint is advisory; saves remain available.</span>
       {/if}
     </div>
-    <div class="ribbon-panel-actions" aria-label="Document actions">
+    <div class="ribbon-panel-actions" role="group" aria-label="Document actions">
       {#if editing}
         <button class="ribbon-done" type="button" disabled={disabled} title="Finish visual editing" aria-label="Done editing" onclick={onDoneEditing}>Done</button>
       {/if}
@@ -479,6 +585,24 @@
           <p>KaTeX renders this in the preview. Use a block for display equations.</p>
           <label>Expression<input use:focusField bind:value={mathExpression} placeholder="a^2 + b^2 = c^2" /></label>
           <label class="checkbox"><input type="checkbox" bind:checked={mathBlock} /> Display as a block</label>
+        {:else if dialog === 'media'}
+          <h2>Insert media</h2>
+          <p>Use a document-relative video for offline playback, a direct HTTPS video URL, or a validated YouTube, Vimeo, or Google Drive link. External providers require network access.</p>
+          <label>Media type
+            <select bind:value={mediaKind}>
+              <option value="local">Local video file</option>
+              <option value="direct">Direct HTTPS video</option>
+              <option value="youtube">YouTube</option>
+              <option value="vimeo">Vimeo</option>
+              <option value="drive">Google Drive</option>
+            </select>
+          </label>
+          <label>{mediaKind === 'local' ? 'Relative video path' : mediaKind === 'direct' ? 'Direct video URL' : 'Provider video URL'}<input use:focusField bind:value={mediaSource} placeholder={mediaKind === 'local' ? 'assets/demo.mp4' : mediaKind === 'direct' ? 'https://cdn.example/video.mp4' : 'Paste a share or watch URL'} required /></label>
+          <label>Title<input bind:value={mediaTitle} placeholder="Video title" /></label>
+          {#if mediaKind === 'local' || mediaKind === 'direct'}
+            <label>Poster image path or URL <span>(optional)</span><input bind:value={mediaPoster} placeholder="assets/video-poster.webp" /></label>
+          {/if}
+          <p class="dialog-note">Controls are always enabled, autoplay is not generated, and every embed includes an external fallback link.</p>
         {/if}
         {#if dialogError}<p class="dialog-error" role="alert">{dialogError}</p>{/if}
         <div class="dialog-actions"><button class="ghost" type="button" onclick={closeDialog}>Cancel</button><button class="confirm" type="submit">Insert</button></div>

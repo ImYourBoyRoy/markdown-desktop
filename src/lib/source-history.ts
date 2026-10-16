@@ -10,6 +10,19 @@ export interface SourceHistoryEntry {
 }
 const DEFAULT_MERGE_WINDOW_MS = 900;
 
+/** Account for UTF-16 source storage across all open tabs and undo/redo stacks. */
+export function boundSourceHistory(maps: readonly Map<string, SourceHistoryEntry[]>[], maxBytes = 128 * 1024 * 1024): void {
+  const entries = maps.flatMap((map) => Array.from(map, ([id, history]) => ({ map, id, history })));
+  let bytes = entries.reduce((total, { history }) => total + history.reduce((size, entry) => size + 2 * (entry.before.length + entry.after.length), 0), 0);
+  while (bytes > maxBytes) {
+    const oldest = entries.filter(({ history }) => history.length).sort((a, b) => a.history[0].timestamp - b.history[0].timestamp)[0];
+    if (!oldest) break;
+    const removed = oldest.history.shift()!;
+    bytes -= 2 * (removed.before.length + removed.after.length);
+    if (!oldest.history.length) oldest.map.delete(oldest.id);
+  }
+}
+
 /**
  * Append one source-authoritative edit to history, coalescing only edits from
  * the same short-lived typing session. Structural, ribbon, paste, and asset
@@ -38,9 +51,7 @@ export function appendSourceHistory(
   );
 
   if (canMerge && previous) {
-    previous.after = after;
-    previous.afterSelection = afterSelection;
-    previous.timestamp = timestamp;
+    next[next.length - 1] = { ...previous, after, afterSelection, timestamp };
     return next;
   }
 

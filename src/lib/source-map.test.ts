@@ -3,6 +3,7 @@ import {
   attachSourceMapIds,
   sourceMapMatchesHash,
   sourceSelectionForSpan,
+  sourceSelectionsForSpans,
   sourcePositionToByteRange,
   sourceSelectionForVisibleText,
   createVisibleTextSourceSelectionProjection,
@@ -75,6 +76,29 @@ describe('source map coordinate adapter', () => {
     expect(host.querySelector('code')?.dataset.mapId).toBe('inline-code');
   });
 
+  it('binds repeated inline objects within their owning mapped blocks', () => {
+    const source = 'First **one**\n\nSecond **two**';
+    const firstStrong = source.indexOf('**one**');
+    const secondStrong = source.indexOf('**two**');
+    const sourceMap: SourceMap = {
+      version: 1,
+      sourceHash: 'sha256:owners',
+      spans: [
+        { mapId: 'paragraph-one', kind: 'paragraph', sourceByteStart: 0, sourceByteEnd: 13, attrs: {} },
+        { mapId: 'strong-one', kind: 'strong', sourceByteStart: firstStrong, sourceByteEnd: firstStrong + 7, attrs: {} },
+        { mapId: 'paragraph-two', kind: 'paragraph', sourceByteStart: 15, sourceByteEnd: source.length, attrs: {} },
+        { mapId: 'strong-two', kind: 'strong', sourceByteStart: secondStrong, sourceByteEnd: secondStrong + 7, attrs: {} },
+      ],
+    };
+    const host = document.createElement('article');
+    host.innerHTML = '<p data-sourcepos="1:1-1:13">First <strong>one</strong></p><p data-sourcepos="3:1-3:14">Second <strong>two</strong></p>';
+
+    expect(attachSourceMapIds(host, source, sourceMap)).toBe(4);
+    const strongs = [...host.querySelectorAll<HTMLElement>('strong')];
+    expect(strongs.map((element) => element.dataset.mapId)).toEqual(['strong-one', 'strong-two']);
+    expect(strongs.map((element) => element.dataset.mapKind)).toEqual(['strong', 'strong']);
+  });
+
   it('binds raw details blocks by trusted source-map order', () => {
     const source = '<details>\n<summary>Overview</summary>\n\nBody\n\n</details>';
     const sourceMap: SourceMap = {
@@ -116,6 +140,48 @@ describe('source map coordinate adapter', () => {
     expect(host.querySelector<HTMLElement>('img[src="raw.png"]')?.dataset.mapId).toBe('raw-html#html-image-0');
     expect(host.querySelectorAll<HTMLElement>('p')[1]?.dataset.mapId).toBe('raw-html');
     expect(host.querySelectorAll<HTMLElement>('p')[1]?.dataset.mapKind).toBe('html_block');
+  });
+
+  it('binds raw video and provider embeds to their exact source objects', () => {
+    const source = '<video controls src="assets/demo.mp4"></video>\n\n<iframe src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ"></iframe>';
+    const sourceMap: SourceMap = {
+      version: 1,
+      sourceHash: 'sha256:media',
+      spans: [{
+        mapId: 'media-html',
+        kind: 'html_block',
+        sourceByteStart: 0,
+        sourceByteEnd: new TextEncoder().encode(source).byteLength,
+        attrs: {},
+      }],
+    };
+    const host = document.createElement('article');
+    host.innerHTML = source;
+
+    expect(attachSourceMapIds(host, source, sourceMap)).toBe(2);
+    expect(host.querySelector<HTMLVideoElement>('video')?.dataset.mapId).toBe('media-html#html-video-0');
+    expect(host.querySelector<HTMLIFrameElement>('iframe')?.dataset.mapId).toBe('media-html#html-iframe-0');
+  });
+
+  it('binds a source-child video to the visible video element', () => {
+    const source = '<video controls>\n  <source src="assets/demo.webm" type="video/webm">\n</video>';
+    const sourceMap: SourceMap = {
+      version: 1,
+      sourceHash: 'sha256:source-child',
+      spans: [{
+        mapId: 'source-child-html',
+        kind: 'html_block',
+        sourceByteStart: 0,
+        sourceByteEnd: new TextEncoder().encode(source).byteLength,
+        attrs: {},
+      }],
+    };
+    const host = document.createElement('article');
+    host.innerHTML = source;
+
+    expect(attachSourceMapIds(host, source, sourceMap)).toBe(1);
+    expect(host.querySelector<HTMLVideoElement>('video')?.dataset.mapId).toBe('source-child-html#html-video-0');
+    expect(host.querySelector<HTMLSourceElement>('source')?.dataset.mapId).toBe('source-child-html#html-video-0');
   });
 
   it('binds raw HTML images after asset resolution rewrites src to a data URI', () => {
@@ -244,6 +310,45 @@ describe('source map coordinate adapter', () => {
     expect(sourceSelectionForSpan(source, sourceMap, 'map-heading', 'sha256:current')).toEqual({ from: 0, to: 6 });
     expect(sourceSelectionForSpan(source, sourceMap, 'map-heading', 'sha256:stale')).toBeNull();
     expect(sourceSelectionForSpan(source, sourceMap, 'missing', 'sha256:current')).toBeNull();
+  });
+
+  it('resolves mapped spans in one pass without rounding UTF-8 boundaries', () => {
+    const source = 'A Café 😀 B';
+    const encoder = new TextEncoder();
+    const caféStart = source.indexOf('Café');
+    const emojiStart = source.indexOf('😀');
+    const sourceMap: SourceMap = {
+      version: 1,
+      sourceHash: 'sha256:batch',
+      spans: [
+        {
+          mapId: 'café',
+          kind: 'paragraph',
+          sourceByteStart: encoder.encode(source.slice(0, caféStart)).byteLength,
+          sourceByteEnd: encoder.encode(source.slice(0, caféStart + 'Café'.length)).byteLength,
+          attrs: {},
+        },
+        {
+          mapId: 'emoji',
+          kind: 'paragraph',
+          sourceByteStart: encoder.encode(source.slice(0, emojiStart)).byteLength,
+          sourceByteEnd: encoder.encode(source.slice(0, emojiStart + '😀'.length)).byteLength,
+          attrs: {},
+        },
+        {
+          mapId: 'invalid-mid-character',
+          kind: 'paragraph',
+          sourceByteStart: 6,
+          sourceByteEnd: 7,
+          attrs: {},
+        },
+      ],
+    };
+
+    expect(sourceSelectionsForSpans(source, sourceMap, 'sha256:batch')).toEqual(new Map([
+      ['café', { from: caféStart, to: caféStart + 'Café'.length }],
+      ['emoji', { from: emojiStart, to: emojiStart + '😀'.length }],
+    ]));
   });
 
   it('rejects stale source patches and applies current mapped ranges only', () => {

@@ -58,6 +58,21 @@ export async function editVisualProbeParagraph(
   return Boolean(applied);
 }
 
+export async function waitForRenderedDiagram(
+  language: 'mermaid' | 'graphviz',
+  timeoutMs = 30_000,
+): Promise<boolean> {
+  const deadline = performance.now() + timeoutMs;
+  while (performance.now() < deadline) {
+    const output = [...document.querySelectorAll<HTMLElement>('.diagram-output')]
+      .find((candidate) => candidate.dataset.diagramLanguage === language);
+    const svg = output?.querySelector<SVGSVGElement>('svg');
+    if (svg && svg.querySelector('text') && !svg.querySelector('foreignObject')) return true;
+    await new Promise((resolve) => window.setTimeout(resolve, 50));
+  }
+  return false;
+}
+
 export async function applyImeProbeParagraph(
   host: HTMLElement | null,
   source: string,
@@ -81,7 +96,7 @@ export async function applyImeProbeParagraph(
   const expectedMarkdown = source.slice(selection.from, selection.to);
   const element = [...document.querySelectorAll<HTMLElement>('[data-visual-editable="true"]')]
     .find((candidate) => candidate.dataset.mapId === mapId);
-  if (element) dispatchImeSequence(element, composedText);
+  if (element) await dispatchImeSequence(element, composedText);
   const replacementMarkdown = markdownForSimpleVisualBlock('paragraph', expectedMarkdown, composedText);
   return Boolean(applyVisualDraftEdit(mapId, selection, expectedMarkdown, replacementMarkdown));
 }

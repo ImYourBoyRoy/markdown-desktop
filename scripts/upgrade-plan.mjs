@@ -52,6 +52,8 @@ export function upgradePlan(platform = process.platform) {
     ['cargo', ['+stable', 'install', 'cargo-audit', '--locked']],
     ['cargo', ['+stable', 'install', 'cargo-deny', '--locked']],
     ['pnpm', ['update', '--latest', '--include-github-actions']],
+    ['node', ['scripts/update-wcagate.mjs']],
+    ['pnpm', ['install', '--lockfile-only']],
     ['node', ['scripts/normalize-workflow-comments.mjs']],
     ['node', ['scripts/align-typescript.mjs']],
     ['cargo', ['+stable', 'upgrade', '--manifest-path', 'src-tauri/Cargo.toml', '--incompatible', 'allow', '--pinned', 'allow']],

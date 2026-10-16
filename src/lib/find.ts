@@ -81,7 +81,8 @@ export function visualMapResolutionForMatch(
   if (containing) {
     const smallestContaining = allCandidates.find((candidate) => contains(candidate.selection, match));
     const exactInline = containing.kind === 'link' || containing.kind === 'image'
-      || containing.kind === 'html_link' || containing.kind === 'html_image';
+      || containing.kind === 'html_link' || containing.kind === 'html_image'
+      || containing.kind === 'html_video' || containing.kind === 'html_iframe';
     return { mapId: containing.mapId, fallback: !exactInline && smallestContaining?.kind !== containing.kind };
   }
 

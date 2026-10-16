@@ -18,7 +18,11 @@ export function enableFencedCodeEditing(
   sourceMapForRender: SourceMap,
   callbacks: Pick<BlockEditingCallbacks, 'onBlockEdit' | 'onVisualDraftEdit' | 'onVisualDraftCommit' | 'onVisualEditRejected'>,
 ) {
-  host.querySelectorAll<HTMLElement>('.fence-shell[data-map-kind="code_block"]').forEach((shell) => {
+  const shells = [
+    ...(host instanceof HTMLElement && host.matches('.fence-shell[data-map-kind="code_block"]') ? [host] : []),
+    ...host.querySelectorAll<HTMLElement>('.fence-shell[data-map-kind="code_block"]'),
+  ];
+  shells.forEach((shell) => {
     const mapId = shell.dataset.mapId;
     const code = shell.querySelector<HTMLElement>('pre > code');
     if (!mapId || !code) return;
@@ -34,6 +38,9 @@ export function enableFencedCodeEditing(
 
     code.contentEditable = 'true';
     code.setAttribute('contenteditable', 'true');
+    // Code is never spell-checked, even though the rendered article carries
+    // the user's inherited prose spell-check preference.
+    code.setAttribute('spellcheck', 'false');
     code.setAttribute('role', 'textbox');
     code.setAttribute('aria-multiline', 'true');
     code.setAttribute('aria-label', `${language || 'plain'} Markdown code block`);

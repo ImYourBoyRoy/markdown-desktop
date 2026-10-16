@@ -1,6 +1,6 @@
 import { markdownLineEnding } from './inserts';
 import { mappedInsertionBlockElements } from './markdown-view-dom';
-import { sourceSelectionForSpan } from './source-map';
+import { sourceSelectionsForSpans } from './source-map';
 import type { TextSelection } from './formatting';
 import type { SourceMap } from './types';
 import { EMPTY_VISUAL_MAP_ID } from './visual-edit';
@@ -15,6 +15,11 @@ export interface BlockInsertionCallbacks {
   onSlashCancel?: (element: HTMLElement) => boolean;
 }
 
+export type BlockInsertionController = (() => void) & {
+  /** Refresh source offsets without rebuilding the insertion-zone DOM. */
+  update: (source: string, sourceMap: SourceMap) => void;
+};
+
 function insertionText(source: string, offset: number, text: string): string {
   const lineEnding = markdownLineEnding(source);
   const prefix = offset > 0 && /\r|\n/.test(source[offset - 1] ?? '') ? '' : lineEnding;
@@ -28,20 +33,28 @@ export function decorateBlockInsertionZones(
   source: string,
   sourceMap: SourceMap,
   callbacks: BlockInsertionCallbacks,
-): () => void {
+): BlockInsertionController {
+  let currentSource = source;
+  const selections = sourceSelectionsForSpans(source, sourceMap, sourceMap.sourceHash);
   const blocks = mappedInsertionBlockElements(host)
     .map((element) => {
       const mapId = element.dataset.mapId;
-      const selection = mapId
-        ? sourceSelectionForSpan(source, sourceMap, mapId, sourceMap.sourceHash)
-        : null;
+      const selection = mapId ? selections.get(mapId) ?? null : null;
       return selection ? { element, selection } : null;
     })
     .filter((entry): entry is { element: HTMLElement; selection: TextSelection } => entry !== null);
-  if (!blocks.length) return () => undefined;
+  if (!blocks.length) {
+    const cleanup = (() => undefined) as BlockInsertionController;
+    cleanup.update = (nextSource) => {
+      currentSource = nextSource;
+    };
+    return cleanup;
+  }
 
-  const zones: HTMLElement[] = [];
-  const createZone = (offset: number, before: HTMLElement | null) => {
+  const zones: Array<{ element: HTMLElement; updateOffset: (offset: number) => void }> = [];
+  const blockMapIds = blocks.map(({ element }) => element.dataset.mapId ?? '');
+  const createZone = (initialOffset: number, before: HTMLElement | null) => {
+    let offset = initialOffset;
     const zone = document.createElement('div');
     zone.className = 'block-insertion-zone';
     zone.contentEditable = 'true';
@@ -60,7 +73,7 @@ export function decorateBlockInsertionZones(
     const applyDraft = (): boolean => {
       const text = zone.textContent ?? '';
       if (!text.trim()) return true;
-      const replacement = insertionText(source, offset, text);
+      const replacement = insertionText(currentSource, offset, text);
       const nextSelection = callbacks.onVisualDraftEdit(EMPTY_VISUAL_MAP_ID, draftSelection, draftMarkdown, replacement, text);
       if (!nextSelection) return false;
       draftSelection = nextSelection;
@@ -135,7 +148,10 @@ export function decorateBlockInsertionZones(
     });
     if (before) before.parentElement?.insertBefore(zone, before);
     else host.append(zone);
-    zones.push(zone);
+    zones.push({
+      element: zone,
+      updateOffset: (nextOffset) => { offset = nextOffset; },
+    });
   };
 
   blocks.forEach(({ element, selection }) => createZone(selection.from, element));
@@ -148,19 +164,47 @@ export function decorateBlockInsertionZones(
     const y = event.clientY;
     let nearest: HTMLElement | undefined;
     let nearestDistance = Number.POSITIVE_INFINITY;
-    for (const zone of zones) {
-      const rect = zone.getBoundingClientRect();
+    for (const entry of zones) {
+      const rect = entry.element.getBoundingClientRect();
       const distance = Math.abs(rect.top + rect.height / 2 - y);
       if (distance < nearestDistance) {
-        nearest = zone;
+        nearest = entry.element;
         nearestDistance = distance;
       }
     }
     nearest?.focus();
   };
   host.addEventListener('click', focusNearestInsertionZone);
-  return () => {
+  const cleanup = (() => {
     host.removeEventListener('click', focusNearestInsertionZone);
-    zones.forEach((zone) => zone.remove());
+    zones.forEach(({ element }) => element.remove());
+    zones.length = 0;
+  }) as BlockInsertionController;
+  cleanup.update = (nextSource, nextSourceMap) => {
+    const nextSelections = sourceSelectionsForSpans(
+      nextSource,
+      nextSourceMap,
+      nextSourceMap.sourceHash,
+    );
+    const nextBlocks = mappedInsertionBlockElements(host)
+      .map((element) => {
+        const mapId = element.dataset.mapId;
+        const selection = mapId ? nextSelections.get(mapId) ?? null : null;
+        return selection ? { element, selection } : null;
+      })
+      .filter((entry): entry is { element: HTMLElement; selection: TextSelection } => entry !== null);
+    const sameBlockOrder = nextBlocks.length === blocks.length
+      && nextBlocks.every(({ element }, index) => element.dataset.mapId === blockMapIds[index]);
+    if (!sameBlockOrder || zones.length !== nextBlocks.length + 1) {
+      // An incremental source edit is expected to keep the block topology
+      // stable. If it does not, leave the current controller intact; the
+      // render path will replace it on the next full enhancement.
+      currentSource = nextSource;
+      return;
+    }
+    currentSource = nextSource;
+    nextBlocks.forEach(({ selection }, index) => zones[index]?.updateOffset(selection.from));
+    zones.at(-1)?.updateOffset(nextBlocks.at(-1)?.selection.to ?? nextSource.length);
   };
+  return cleanup;
 }

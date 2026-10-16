@@ -356,6 +356,11 @@ function structuralPrefixLength(kind: string, markdown: string): number {
   return 0;
 }
 
+/** Source offset of the visible body after heading/list structural syntax. */
+export function visualStructuralPrefixLength(kind: string, markdown: string): number {
+  return structuralPrefixLength(kind, markdown);
+}
+
 function bodyRangeForProjection(kind: string, markdown: string): TextSelection | null {
   if (kind === 'heading') {
     // Keep ATX markers inside the projected body as an invisible prefix so a
@@ -558,6 +563,68 @@ export function sourceSelectionForSpan(
   return { from, to };
 }
 
+/**
+ * Resolve every mapped span in one UTF-8 boundary pass.
+ *
+ * Source maps store byte offsets while browser selections use UTF-16 offsets.
+ * Calling `sourceSelectionForSpan` once per span is exact, but each call would
+ * walk the source from its beginning. Large documents with many mapped spans
+ * therefore turn a source-map lookup into repeated document-sized work. This
+ * batch form keeps the same exact-or-null semantics while visiting the source
+ * once and resolving all requested byte boundaries together.
+ */
+export function sourceSelectionsForSpans(
+  source: string,
+  sourceMap: SourceMap,
+  expectedSourceHash: string,
+): Map<string, TextSelection> {
+  const selections = new Map<string, TextSelection>();
+  if (!sourceMapMatchesHash(sourceMap, expectedSourceHash)) return selections;
+
+  const validSpans = sourceMap.spans.filter((span) =>
+    Number.isInteger(span.sourceByteStart)
+    && Number.isInteger(span.sourceByteEnd)
+    && span.sourceByteStart >= 0
+    && span.sourceByteStart <= span.sourceByteEnd,
+  );
+  if (!validSpans.length) return selections;
+
+  const boundaries = [...new Set(validSpans.flatMap((span) => [span.sourceByteStart, span.sourceByteEnd]))]
+    .sort((left, right) => left - right);
+  const utf16ByByte = new Map<number, number>();
+  let boundaryIndex = 0;
+  let byteOffset = 0;
+  let utf16Offset = 0;
+
+  const recordBoundary = () => {
+    while (boundaryIndex < boundaries.length && boundaries[boundaryIndex] === byteOffset) {
+      utf16ByByte.set(boundaries[boundaryIndex], utf16Offset);
+      boundaryIndex += 1;
+    }
+  };
+
+  for (const codePoint of source) {
+    recordBoundary();
+    byteOffset += utf8ByteLength(codePoint.codePointAt(0) ?? 0);
+    utf16Offset += codePoint.length;
+    // A mapped boundary in the middle of a UTF-8 sequence is invalid. Skip
+    // it rather than rounding into a different source character.
+    while (boundaryIndex < boundaries.length && boundaries[boundaryIndex] < byteOffset) {
+      boundaryIndex += 1;
+    }
+  }
+  recordBoundary();
+
+  validSpans.forEach((span) => {
+    const from = utf16ByByte.get(span.sourceByteStart);
+    const to = utf16ByByte.get(span.sourceByteEnd);
+    if (from !== undefined && to !== undefined && from <= to) {
+      selections.set(span.mapId, { from, to });
+    }
+  });
+  return selections;
+}
+
 function lineStartsInBytes(source: string): number[] {
   const starts = [0];
   const bytes = encoder.encode(source);
@@ -628,7 +695,7 @@ type RawHtmlElementDescriptor = {
   kind: string;
   parentMapId: string;
   parentKind: string;
-  tag: 'a' | 'img';
+  tag: 'a' | 'img' | 'video' | 'iframe' | 'source';
   value: string;
 };
 
@@ -699,15 +766,15 @@ export function attachSourceMapIds(host: ParentNode, source: string, sourceMap: 
     byTag.push(index);
     descriptorIndicesByTag.set(descriptor.tag, byTag);
   });
-  const rawElementValue = (element: HTMLAnchorElement | HTMLImageElement, tag: 'a' | 'img') =>
+  const rawElementValue = (element: HTMLElement, tag: RawHtmlElementDescriptor['tag']) =>
     normalizeMarkupAttribute(tag === 'a'
       ? (element.getAttribute('href') ?? '')
-      : (element.dataset.source ?? element.getAttribute('src') ?? ''));
-  const rawElements = [...host.querySelectorAll<HTMLAnchorElement | HTMLImageElement>('a[href], img[src]')]
+      : (element.dataset.source ?? element.dataset.mediaSrc ?? element.getAttribute('src') ?? ''));
+  const rawElements = [...host.querySelectorAll<HTMLElement>('a[href], img[src], img[data-media-src], video[src], video[data-media-src], iframe[src], iframe[data-media-src], video > source[src], video > source[data-media-src]')]
     .filter((element) => !element.dataset.mapId);
   let descriptorCursor = 0;
   for (const element of rawElements) {
-    const tag = element.tagName.toLowerCase() as 'a' | 'img';
+    const tag = element.tagName.toLowerCase() as RawHtmlElementDescriptor['tag'];
     const value = rawElementValue(element, tag);
     if (!value) continue;
     const exactCandidates = descriptorIndicesByKey.get(`${tag}:${value}`) ?? [];
@@ -720,14 +787,21 @@ export function attachSourceMapIds(host: ParentNode, source: string, sourceMap: 
       : (fallbackCandidates[fallbackPosition] ?? -1);
     if (fallbackIndex < 0) continue;
     const descriptor = mappedDescriptors[fallbackIndex];
+    const visualElement = tag === 'source'
+      ? element.closest<HTMLElement>('video') ?? element
+      : element;
     element.dataset.mapId = descriptor.mapId;
     element.dataset.mapKind = descriptor.kind;
+    if (!visualElement.dataset.mapId) {
+      visualElement.dataset.mapId = descriptor.mapId;
+      visualElement.dataset.mapKind = descriptor.kind;
+    }
     // Raw HTML has no Comrak sourcepos on its rendered container. Attach the
     // parent block span to the direct rendered block owner so hovering or
     // selecting an image/link also outlines the surrounding visual section.
     // Never promote html_inline parents onto headings/paragraphs: that would
     // temporarily steal the ATX/block map id and leave `# ` out of selections.
-    let owner = element.parentElement;
+    let owner = visualElement.parentElement;
     while (owner && owner !== host && owner.parentElement !== host) owner = owner.parentElement;
     if (owner && owner !== host && !owner.dataset.mapId
       && descriptor.parentKind !== 'html_inline') {
@@ -757,20 +831,112 @@ export function attachSourceMapIds(host: ParentNode, source: string, sourceMap: 
     attached += 1;
   }
 
-  // Comrak deliberately omits inline sourcepos from HTML. Bind links/images
-  // by their trusted AST order as a fallback, never by scraping user HTML.
-  for (const kind of ['link', 'image']) {
+  // Comrak deliberately omits inline sourcepos from HTML. A document-wide
+  // AST/DOM index is not enough here: one generated inline node can be
+  // inserted, sanitized, or omitted inside a different paragraph and steal a
+  // map ID from an otherwise identical sibling. Resolve fallback candidates
+  // within their nearest mapped block owner first, then use global order only
+  // when both sides genuinely have no owner.
+  const mappedBlockKinds = new Set([
+    'heading', 'paragraph', 'list_item', 'task_item', 'blockquote', 'code_block',
+    'table', 'table_row', 'table_cell', 'details', 'html_block', 'html_inline',
+  ]);
+  const mappedBlockOwners = [...host.querySelectorAll<HTMLElement>('[data-map-id][data-map-kind]')]
+    .map((element) => {
+      const mapId = element.dataset.mapId;
+      const kind = element.dataset.mapKind;
+      const span = mapId ? byMapId.get(mapId) : undefined;
+      return mapId && kind && mappedBlockKinds.has(kind) && span
+        ? { mapId, sourceByteStart: span.sourceByteStart, sourceByteEnd: span.sourceByteEnd }
+        : null;
+    })
+    .filter((owner): owner is { mapId: string; sourceByteStart: number; sourceByteEnd: number } => owner !== null)
+    .sort((left, right) => left.sourceByteStart - right.sourceByteStart || right.sourceByteEnd - left.sourceByteEnd);
+  const mappedBlockPrefixMaxEnd: number[] = [];
+  let mappedBlockMaxEnd = -1;
+  mappedBlockOwners.forEach((owner, index) => {
+    mappedBlockMaxEnd = Math.max(mappedBlockMaxEnd, owner.sourceByteEnd);
+    mappedBlockPrefixMaxEnd[index] = mappedBlockMaxEnd;
+  });
+  const ownerForElement = (element: Element): string | null => {
+    let current: Element | null = element;
+    while (current && current !== host) {
+      const candidate = current as HTMLElement;
+      if (candidate.dataset.mapId && mappedBlockKinds.has(candidate.dataset.mapKind ?? '')) {
+        return candidate.dataset.mapId;
+      }
+      current = current.parentElement;
+    }
+    return null;
+  };
+  const ownerForSpan = (span: MappedSpan): string | null => {
+    let best: { mapId: string; length: number } | null = null;
+    let low = 0;
+    let high = mappedBlockOwners.length;
+    // Skip the disjoint prefix using the same prefix-maximum technique as
+    // the source-selection index. Inline attachment is on the render path;
+    // it must stay bounded for documents with thousands of mapped blocks.
+    while (low < high) {
+      const middle = low + Math.floor((high - low) / 2);
+      if ((mappedBlockPrefixMaxEnd[middle] ?? -1) > span.sourceByteStart) high = middle;
+      else low = middle + 1;
+    }
+    const firstPotentialOwner = low;
+    low = firstPotentialOwner;
+    high = mappedBlockOwners.length;
+    while (low < high) {
+      const middle = low + Math.floor((high - low) / 2);
+      if ((mappedBlockOwners[middle]?.sourceByteStart ?? Number.POSITIVE_INFINITY) <= span.sourceByteStart) low = middle + 1;
+      else high = middle;
+    }
+    for (let index = firstPotentialOwner; index < low; index += 1) {
+      const owner = mappedBlockOwners[index];
+      if (!owner || owner.sourceByteEnd < span.sourceByteEnd) continue;
+      const length = owner.sourceByteEnd - owner.sourceByteStart;
+      if (!best || length < best.length) best = { mapId: owner.mapId, length };
+    }
+    return best?.mapId ?? null;
+  };
+  const assignGeneratedByOwner = (kind: string, selector: string) => {
     const remaining = (byKind.get(kind) ?? []).filter((span) => !used.has(span.mapId));
-    const elements = [...host.querySelectorAll<HTMLElement>(kind === 'link' ? 'a[href]' : 'img[src]')]
+    const elements = [...host.querySelectorAll<HTMLElement>(selector)]
       .filter((element) => !element.dataset.mapId);
-    elements.forEach((element, index) => {
-      const span = remaining[index];
-      if (!span) return;
-      element.dataset.mapId = span.mapId;
-      used.add(span.mapId);
-      attached += 1;
-    });
-  }
+    const spansByOwner = new Map<string, MappedSpan[]>();
+    const elementsByOwner = new Map<string, HTMLElement[]>();
+    const groupKey = (owner: string | null) => owner ?? '';
+    for (const span of remaining) {
+      const owner = groupKey(ownerForSpan(span));
+      const group = spansByOwner.get(owner) ?? [];
+      group.push(span);
+      spansByOwner.set(owner, group);
+    }
+    for (const element of elements) {
+      const owner = groupKey(ownerForElement(element));
+      const group = elementsByOwner.get(owner) ?? [];
+      group.push(element);
+      elementsByOwner.set(owner, group);
+    }
+    const owners = new Set([...spansByOwner.keys(), ...elementsByOwner.keys()]);
+    for (const owner of owners) {
+      const spans = (spansByOwner.get(owner) ?? [])
+        .slice()
+        .sort((left, right) => left.sourceByteStart - right.sourceByteStart || left.sourceByteEnd - right.sourceByteEnd);
+      const candidates = elementsByOwner.get(owner) ?? [];
+      const count = Math.min(spans.length, candidates.length);
+      for (let index = 0; index < count; index += 1) {
+        const element = candidates[index];
+        const span = spans[index];
+        if (!element || !span) continue;
+        element.dataset.mapId = span.mapId;
+        element.dataset.mapKind = span.kind;
+        used.add(span.mapId);
+        attached += 1;
+      }
+    }
+  };
+
+  assignGeneratedByOwner('link', 'a[href]');
+  assignGeneratedByOwner('image', 'img[src], img[data-media-src]');
 
   // Comrak intentionally does not add sourcepos to raw HTML blocks. Bind the
   // safe details representation by trusted source-map/DOM order instead of
@@ -804,16 +970,7 @@ export function attachSourceMapIds(host: ParentNode, source: string, sourceMap: 
     inline_code: ':not(pre) > code',
   };
   for (const [kind, selector] of Object.entries(inlineSelectors)) {
-    const remaining = (byKind.get(kind) ?? []).filter((span) => !used.has(span.mapId));
-    const elements = [...host.querySelectorAll<HTMLElement>(selector)].filter((element) => !element.dataset.mapId);
-    elements.forEach((element, index) => {
-      const span = remaining[index];
-      if (!span) return;
-      element.dataset.mapId = span.mapId;
-      element.dataset.mapKind = span.kind;
-      used.add(span.mapId);
-      attached += 1;
-    });
+    assignGeneratedByOwner(kind, selector);
   }
 
   host.querySelectorAll<HTMLImageElement>('img[data-map-id]').forEach((image) => {

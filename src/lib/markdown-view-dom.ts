@@ -177,7 +177,9 @@ export function contentElementForMappedElements(elements: HTMLElement[], kind: s
 /** Explain why a mapped block remains source-only in visual Edit mode. */
 export function sourceOnlyReason(element: HTMLElement): string {
   const kind = element.dataset.mapKind ?? '';
-  if (element.querySelector('img')) return 'This block contains an image object';
+  if (element.querySelector('img') && element.dataset.visualEditable !== 'true') {
+    return 'This image-containing block is safest to edit with its source controls';
+  }
   if (element.querySelector('ul, ol')) return 'This block contains a nested list';
   if (element.querySelector('br')) return 'This block contains a hard break';
   if (kind === 'blockquote') return 'Blockquotes retain their source structure';
@@ -244,16 +246,31 @@ export function wrapTextSelection(
   return { wrapped: decorations.length > 0, decorations };
 }
 
-export function mappedRootBlockElements(host: HTMLElement): HTMLElement[] {
+/**
+ * Return visible Markdown roots that can own block controls.
+ *
+ * Rich renderers replace a mapped `code_block` node with a `diagram` node while
+ * preserving its source-map ID. `rootMapIds` lets the control layer continue
+ * treating that replacement as the same source-authoritative root instead of
+ * losing its grip/delete affordances because the rendered kind changed.
+ */
+export function mappedRootBlockElements(
+  host: HTMLElement,
+  rootMapIds: ReadonlySet<string> = new Set(),
+): HTMLElement[] {
   const seen = new Set<string>();
+  const isRoot = (element: HTMLElement) => {
+    const mapId = element.dataset.mapId;
+    const kind = element.dataset.mapKind;
+    return Boolean(mapId && kind && (isMovableRootBlockKind(kind) || rootMapIds.has(mapId)));
+  };
   return [...host.querySelectorAll<HTMLElement>('[data-map-id][data-map-kind]')]
     .filter((element) => {
       const mapId = element.dataset.mapId;
-      const kind = element.dataset.mapKind;
-      if (!mapId || !kind || !isMovableRootBlockKind(kind) || seen.has(mapId)) return false;
+      if (!mapId || !isRoot(element) || seen.has(mapId)) return false;
       let ancestor = element.parentElement;
       while (ancestor && ancestor !== host) {
-        if (ancestor.dataset.mapId !== mapId && isMovableRootBlockKind(ancestor.dataset.mapKind ?? '')) return false;
+        if (ancestor.dataset.mapId !== mapId && isRoot(ancestor)) return false;
         ancestor = ancestor.parentElement;
       }
       seen.add(mapId);

@@ -2,12 +2,15 @@ import type { SourceMap } from './types';
 import { markdownSpanTooltip } from './markdown-tooltip';
 
 export function decorateFenceChrome(
-  host: HTMLElement,
+  host: ParentNode,
   sourceMapForRender: SourceMap,
   editable: boolean,
   onRevealSource: (mapId: string) => void,
 ) {
-  host.querySelectorAll<HTMLPreElement>('pre').forEach((pre) => {
+  const fences = host instanceof Element && host.matches('pre')
+    ? [host as HTMLPreElement, ...host.querySelectorAll<HTMLPreElement>('pre')]
+    : [...host.querySelectorAll<HTMLPreElement>('pre')];
+  fences.forEach((pre) => {
     if (pre.dataset.fenceDecorated === 'true') return;
     const code = pre.querySelector('code');
     if (!code) return;
@@ -48,7 +51,7 @@ export function decorateFenceChrome(
   });
 }
 
-export function decorateTaskCheckboxes(host: HTMLElement) {
+export function decorateTaskCheckboxes(host: ParentNode) {
   host.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((checkbox) => {
     const completed = checkbox.checked;
     checkbox.setAttribute('aria-label', completed
@@ -58,9 +61,12 @@ export function decorateTaskCheckboxes(host: HTMLElement) {
   });
 }
 
-export function applyMapTooltips(host: HTMLElement, sourceMapForRender: SourceMap) {
+export function applyMapTooltips(host: ParentNode, sourceMapForRender: SourceMap) {
   const mappedSpanIndex = new Map(sourceMapForRender.spans.map((span) => [span.mapId, span]));
-  host.querySelectorAll<HTMLElement>('[data-map-id]').forEach((element) => {
+  const mappedElements = host instanceof Element && host.matches('[data-map-id]')
+    ? [host as HTMLElement, ...host.querySelectorAll<HTMLElement>('[data-map-id]')]
+    : [...host.querySelectorAll<HTMLElement>('[data-map-id]')];
+  mappedElements.forEach((element) => {
     const mapId = element.dataset.mapId;
     if (!mapId) return;
     const span = mappedSpanIndex.get(mapId);

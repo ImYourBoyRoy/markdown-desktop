@@ -140,7 +140,11 @@ export function handleVisualEditingKeydown(
         kind,
         event.shiftKey ? 'outdent' : 'indent',
       );
-      if (patch && onVisualStructureEdit(patch)) setPendingVisualCaret(patch.selection);
+      if (patch && onVisualStructureEdit(patch)) {
+        setPendingVisualCaret(patch.selection);
+      } else if (!patch) {
+        onVisualEditRejected?.(rejectedVisualActionMessage(event.shiftKey ? 'Outdent' : 'Indent'));
+      }
     }
     return true;
   }

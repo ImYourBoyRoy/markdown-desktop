@@ -12,7 +12,7 @@ import type { MappedSpan, SourceMap } from './types';
 
 const encoder = new TextEncoder();
 
-export type HtmlSubSpanKind = 'html_link' | 'html_image';
+export type HtmlSubSpanKind = 'html_link' | 'html_image' | 'html_video' | 'html_iframe';
 
 export interface HtmlSubSpan {
   mapId: string;
@@ -21,7 +21,7 @@ export interface HtmlSubSpan {
   selection: TextSelection;
   sourceByteStart: number;
   sourceByteEnd: number;
-  tag: 'a' | 'img';
+  tag: 'a' | 'img' | 'video' | 'iframe' | 'source';
   value: string;
 }
 
@@ -30,7 +30,7 @@ export interface MappedHtmlElementDescriptor {
   kind: string;
   parentMapId: string;
   parentKind: string;
-  tag: 'a' | 'img';
+  tag: 'a' | 'img' | 'video' | 'iframe' | 'source';
   value: string;
 }
 
@@ -57,7 +57,7 @@ function parentSelectionForSpan(source: string, span: MappedSpan): TextSelection
   return { from, to };
 }
 
-/** Build precise sub-spans for every `<a>` / `<img>` tag inside one HTML literal. */
+/** Build precise sub-spans for every mapped raw-media/link tag in one HTML literal. */
 export function buildHtmlSubSpans(
   source: string,
   span: MappedSpan,
@@ -65,13 +65,12 @@ export function buildHtmlSubSpans(
 ): HtmlSubSpan[] {
   const literal = source.slice(parentSelection.from, parentSelection.to);
   const subSpans: HtmlSubSpan[] = [];
-  let linkIndex = 0;
-  let imageIndex = 0;
+  const indexes = new Map<string, number>();
   let scannedUtf8Bytes = 0;
   let scannedUtf16Offset = 0;
-  for (const match of literal.matchAll(/<(a|img)\b[^>]*>/gi)) {
+  for (const match of literal.matchAll(/<(a|img|video|iframe|source)\b[^>]*>/gi)) {
     const tag = match[1]?.toLowerCase();
-    if (tag !== 'a' && tag !== 'img') continue;
+    if (!tag || !['a', 'img', 'video', 'iframe', 'source'].includes(tag)) continue;
     const attribute = tag === 'a' ? 'href' : 'src';
     const rawValue = markupAttributeValue(match[0], attribute);
     const tagStartInLiteral = match.index ?? 0;
@@ -93,16 +92,31 @@ export function buildHtmlSubSpans(
       from: parentSelection.from + tagStartInLiteral,
       to: parentSelection.from + tagEndInLiteral,
     };
-    const index = tag === 'a' ? linkIndex++ : imageIndex++;
-    const suffix = tag === 'a' ? `html-link-${index}` : `html-image-${index}`;
+    const objectKind = tag === 'source' ? 'video' : tag;
+    const index = indexes.get(objectKind) ?? 0;
+    indexes.set(objectKind, index + 1);
+    // Keep the long-standing IDs for links/images stable. Selection bridges
+    // and persisted UI state can refer to these IDs during a live render, so
+    // new raw-media tags must not renumber or rename existing objects.
+    const suffix = objectKind === 'a'
+      ? `html-link-${index}`
+      : objectKind === 'img'
+        ? `html-image-${index}`
+        : `html-${objectKind}-${index}`;
     subSpans.push({
       mapId: `${span.mapId}#${suffix}`,
       parentMapId: span.mapId,
-      kind: tag === 'a' ? 'html_link' : 'html_image',
+      kind: tag === 'a'
+        ? 'html_link'
+        : tag === 'img'
+          ? 'html_image'
+          : tag === 'video' || tag === 'source'
+            ? 'html_video'
+            : 'html_iframe',
       selection,
       sourceByteStart: tagSourceByteStart,
       sourceByteEnd: tagSourceByteStart + tagSourceByteLength,
-      tag,
+      tag: tag as 'a' | 'img' | 'video' | 'iframe' | 'source',
       value: normalizeMarkupAttribute(rawValue),
     });
   }
@@ -114,14 +128,14 @@ export function mappedHtmlElementDescriptors(source: string, sourceMap: SourceMa
   const descriptors: MappedHtmlElementDescriptor[] = [];
   const parentsWithRustChildren = new Set(
     sourceMap.spans
-      .filter((span) => span.kind === 'html_link' || span.kind === 'html_image')
+      .filter((span) => ['html_link', 'html_image', 'html_video', 'html_iframe'].includes(span.kind))
       .map((span) => span.attrs.parentMapId)
       .filter((value): value is string => typeof value === 'string' && value.length > 0),
   );
   const spanKindById = new Map(sourceMap.spans.map((span) => [span.mapId, span.kind]));
   const spans = [...sourceMap.spans].sort((left, right) => left.sourceByteStart - right.sourceByteStart);
   for (const span of spans) {
-    if (span.kind === 'html_link' || span.kind === 'html_image') {
+    if (['html_link', 'html_image', 'html_video', 'html_iframe'].includes(span.kind)) {
       const attribute = span.kind === 'html_link'
         ? span.attrs.href ?? span.attrs.target
         : span.attrs.src;
@@ -134,7 +148,13 @@ export function mappedHtmlElementDescriptors(source: string, sourceMap: SourceMa
         kind: span.kind,
         parentMapId,
         parentKind,
-        tag: span.kind === 'html_link' ? 'a' : 'img',
+        tag: span.kind === 'html_link'
+          ? 'a'
+          : span.kind === 'html_image'
+            ? 'img'
+            : span.kind === 'html_video'
+              ? 'video'
+              : 'iframe',
         value: normalizeMarkupAttribute(value),
       });
       continue;
@@ -181,12 +201,12 @@ export function augmentSourceSelectionIndexWithHtmlSubSpans(
 ): void {
   const parentsWithRustChildren = new Set(
     sourceMap.spans
-      .filter((span) => span.kind === 'html_link' || span.kind === 'html_image')
+      .filter((span) => ['html_link', 'html_image', 'html_video', 'html_iframe'].includes(span.kind))
       .map((span) => span.attrs.parentMapId)
       .filter((value): value is string => typeof value === 'string' && value.length > 0),
   );
   for (const span of sourceMap.spans) {
-    if (span.kind === 'html_link' || span.kind === 'html_image') {
+    if (['html_link', 'html_image', 'html_video', 'html_iframe'].includes(span.kind)) {
       if (byMapId.has(span.mapId)) continue;
       const from = utf8ByteOffsetToUtf16(source, span.sourceByteStart);
       const to = utf8ByteOffsetToUtf16(source, span.sourceByteEnd);

@@ -162,14 +162,30 @@ export async function selectRenderedCrossBlockProbe(
 export async function dragRenderedBlockProbe(renderedPane: HTMLElement | null): Promise<boolean> {
   if (!renderedPane) return false;
   const handles = [...renderedPane.querySelectorAll<HTMLButtonElement>('.block-drag-handle')];
-  const movingHandle = handles[0];
-  const targetHandle = handles[1];
+  const rootForHandle = (handle: HTMLButtonElement): HTMLElement | undefined => {
+    const mapId = handle.dataset.blockMapId;
+    if (!mapId) return undefined;
+    return [...renderedPane.querySelectorAll<HTMLElement>('[data-map-id][data-map-kind]')]
+      .find((element) => element.dataset.mapId === mapId
+        && !element.closest('.block-handle'));
+  };
+  // Choose ordinary paragraph roots for the packaged gesture probe. A rich
+  // block is intentionally present in the fixture, and its async replacement
+  // can change control order; probing by the root's map ID keeps this check
+  // about pointer movement rather than incidental document ordering.
+  const paragraphPairs = handles
+    .map((handle) => ({ handle, root: rootForHandle(handle) }))
+    .filter(({ root }) => root?.dataset.mapKind === 'paragraph');
+  const pairs = paragraphPairs.length >= 2
+    ? paragraphPairs
+    : handles.map((handle) => ({ handle, root: rootForHandle(handle) }))
+      .filter(({ root }) => Boolean(root));
+  const movingHandle = pairs[0]?.handle;
+  const targetHandle = pairs[1]?.handle;
   if (!movingHandle || !targetHandle) return false;
   const targetMapId = targetHandle.dataset.blockMapId;
   if (!targetMapId) return false;
-  const target = [...renderedPane.querySelectorAll<HTMLElement>('[data-map-id]')]
-    .find((element) => element.dataset.mapId === targetMapId
-      && !element.classList.contains('block-drag-handle'));
+  const target = rootForHandle(targetHandle);
   if (!target) return false;
   const targetRect = target.getBoundingClientRect();
   const movingRect = movingHandle.getBoundingClientRect();

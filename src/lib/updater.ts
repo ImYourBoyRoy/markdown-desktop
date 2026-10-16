@@ -6,7 +6,7 @@
 import { getVersion } from '@tauri-apps/api/app';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { check, type DownloadEvent, type Update } from '@tauri-apps/plugin-updater';
-import { isTauri } from './ipc';
+import { isTauri, setUpdateShutdownApproval } from './ipc';
 
 export type UpdateUiState = 'idle' | 'checking' | 'current' | 'available' | 'installing' | 'error';
 
@@ -188,6 +188,9 @@ export async function installAppUpdate(
   let contentLength = 0;
   let downloaded = 0;
   let installed = false;
+  // The shell has drained saves/recovery and blocked editing before this
+  // confirmed call. Windows installers may exit the process themselves.
+  await setUpdateShutdownApproval(true);
   try {
     await update.downloadAndInstall((event: DownloadEvent) => {
       if (event.event === 'Started') {
@@ -207,6 +210,7 @@ export async function installAppUpdate(
     // confirmed update. A successful install owns the resource until the
     // updater has launched or the app has attempted its relaunch.
     if (installed) await update.close().catch(() => undefined);
+    else await setUpdateShutdownApproval(false);
   }
   try {
     await relaunch();
@@ -216,6 +220,7 @@ export async function installAppUpdate(
     // itself (for example, after a platform session change). Tell the caller
     // to ask the user for a manual restart instead of reporting a false
     // installation failure.
+    await setUpdateShutdownApproval(false);
     return { installed: true, relaunched: false };
   }
 }

@@ -29,6 +29,33 @@ describe('MarkdownView visual editing', () => {
     };
   }
 
+  it('mounts a large mapped revision in order before announcing readiness', async () => {
+    const blocks = Array.from(
+      { length: 80 },
+      (_, index) => ({ mapId: `large-${index}`, html: `<p>Large block ${index}</p>` }),
+    );
+    const onMapReady = vi.fn();
+    const { container } = render(MarkdownView, {
+      props: {
+        html: blocks.map((block) => block.html).join(''),
+        source: 'large document',
+        sourceMap: { version: 1, sourceHash: 'sha256:large', spans: [] },
+        renderedBlocks: blocks,
+        onMapReady,
+      },
+    });
+
+    await waitFor(() => {
+      expect(container.querySelectorAll('.markdown-view > p')).toHaveLength(blocks.length);
+      expect(onMapReady).toHaveBeenCalledTimes(1);
+    }, { timeout: 5_000 });
+
+    expect([...container.querySelectorAll<HTMLElement>('.markdown-view > p')]
+      .map((element) => element.textContent)).toEqual(
+      blocks.map((block) => block.html.replace(/<[^>]+>/g, '')),
+    );
+  });
+
   it('restores the original inline markup when a slash command is cancelled', async () => {
     const fixture = paragraphFixture();
     const onMapReady = vi.fn();
@@ -87,6 +114,53 @@ describe('MarkdownView visual editing', () => {
     expect(paragraph.isConnected).toBe(true);
     expect(container.querySelector<HTMLElement>('[data-visual-editable="true"]')).toBe(paragraph);
     expect(paragraph.innerHTML).toBe('Read <strong>this</strong>');
+  });
+
+  it('consumes an incremental commit token after its owning revision commits', async () => {
+    const fixture = paragraphFixture();
+    const onIncrementalCommitConsumed = vi.fn();
+    const { rerender } = render(MarkdownView, {
+      props: {
+        html: fixture.html,
+        source: fixture.source,
+        renderedSource: fixture.source,
+        sourceMap: fixture.sourceMap,
+        editable: true,
+        onIncrementalCommitConsumed,
+      },
+    });
+
+    await waitFor(() => {
+      if (!document.querySelector('[data-visual-editable="true"]')) {
+        throw new Error('initial visual revision not mounted');
+      }
+    });
+
+    const nextSource = 'Read **that**';
+    await rerender({
+      html: '<p data-sourcepos="1:1-1:13">Read <strong>that</strong></p>',
+      source: nextSource,
+      renderedSource: nextSource,
+      sourceMap: {
+        version: 1,
+        sourceHash: 'sha256:next-revision',
+        spans: [{
+          mapId: 'paragraph',
+          kind: 'paragraph',
+          sourceByteStart: 0,
+          sourceByteEnd: new TextEncoder().encode(nextSource).byteLength,
+          attrs: {},
+        }],
+      },
+      editable: true,
+      incrementalCommitMapId: 'paragraph',
+      incrementalCommitSourceRange: { from: 0, to: nextSource.length },
+      onIncrementalCommitConsumed,
+    });
+
+    await waitFor(() => {
+      expect(onIncrementalCommitConsumed).toHaveBeenCalledWith('paragraph');
+    });
   });
 
   it('routes a visual slash command through the mapped source callback', async () => {
@@ -211,7 +285,7 @@ describe('MarkdownView visual editing', () => {
     await fireEvent.input(paragraph);
     await fireEvent.blur(paragraph);
 
-    expect(onBlockEdit).toHaveBeenCalledWith('paragraph', 'Read updated', 'Read updated');
+    expect(onBlockEdit).toHaveBeenCalledWith('paragraph', 'Read updated', 'Read **updated**');
   });
 
   it('focuses an editable mapped block before keyboard input', async () => {
@@ -494,26 +568,32 @@ describe('MarkdownView visual editing', () => {
 
   it('routes Tab on a visual list item to an indentation patch', async () => {
     const fixture = {
-      source: '- child',
+      source: '- parent\n- child',
       sourceMap: {
         version: 1 as const,
         sourceHash: 'sha256:indent',
         spans: [{
-          mapId: 'item',
+          mapId: 'parent',
           kind: 'list_item',
           sourceByteStart: 0,
-          sourceByteEnd: 7,
+          sourceByteEnd: 8,
+          attrs: {},
+        }, {
+          mapId: 'item',
+          kind: 'list_item',
+          sourceByteStart: 9,
+          sourceByteEnd: 16,
           attrs: {},
         }],
       },
-      html: '<ul><li data-sourcepos="1:1-1:7">child</li></ul>',
+      html: '<ul><li data-sourcepos="1:1-1:8">parent</li><li data-sourcepos="2:1-2:7">child</li></ul>',
     };
     const onVisualStructureEdit = vi.fn(() => true);
     const { container } = render(MarkdownView, {
       props: { ...fixture, editable: true, onVisualStructureEdit },
     });
     const item = await waitFor(() => {
-      const element = container.querySelector<HTMLElement>('[data-visual-editable="true"]');
+      const element = container.querySelectorAll<HTMLElement>('[data-visual-editable="true"]')[1];
       if (!element) throw new Error('editable list item not mounted');
       return element;
     });
@@ -529,10 +609,10 @@ describe('MarkdownView visual editing', () => {
     await fireEvent.keyDown(item, { key: 'Tab' });
 
     expect(onVisualStructureEdit).toHaveBeenCalledWith({
-      from: 0,
-      to: 7,
+      from: 9,
+      to: 16,
       replacement: '  - child',
-      selection: { from: 5, to: 5 },
+      selection: { from: 14, to: 14 },
     });
   });
 
@@ -671,6 +751,40 @@ describe('MarkdownView visual editing', () => {
     expect(container.querySelector<HTMLElement>('[data-map-id="parent"]')?.dataset.visualEditable).toBeUndefined();
   });
 
+  it('keeps a source reveal escape hatch for a structurally unsupported block', async () => {
+    const source = '- parent\n  - child';
+    const sourceMap: SourceMap = {
+      version: 1,
+      sourceHash: 'sha256:nested-list-reveal',
+      spans: [{
+        mapId: 'parent',
+        kind: 'list_item',
+        sourceByteStart: 0,
+        sourceByteEnd: new TextEncoder().encode(source).byteLength,
+        attrs: {},
+      }],
+    };
+    const { container } = render(MarkdownView, {
+      props: {
+        html: '<ul><li data-sourcepos="1:1-2:9">parent<ul><li>child</li></ul></li></ul>',
+        source,
+        sourceMap,
+        editable: true,
+      },
+    });
+
+    const parent = await waitFor(() => {
+      const element = container.querySelector<HTMLElement>('[data-map-id="parent"]');
+      if (!element) throw new Error('nested list parent not mounted');
+      return element;
+    });
+    expect(parent.dataset.visualEditable).toBeUndefined();
+    await fireEvent.pointerOver(parent);
+    await waitFor(() => {
+      if (!container.querySelector('.source-reveal')) throw new Error('source reveal control not mounted');
+    });
+  });
+
   it('commits a supported inline-mark edit through the rich source serializer', async () => {
     const fixture = paragraphFixture();
     const onBlockEdit = vi.fn(() => true);
@@ -727,7 +841,47 @@ describe('MarkdownView visual editing', () => {
     await fireEvent.compositionEnd(paragraph);
     expect(paragraph.dataset.visualComposing).toBe('false');
     expect(paragraph.dataset.visualDirty).toBe('false');
-    expect(onBlockEdit).toHaveBeenCalledWith('paragraph', 'Read composing', 'Read composing');
+    expect(onBlockEdit).toHaveBeenCalledWith('paragraph', 'Read composing', 'Read **composing**');
+  });
+
+  it('keeps Unicode visual replacement editable when the source contains literal underscores', async () => {
+    const source = 'RUNTIME_FIND_TOKEN is searchable in this document.';
+    const onBlockEdit = vi.fn(() => true);
+    const { container } = render(MarkdownView, {
+      props: {
+        html: '<p data-sourcepos="1:1-1:50">RUNTIME_FIND_TOKEN is searchable in this document.</p>',
+        source,
+        sourceMap: {
+          version: 1,
+          sourceHash: 'sha256:unicode-underscore',
+          spans: [{
+            mapId: 'paragraph',
+            kind: 'paragraph',
+            sourceByteStart: 0,
+            sourceByteEnd: new TextEncoder().encode(source).byteLength,
+            attrs: {},
+          }],
+        },
+        editable: true,
+        onBlockEdit,
+      },
+    });
+
+    const paragraph = await waitFor(() => {
+      const element = container.querySelector<HTMLElement>('[data-visual-editable="true"]');
+      if (!element) throw new Error('editable paragraph not mounted');
+      return element;
+    });
+    paragraph.textContent = '日本語入力テスト';
+    await fireEvent.compositionStart(paragraph);
+    await fireEvent.input(paragraph);
+    await fireEvent.compositionEnd(paragraph);
+
+    expect(onBlockEdit).toHaveBeenCalledWith(
+      'paragraph',
+      '日本語入力テスト',
+      '日本語入力テスト',
+    );
   });
 
   it('accepts plain-text paste and refuses rich clipboard HTML', async () => {
@@ -1000,7 +1154,7 @@ describe('MarkdownView visual editing', () => {
     expect(onDetailsSummaryEdit).toHaveBeenCalledWith('details', 'Updated overview');
   });
 
-  it('leaves ambiguous inline blocks source-only and offers a source reveal action', async () => {
+  it('keeps an inline image paragraph visually editable without losing its source span', async () => {
     const source = 'Read ![this](https://example.com)';
     const sourceMap: SourceMap = {
       version: 1,
@@ -1029,17 +1183,10 @@ describe('MarkdownView visual editing', () => {
       if (!element) throw new Error('mapped paragraph not mounted');
       return element;
     });
-    expect(paragraph.dataset.visualEditable).toBeUndefined();
-
+    expect(paragraph.dataset.visualEditable).toBe('true');
     await fireEvent.pointerOver(paragraph);
-    const reveal = await waitFor(() => {
-      const element = container.querySelector<HTMLButtonElement>('.source-reveal');
-      if (!element) throw new Error('source reveal control not mounted');
-      return element;
-    });
-    expect(reveal.title).toContain('image object');
-    await fireEvent.click(reveal);
-    expect(onRevealSource).toHaveBeenCalledWith('paragraph');
+    expect(container.querySelector('.source-reveal')).toBeNull();
+    expect(onRevealSource).not.toHaveBeenCalled();
   });
 
   it('projects a source selection into the rendered pane without mutating authored markup', async () => {
@@ -1461,7 +1608,7 @@ describe('MarkdownView visual editing', () => {
       .toBe('Code block · Language: ts');
   });
 
-  it('routes a beside-edge block drop to the sequential fallback', async () => {
+  it('keeps the full block width mapped to an explicit before or after drop', async () => {
     const source = '# First\n\n# Second';
     const sourceMap: SourceMap = {
       version: 1,
@@ -1471,14 +1618,14 @@ describe('MarkdownView visual editing', () => {
         { mapId: 'second', kind: 'heading', sourceByteStart: 9, sourceByteEnd: source.length, attrs: { level: 1 } },
       ],
     };
-    const onBlockBeside = vi.fn();
+    const onBlockMove = vi.fn();
     const { container } = render(MarkdownView, {
       props: {
         html: '<h1 data-sourcepos="1:1-1:7">First</h1><h1 data-sourcepos="3:1-3:8">Second</h1>',
         source,
         sourceMap,
         editable: true,
-        onBlockBeside,
+        onBlockMove,
       },
     });
 
@@ -1496,20 +1643,21 @@ describe('MarkdownView visual editing', () => {
     const dragOver = new Event('dragover', { bubbles: true, cancelable: true });
     Object.defineProperties(dragOver, {
       clientX: { value: 1 },
-      clientY: { value: 0 },
+      clientY: { value: -1 },
       dataTransfer: { value: dataTransfer },
     });
     target.dispatchEvent(dragOver);
-    expect(target.classList.contains('block-drop-beside')).toBe(true);
+    expect(target.classList.contains('block-drop-before')).toBe(true);
+    expect(target.classList.contains('block-drop-after')).toBe(false);
     const drop = new Event('drop', { bubbles: true, cancelable: true });
     Object.defineProperties(drop, {
       clientX: { value: 1 },
-      clientY: { value: 0 },
+      clientY: { value: -1 },
       dataTransfer: { value: dataTransfer },
     });
     target.dispatchEvent(drop);
 
-    expect(onBlockBeside).toHaveBeenCalledWith('first', 'second');
+    expect(onBlockMove).toHaveBeenCalledWith('first', 'second', 'before');
   });
 
   it('moves a block after the pointer leaves the grip without capturing or selecting rendered text', async () => {
@@ -1603,7 +1751,7 @@ describe('MarkdownView visual editing', () => {
       });
       expect(document.querySelector('[data-block-drag-preview]')).toBeNull();
       expect(firstBlock.classList.contains('block-dragging')).toBe(false);
-      expect(handles[0]!.getAttribute('aria-grabbed')).toBe('false');
+      expect(handles[0]!.dataset.dragging).toBe('false');
       await fireEvent.click(handles[0]!);
 
       expect(onBlockMove).toHaveBeenCalledWith('first', 'second', 'after');
@@ -1727,7 +1875,7 @@ describe('MarkdownView visual editing', () => {
     }
   });
 
-  it('clears the beside-edge drop indicator when the drag leaves a block', async () => {
+  it('clears the vertical drop indicator when the drag leaves a block', async () => {
     const source = '# First\n\n# Second';
     const sourceMap: SourceMap = {
       version: 1,
@@ -1761,11 +1909,11 @@ describe('MarkdownView visual editing', () => {
     const dragOver = new Event('dragover', { bubbles: true, cancelable: true });
     Object.defineProperties(dragOver, {
       clientX: { value: 1 },
-      clientY: { value: 0 },
+      clientY: { value: -1 },
       dataTransfer: { value: dataTransfer },
     });
     target.dispatchEvent(dragOver);
-    expect(target.classList.contains('block-drop-beside')).toBe(true);
+    expect(target.classList.contains('block-drop-before')).toBe(true);
 
     const dragLeave = new Event('dragleave', { bubbles: true, cancelable: true });
     Object.defineProperty(dragLeave, 'relatedTarget', { value: document.body });
@@ -1773,7 +1921,7 @@ describe('MarkdownView visual editing', () => {
 
     expect(target.classList.contains('block-drop-before')).toBe(false);
     expect(target.classList.contains('block-drop-after')).toBe(false);
-    expect(target.classList.contains('block-drop-beside')).toBe(false);
+    expect(target.classList.contains('block-drop-before')).toBe(false);
   });
 
   it('selects the full Features heading and list mapped spans from the rendered pane', async () => {

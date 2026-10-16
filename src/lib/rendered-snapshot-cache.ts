@@ -5,6 +5,18 @@ import type { RenderedSnapshot, Tab } from './app-shell';
 export interface RenderedSnapshotCacheLimits {
   maxSnapshotsPerTab: number;
   maxHtmlChars: number;
+  maxBytesPerTab?: number;
+  maxTotalBytes?: number;
+}
+
+const snapshotWeights = new WeakMap<RenderedSnapshot, number>();
+function snapshotBytes(snapshot: RenderedSnapshot): number {
+  let size = snapshotWeights.get(snapshot);
+  if (size === undefined) {
+    size = 2 * (snapshot.source.length + JSON.stringify(snapshot).length);
+    snapshotWeights.set(snapshot, size);
+  }
+  return size;
 }
 
 /**
@@ -43,7 +55,16 @@ export function cacheRenderedSnapshot(
     const removed = next.shift();
     totalHtmlChars -= removed?.html.length ?? 0;
   }
+  let tabBytes = next.reduce((total, candidate) => total + snapshotBytes(candidate), 0);
+  while (tabBytes > (limits.maxBytesPerTab ?? 32 * 1024 * 1024) && next.length) tabBytes -= snapshotBytes(next.shift()!);
+  cache.delete(tabId);
   cache.set(tabId, next);
+  let allBytes = Array.from(cache.values()).flat().reduce((total, candidate) => total + snapshotBytes(candidate), 0);
+  for (const [id, candidates] of cache) {
+    while (allBytes > (limits.maxTotalBytes ?? 64 * 1024 * 1024) && candidates.length) allBytes -= snapshotBytes(candidates.shift()!);
+    if (!candidates.length) cache.delete(id);
+    if (allBytes <= (limits.maxTotalBytes ?? 64 * 1024 * 1024)) break;
+  }
 }
 
 export function renderedSnapshotFor(

@@ -1,8 +1,6 @@
 # <img src="./src-tauri/icons/icon.png" alt="" width="40" /> Markdown Desktop
 
-A local-first cross-platform Markdown desktop reader and editor for documentation,
-notes, and AI-assisted workflows, with synchronized rendered/source views,
-source-preserving visual edits, and Mermaid diagrams.
+A local-first Markdown reader and editor for people who want comfortable documents—not an IDE, a browser tab, or a plain-text compromise.
 
 <p align="center">
   <a href="https://github.com/ImYourBoyRoy/markdown-desktop/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/ImYourBoyRoy/markdown-desktop/actions/workflows/ci.yml/badge.svg?branch=main" /></a>
@@ -24,35 +22,37 @@ source-preserving visual edits, and Mermaid diagrams.
   <a href="./LICENSE">MIT license</a>
 </p>
 
-Open a file or folder, read the rendered document, edit supported Markdown directly in the visual surface or source drawer, and save back to the same path on disk. There is no proprietary library, sync service, or document conversion step — the Markdown you already keep is the source of truth.
+Open a `.md` file or folder and get a real document view immediately. Read the rendered page, switch to source when you need precise control, make safe visual edits, and save the ordinary Markdown file back to disk. Markdown remains the source of truth: there is no proprietary document format, sync service, or conversion step.
 
-Markdown Desktop is also a human-controlled file layer for AI-assisted
-documentation workflows: inspect generated Markdown, correct it in Rendered or
-Source mode, and save the ordinary file back to disk. The current minimum
-editor does not send documents to an AI provider by default.
+Markdown Desktop is also a practical cleanup layer for AI-assisted documentation. Inspect generated Markdown, correct it in Rendered or Source mode, and keep the finished file on your machine. The current editor makes no provider calls by default.
+
+## Why use it?
+
+Markdown is excellent for durable documents, but the usual choices are awkward: open an IDE and bring along a whole development environment, or use a plain text editor and give up the comfort of a document reader. Markdown Desktop keeps the useful parts of both without the heavy guff.
+
+- Read Markdown as a polished document instead of a wall of syntax.
+- Edit visually when that is faster, then open the source drawer when exact Markdown matters.
+- Keep files local, ordinary, portable, and compatible with the tools that already understand Markdown.
+- Work with documentation, notes, README files, issue drafts, diagrams, and AI-generated text in one focused desktop app.
 
 <p align="center">
   <img src="./docs/media/workspace-dark.png" alt="Markdown Desktop in the dark theme with the Files and Inspect sidebars visible" width="1600" height="903" />
 </p>
 
-## Features
+## What you get
 
-- **Rendered, Source, and Split** views, with a configurable startup layout that remembers the last-used view or always opens in a chosen mode; Edit mode can collapse the source drawer without leaving visual editing
-- Reader focus mode fills the window with the rendered Markdown, keeps optional Files and Inspect sidebars available, and restores the previous view on exit with **F11** or **Esc**
-- Source-authoritative visual editing for safe headings, paragraphs, list items, simple table cells, and supported inline marks/links, plus plain-text details summaries, with source-range undo/redo
-- Visual edits support plain-text and sanitized rich-HTML paste, including Word-style list cleanup, multiline paragraph hard breaks, and IME composition guards so Save, Undo, navigation, and leaving Edit cannot discard an unfinished composition or an unblurred block edit
-- Source-map hover and selection synchronization between the visual and CodeMirror panes, including mapped fences, tables, images, links, and diagrams
-- Rendered text drags preserve the exact UTF-16 source interval across mapped blocks, while block-handle pointer drags reorder only safe source ranges and retain keyboard movement as a fallback; each root block keeps a top-aligned drag/delete action group so controls never become detached from tall content
-- App-owned in-document **Ctrl+F / Cmd+F** with synchronized source and visual highlights; workspace search remains a separate file/content search
-- Direct-section editing ribbon, the full supported slash-command insertion surface in both Code and Rendered editing (headings, lists, inline emphasis/code, tables, code blocks, links, images, quotes, alerts, details, diagrams, math, footnotes, rules, and `/toc`), contextual block properties, fence-language editing and code copy, table row/column tools, sequential block movement, block deletion with undo, secure reveal of local image assets, native image replacement, keyboard- or pointer-open context menus, modifier-click link opening in both panes, and context-menu copying that respects rendered selection, source selection, or the complete active source
-- Workspace file tree, full-text search, tabs, outline, link/issue panels, and compatibility-profile selection (`github`, `commonmarkStrict`, or `extended`)
-- Atomic saves that keep the file’s encoding, BOM, line endings, and final newline
-- Recovery snapshots and conflict handling when a file changes outside the app
-- Sanitized Markdown rendering with constrained local and remote assets, safe SVG preview sanitization for image references, keyboard-accessible image and diagram previews with bounded zoom, profile-aware semantic HTML marks/details, drag/drop image import, editable document-relative asset folders, safe image destinations/titles, and image consolidation
-- Bounded native reads for image/import handling and workspace indexing, with clear local limits that protect responsiveness without replacing GitHub compatibility diagnostics
-- GitHub-oriented Issues with source-mapped lint findings, Graphviz portability advisories, missing local-reference checks, unsafe-path checks, and calm README/object-size warnings with official guidance links; a separate GitHub README indicator keeps this check advisory and non-blocking
-- Native menus, file associations, keyboard shortcuts, and light/dark themes
-- Assistant integration is intentionally parked for a later milestone; the current minimum editor ships without an Assistant panel or provider calls
+- **Rendered, Source, and Split** views, plus a persistent startup choice for Remember last used, Rendered, Source, or Split.
+- **Source-preserving visual editing** for supported headings, paragraphs, leaf list items, simple table cells, inline marks, direct links, direct images, task state, and details summaries, with source-range undo/redo.
+- **Synchronized source and rendered selection**, hover, highlights, and navigation through mapped blocks, tables, images, links, fences, and diagrams.
+- A full editor ribbon and slash-command surface for headings, lists, formatting, tables, code, links, images, local/direct video, approved provider embeds, quotes, alerts, details, diagrams, math, footnotes, rules, and `/toc`.
+- Context-aware source completion for the shared slash-command catalog, current-document heading anchors, reference labels, authorized workspace Markdown paths, fence languages, Extended HTML tags/attributes, explicit Markdown block snippets, and document-word completion.
+- Block movement, visible drag feedback, block deletion with undo, contextual block properties, fence-language editing, code copy, image replacement, safe image sizing/alignment, and themed context menus.
+- Workspace file trees, full-text search with matching-line navigation, inbound backlinks, tabs, outline, recent files, link and issue panels, and GitHub/CommonMark/Extended compatibility profiles. External changes refresh the active workspace index and tree.
+- Delayed local Markdown diagnostics for duplicate headings/references, unclosed fences, empty image alt text, empty link destinations, and non-portable inline event handlers, alongside native filesystem/reference lint. Issues select the exact source range; safe fixes are revision-checked and undoable.
+- Optional platform spell-check indicators for editable text, with code blocks excluded and a privacy-aware Settings switch.
+- Sanitized Markdown rendering with safe local and remote assets, image/video/embed/diagram previews, Mermaid, Extended-profile Graphviz, drag-and-drop image import, and document-relative asset management.
+- Atomic saves that preserve UTF-8/UTF-16 encoding, BOM, line endings, and final newline, plus recovery snapshots and conflict handling when a file changes outside the app. Quitting waits for saves or recovery snapshots; failed writes keep your edits open.
+- Native menus, file associations, keyboard shortcuts, light/dark themes, reader focus mode, and a calm GitHub-oriented Issues view.
 
 <table>
   <tr>
@@ -65,247 +65,92 @@ editor does not send documents to an AI provider by default.
   <img src="./docs/media/interface-tour.webp" alt="Animated tour of the welcome screen, Files sidebar, and Inspect sidebar" width="1600" height="1000" />
 </p>
 
-## Editing workflow
+## A comfortable workflow
 
-Markdown remains the authoritative document format. In **Edit** mode, click a
-mapped heading, paragraph, list item, or simple table cell to edit it in place;
-the app patches only that source range and rerenders the document. In supported
-paragraphs and list items, **Enter** splits at the source-aware caret,
-**Backspace** joins compatible adjacent blocks, and **Tab** / **Shift+Tab**
-adjusts list indentation through the same bounded source transaction. Blocks
-whose syntax cannot be safely serialized through a bounded edit remain
-read-only in the visual pane and offer **Edit in source**.
+1. **Open a file or folder.** The Files sidebar shows Markdown documents, workspace search finds content across the folder, and Open Recent keeps up to five local paths available.
+2. **Read without distraction.** Use Rendered mode for a clean document view, Split mode when comparing source and output, or **Focus reader** / **F11** when the document deserves the whole window.
+3. **Edit at the right level.** Click a supported rendered block to edit it in place, use the source drawer for exact syntax, or use the ribbon and slash commands for structured inserts. Unsupported or ambiguous edits stay source-only instead of guessing.
+4. **Review and save.** Find and replace works against the current Markdown with synchronized highlights. Save preserves the source file’s formatting, while recovery and conflict handling protect work when the disk changes elsewhere.
 
-Use **Ctrl+F** (or **Cmd+F** on macOS) for the current document. The Find bar
-searches raw Markdown and highlights the corresponding source and visual owners.
-It can also replace the current match or all matches through bounded source
-patches, with the operation included in the shared undo history. The
-left-sidebar workspace search remains dedicated to finding files and
-content across a workspace. The ribbon is available in visual editing and
-contains directly visible Home, Insert, Layout, Block, and Review sections. The
-tab strip scrolls horizontally when the window is narrow while keeping every
-section directly reachable; Save and Done remain pinned at the right of the
-ribbon command row. The source drawer can be
-shown or hidden from Layout or with **Ctrl+Alt+S**. The themed context menu can
-be opened with the standard **ContextMenu** key or **Shift+F10** when a mapped
-visual block or source selection has focus.
+The rendered editor uses a capability-aware boundary. Direct inline images can
+keep ordinary `![alt](path "title")` Markdown or opt into explicit safe HTML
+`width`, `height`, and `align` attributes from the Block ribbon. Resolved
+reference-style images/links can update their shared definition in place,
+including common multiline reference titles. Raw HTML links and images expose
+only safe property updates while preserving authored attributes and bodies. A
+reference image can explicitly convert only the selected occurrence to HTML
+when sizing or alignment is needed; other occurrences remain linked to the
+shared definition. Unresolved references, nested-list containers, and arbitrary
+HTML remain source-assisted so a visual action never silently rewrites a larger
+structure.
 
-Use **Focus reader** in the document header, **F11**, or **Focus Reader** from
-the command palette to temporarily hide the application chrome and read the
-active rendered document at full height. The focus bar keeps independent
-controls for showing or hiding the Files and Inspect sidebars and restores the
-previous Rendered, Source, or Split arrangement when closed. Images open with a
-click (or Enter/Space when standalone) in a safe zoomable preview; rendered
-Mermaid and Graphviz diagrams expose the same **Open preview** control. The
-preview closes with its close button, an outside click, or **Esc**, and these
-display-only interactions never modify Markdown source.
+## Why the editing feels safe
 
-Hold **Ctrl** (or **Cmd** on macOS) and click a mapped hyperlink in either the
-rendered pane or source editor to open it. Right-clicking a mapped link exposes
-Open link and Copy link URL actions. External URLs use the system's default
-browser; relative Markdown links remain document navigation. **Reload from
-Disk** is available from File and asks for confirmation before discarding
-unsaved edits. **Save As** refuses to replace a file already open in another
-tab and preserves newer edits if the native file operation races with typing;
-same-path saves update the disk baseline without duplicating the tab.
+Rendered typing patches the mapped Markdown range instead of serializing the rendered DOM back into a new document. Existing markers, inline wrappers, link destinations, entities, line endings, and unrelated formatting stay intact. When a visual position is ambiguous, the app leaves the source editor available rather than applying a risky edit.
 
-Use **File → Open Recent…** or choose **Open Recent** from the command palette
-to reopen up to five recently opened Markdown files. The list shows each
-file's full path, is validated natively against the current filesystem when
-opened, and removes entries that no longer exist or are no longer Markdown
-files. The left Files sidebar and Open Recent dialog both provide a per-file
-remove action and **Clear history**; these actions only remove local history
-metadata and never delete the Markdown files. Recent history is local app
-settings; it does not copy or upload the documents.
+Rendered text selection and block dragging keep visible feedback attached to the source interval being changed. Block moves use bounded vertical `before`/`after` source transactions and retain keyboard movement as a fallback; arbitrary side-by-side columns are not exposed because they have no safe portable Markdown representation. Source selection can reveal the matching rendered text, and history actions restore a previously rendered revision when the mapping remains exact.
 
-Choose **Settings → Startup view** to restore **Remember last used** (the
-default) or always launch in **Rendered**, **Source**, or **Split**. This setting
-controls the layout at app launch; the view switcher remains available during
-each session.
+Opening a larger document uses an explicit loading surface for native read/decode/render work and preview/editor mounting. The shell yields before the larger WebView commit can paint, reports source size without inventing a false percentage, and keeps the document pane unavailable until the new revision is mounted. Large sanitized previews mount in bounded top-level batches with cancellation and one final source-map pass, so browser input and paint are not monopolized by one full-document DOM task. Reader-only large documents also use native `content-visibility` containment to reduce offscreen paint/layout work. The editable surface keeps stable mapped DOM because caret, selection, IME, and drag contracts depend on it.
 
-The default `github` editor profile favors GitHub-healthy Markdown: relative
-asset paths, GFM tables, documented marks, footnotes, dollar-delimited math,
-and GitHub alert syntax. Settings also has a separate **Check against** lens,
-which defaults to **GitHub README (advisory)**. The document header shows one
-quiet status chip for that lens; selecting it opens the Issues pane filtered to
-the current document's GitHub-relevant findings. The lens never changes the
-rendered preview, source map, editing affordances, or save behavior. Choose
-**None** when you do not want the compatibility lens; general safety and
-editor-profile diagnostics remain available in the unfiltered Issues view.
+Media follows the same progressive policy. `/media`, `/video`, and `/embed` plus Insert → Media create source-preserving HTML5 video or a controlled YouTube, Vimeo, or Google Drive embed; arbitrary iframe providers are removed at the native render boundary. Local and direct video assets are validated and bounded in Rust, then loaded only near the viewport. A subtle shimmer is delayed until an asset or optional renderer has actually taken long enough to notice, so fast previews do not flicker while slow previews do not look frozen. The lightbox is display-only and does not rewrite Markdown.
 
-Source typing updates the in-memory Markdown immediately. The rendered preview
-and source map refresh after a short pause in typing, so the visual surface does
-not rebuild on every keystroke; the last valid preview remains visible while
-that refresh is in progress. When a source-range formatting or structure edit
-does require a new render, the active visual selection is captured and restored
-against the new map whenever the mapping remains exact. Source and rendered
-selection also reveal the corresponding location in the other pane; history
-actions restore a bounded previously rendered revision immediately when one is
-available, then confirm it with the guarded native render.
-Rendered text selection is pointer-aware: the post-drag click cannot replace a
-precise cross-block range with a whole-block selection, and releasing outside
-the rendered pane still completes the gesture. Block handles use the same
-pointer path with visible before/after drop feedback; dropping in nearby
-whitespace targets the nearest block. Pointer capture and WebView hit-testing
-fallbacks keep the gesture attached to its source handle. Reordering still uses
-a bounded source transaction and refuses moves that would displace opaque,
-unmapped Markdown; **Alt+↑ / Alt+↓** remains available as a keyboard fallback.
-Selecting text in the source editor paints the matching visible text in the
-rendered pane, including editable paragraphs and inline formatting. Browser
-range highlights preserve the editable HTML and caret; older webviews without
-that API retain block outlines for editable content. Markdown delimiters and
-non-text objects remain represented by their mapped owner.
-Opening a disk document reads, decodes, renders, and builds its source map in a
-native blocking worker. Workspace filesystem-reference lint is deferred until
-the first idle window, so the document can become interactive before the slower
-project-wide checks finish. Rendering and source-map construction keep the Tauri
-command/UI path responsive. Optional math enhancement continues in the
-background, and resolved images use a bounded per-view cache so a redraw does
-not repeatedly fetch the same asset. Raw HTML anchors and images are also
-associated with their source block for hover, selection, Issues, and Links
-navigation. The left Files panel also shows the five most recent Markdown paths
-when no workspace is open, and action feedback settles back to Ready after a
-short quiet period. The bottom status bar reports source lines and Unicode
-character count for the active document.
-Mermaid fences are supported by the GitHub profile; Graphviz/DOT remains an
-explicit Extended-profile local preview and is warned as non-portable in the
-GitHub and CommonMark profiles. Existing source is preserved, but GitHub may
-show that fence as ordinary code rather than rendering a diagram.
-The Mermaid and Graphviz runtimes stay out of the startup JavaScript graph:
-they are staged as on-demand renderer assets, and `pnpm smoke:renderers`
-verifies both packaged-style assets produce SVG output.
-Mermaid 12 is the supported renderer line. The renderer explicitly uses native
-SVG text, the classic look, theme-aware colors, and Dagre spacing so sanitized
-output retains readable node labels instead of relying on removable
-`foreignObject` HTML labels. Mermaid 12 targets ES2024 and documents Safari
-17.4+ as its supported WebKit floor; the macOS bundle therefore declares
-macOS 14.4 as its minimum system version. Windows WebView2 and Linux
-WebKitGTK remain native platform dependencies and are exercised by the release
-matrix. `full:upgrade` fails closed for Mermaid majors after 12 until their
-browser floor and diagram defaults are reviewed. See Mermaid's
-[configuration](https://mermaid.js.org/config/configuration) and
-[flowchart](https://mermaid.js.org/syntax/flowchart.html) documentation.
-For a repeatable visual check of the real `.md` fence path, start `pnpm dev`
-and open `/scripts/fixtures/mermaid-visual.html`; that fixture loads
-`fixtures/mermaid/visual.md` through the production rich-content renderer and
-asserts visible native SVG labels.
-The 500 KiB rendering advisory is shown for README-named files only; general
-Markdown files still receive applicable Git object-size guidance. GitHub
-rendering guidance and repository object limits are based on GitHub's
-published documentation: [README limits](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-readmes),
-[repository limits](https://docs.github.com/en/repositories/creating-and-managing-repositories/repository-limits),
-and [large files](https://docs.github.com/en/repositories/working-with-files/managing-large-files/about-large-files-on-github).
+Completion and review remain source-aware. The source editor offers suggestions only in a recognizable Markdown context, exposes explicit block snippets with `Ctrl+Space`, and uses the current workspace tree for relative Markdown targets; it does not scan arbitrary folders. Extended-profile HTML suggestions are limited to safe attributes for the element being authored. The Rendered slash menu and ribbon continue to use the same command availability rules. Spell checking is a local WebView hint rather than a document-upload service; rendered editing enables it on the focused prose block so large documents stay responsive, and the Settings switch makes that behavior explicit.
 
-Pasting formatted content in either the source editor or a supported visual
-block converts semantic HTML to Markdown. Word-style list paragraphs and
-literal clipboard bullet lists are normalized; CSS, event handlers, embedded
-documents, and unsafe link/image destinations are removed. Ambiguous visual
-positions remain source-only rather than risking an incorrect source patch.
+## Markdown, diagrams, and compatibility
 
-Side-by-side persisted block layouts remain disabled pending compatibility
-fixtures. Assistant integration is parked until the visual-editor acceptance
-gate is complete; the current minimum editor makes no provider calls. The
-isolated later design covers Ollama discovery, explicit bounded context, and
-read-only feedback first, with generic HTTPS providers, proposed source
-patches, model pull/delete, app-scoped tools, and context compression deferred.
+The default `github` profile favors Markdown that travels well: relative asset paths, GFM tables, documented marks, footnotes, dollar-delimited math, and GitHub alert syntax. `commonmarkStrict` and `extended` profiles make the compatibility tradeoff explicit. GitHub-oriented Issues remain advisory; they do not change rendering, editing, or save behavior.
 
-The durable local implementation checkpoint is [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md).
-The stable ownership and data-flow map is [ARCHITECTURE.md](./ARCHITECTURE.md).
-The detailed execution work order is intentionally kept in the ignored local
-`Tasks/` folder.
+Mermaid fences work in the GitHub profile. Graphviz/DOT is an explicit Extended-profile local preview and is marked non-portable in the GitHub and CommonMark profiles. Mermaid and Graphviz runtimes are lazy-loaded instead of being placed in the startup JavaScript graph, but both are shipped locally inside the application so diagrams work offline and do not depend on a network request. The production build enforces explicit renderer entry, total, and largest-chunk budgets; `pnpm audit:renderers` reports the same gate without rebuilding. Mermaid 12 uses native SVG text for readable, sanitized diagrams; the macOS bundle therefore requires macOS 14.4 or newer. See the [Mermaid configuration](https://mermaid.js.org/config/configuration) and [flowchart](https://mermaid.js.org/syntax/flowchart.html) documentation for the upstream syntax.
 
-## Performance validation
+Video support covers document-relative files, direct HTTPS video files, and validated provider links; autoplay is never generated. Local videos up to 2 GiB use opaque native grants and reads capped at 8 MiB per range; the platform WebView must support the file's codec and range requests. Direct remote video remains capped at 32 MiB. Provider embeds use HTTPS-only allowlisted origins and remain network-dependent. Remote media follows the remote-image setting and stays inert until allowed and near the viewport. **Refresh preview** retries assets and rendering; preview dialogs also offer **Reload preview**.
 
-Phase 0 has a repeatable correctness and performance baseline. Run
-`pnpm phase0:selection` for the source/render selection contract probes and
-`pnpm phase0:baseline` for the frontend/jsdom and native Markdown/workspace
-timing probes. The detailed fixture matrix, captured baseline, proposed
-budgets, and local-versus-packaged evidence boundary are in
-[docs/PHASE-0-PERFORMANCE.md](./docs/PHASE-0-PERFORMANCE.md). The baseline
-command does not write a report or mutate project documents, and does not claim
-target-OS or packaged latency; those require a release-like desktop run.
-Phase 1 uses the same deterministic harness through `pnpm phase1:baseline`;
-its optimization deltas and remaining packaged-WebView gates are recorded in
-[docs/PHASE-1-PERFORMANCE.md](./docs/PHASE-1-PERFORMANCE.md).
-
-Cached blocks are reused only when resolved Markdown semantics and source
-coordinates match. Raw HTML, footnotes, and generated heading-ID state use
-whole-document rendering. Partial DOM commits require evidence that all other
-blocks are unchanged; ambiguous edits fall back to a full refresh. Filesystem
-diagnostics run separately from rendering, and rich clipboard conversion loads
-on demand rather than during startup.
+Rendered Markdown, local assets, and remote assets are sanitized and constrained by the native Rust host. GitHub README size and repository-object guidance appears as a calm advisory with links to [README limits](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-readmes), [repository limits](https://docs.github.com/en/repositories/creating-and-managing-repositories/repository-limits), and [large files](https://docs.github.com/en/repositories/working-with-files/managing-large-files/about-large-files-on-github).
 
 ## Download
 
-Installers and portable builds are on the [Releases](https://github.com/ImYourBoyRoy/markdown-desktop/releases) page. Every downloadable build follows the same pattern: `Markdown-Desktop-<version>-<platform>-<architecture>...`.
-
-The checked-in release workflow targets all six platform families in the table below. The [latest published release](https://github.com/ImYourBoyRoy/markdown-desktop/releases/latest) contains the verified six-family asset set and signed updater metadata. The macOS packages are intentionally unsigned because Apple Developer signing/notarization is not configured and may show an unidentified-developer warning. The release workflow verifies all platform assets and signed updater metadata before publishing, then confirms the published release is latest. This does not substitute for target-OS desktop-session integration, Gatekeeper approval, or live-updater relaunch evidence.
+Installers and portable builds are available on the [Releases](https://github.com/ImYourBoyRoy/markdown-desktop/releases) page. The release workflow targets six platform families:
 
 | Platform | Installer | Other packages |
 | --- | --- | --- |
-| Windows x64 | `Markdown-Desktop-<version>-Windows-x64-setup.exe` | `...-Windows-x64.msi`, `...-Windows-x64-Portable.exe` |
-| Windows ARM64 | `Markdown-Desktop-<version>-Windows-ARM64-setup.exe` | `...-Windows-ARM64.msi`, `...-Windows-ARM64-Portable.exe` |
-| macOS Apple Silicon | `...-macOS-Apple-Silicon.dmg` | `...-macOS-Apple-Silicon.app.tar.gz` |
-| macOS Intel | `...-macOS-Intel.dmg` | `...-macOS-Intel.app.tar.gz` |
-| Linux x64 | `...-Linux-x64.AppImage` | `...-Linux-x64.deb`, `...-Linux-x64.rpm` |
-| Linux ARM64 | `...-Linux-ARM64.AppImage` | `...-Linux-ARM64.deb`, `...-Linux-ARM64.rpm` |
+| Windows x64 | `Markdown-Desktop-<version>-Windows-x64-setup.exe` | `.msi`, `-Portable.exe` |
+| Windows ARM64 | `Markdown-Desktop-<version>-Windows-ARM64-setup.exe` | `.msi`, `-Portable.exe` |
+| macOS Apple Silicon | `...-macOS-Apple-Silicon.dmg` | `.app.tar.gz` |
+| macOS Intel | `...-macOS-Intel.dmg` | `.app.tar.gz` |
+| Linux x64 | `...-Linux-x64.AppImage` | `.deb`, `.rpm` |
+| Linux ARM64 | `...-Linux-ARM64.AppImage` | `.deb`, `.rpm` |
 
-Files ending in `.sig` are signed companions used to verify updates on a signed release. `latest.json` is the machine-readable manifest used by the in-app updater; users normally do not download it. GitHub adds the two `Source code` archives automatically for anyone who wants the tagged source tree.
+The current macOS packages are intentionally unsigned because Apple Developer signing and notarization are not configured. Verify trusted release assets before opening them; macOS may show an unidentified-developer warning. Signed updater metadata is verified by the release workflow.
 
 ## Install
 
 ### Windows
 
-Run the x64 or ARM64 `-setup.exe` that matches your Windows device, or use the matching `.msi` when your environment expects Windows Installer. The NSIS installer embeds the WebView2 bootstrapper for machines that need it. The installed app is registered as **Markdown Desktop**, adds a Start menu entry, and can be launched from Windows Search. The matching `-Portable.exe` runs without installing an uninstaller or Start menu entry.
+Run the x64 or ARM64 `-setup.exe` that matches your device, or use the matching `.msi`. The NSIS installer includes the WebView2 bootstrapper when needed. The portable executable runs without an installation or Start menu entry.
 
 ### macOS
 
-For a signed and notarized build, open the corresponding `.dmg` from a verified release, then drag **Markdown Desktop** into Applications. For a release whose macOS packages are intentionally unsigned, open only a trusted release asset: macOS may report an unidentified developer, so use the Finder context menu → **Open** after verifying the download. macOS then exposes the app through Finder and Launchpad like any other installed app. Apple signing, notarization, stapling, and Gatekeeper approval are not claimed until Apple Developer credentials are provisioned and the corresponding release checks pass.
+Open the matching `.dmg` and drag **Markdown Desktop** into Applications. For the current unsigned packages, verify the release asset first, then use Finder’s context menu → **Open** if macOS shows an unidentified-developer warning.
 
 ### Linux
 
 ```bash
 chmod +x ./Markdown-Desktop-*-Linux-x64.AppImage
 ./Markdown-Desktop-*-Linux-x64.AppImage
-# ARM64 users: use the matching *-Linux-ARM64.AppImage name instead. AppImage is portable; use the `.deb` or `.rpm` package below when you want the app registered in the desktop application menu.
 ```
 
-Or install the `.deb` / `.rpm` with your package manager:
+Use the matching `Linux-ARM64` name on ARM64. To install a package instead:
 
 ```bash
 sudo apt install ./Markdown-Desktop-*-Linux-x64.deb
 # or
 sudo dnf install ./Markdown-Desktop-*-Linux-x64.rpm
-# ARM64 users: use the matching *-Linux-ARM64.deb or *-Linux-ARM64.rpm name instead.
 ```
+
+Tauri’s [platform prerequisites](https://v2.tauri.app/start/prerequisites/) apply. Windows uses WebView2 and Linux uses WebKitGTK; the release matrix exercises those native dependencies.
 
 ## Uninstall
 
-Uninstall removes the application and, with the steps below, its settings, recovery data, search index, logs, and webview cache. Your Markdown files are not deleted.
-
-**Windows:** Settings → Apps → Markdown Desktop → Uninstall. The installers also clear `%APPDATA%\com.markdownnative.desktop` and `%LOCALAPPDATA%\com.markdownnative.desktop`.
-
-**macOS:**
-
-```bash
-rm -rf -- \
-  "/Applications/Markdown Desktop.app" \
-  "$HOME/Library/Application Support/com.markdownnative.desktop" \
-  "$HOME/Library/Caches/com.markdownnative.desktop" \
-  "$HOME/Library/Logs/com.markdownnative.desktop" \
-  "$HOME/Library/Preferences/com.markdownnative.desktop"
-```
-
-**Linux:**
-
-```bash
-sudo apt remove markdown-desktop   # or: sudo dnf remove markdown-desktop
-rm -rf -- \
-  "$HOME/.config/com.markdownnative.desktop" \
-  "$HOME/.local/share/com.markdownnative.desktop" \
-  "$HOME/.local/state/com.markdownnative.desktop" \
-  "$HOME/.cache/com.markdownnative.desktop"
-```
+Uninstall through Windows Settings, macOS Applications/Finder, or your Linux package manager. Your Markdown files are never deleted. Application settings, recovery data, search indexes, logs, and WebView caches live separately from the documents and can be removed when you want a clean reset.
 
 ## Development
 
@@ -316,116 +161,69 @@ pnpm install --frozen-lockfile
 pnpm tauri dev
 ```
 
+Run the focused checks that match the work you are changing:
+
 ```bash
+pnpm check:toolchains
 pnpm check
 pnpm test
+pnpm build
+pnpm audit:renderers
 pnpm smoke:visual
 pnpm smoke:block-drag
+pnpm smoke:media-privacy
+pnpm smoke:lifecycle
 pnpm smoke:renderers
+pnpm smoke:packaged
+pnpm wcagate:verify
 pnpm architecture:check
+pnpm test:architecture
 pnpm verify:dependencies
 pnpm tauri build
 ```
 
-`pnpm smoke:visual` runs the curated visual-editor acceptance suites (revision ownership, visual draft history, rendered-pane contract, and MarkdownView interaction paths). `pnpm smoke:block-drag` starts an isolated Vite fixture and performs a real mouse gesture in headless Chromium, checking grip hit-testing, cursor affordance, and the resulting source reorder. It is browser evidence, not a physical packaged-WebView test. `pnpm smoke:packaged` launches the built desktop binary with `MARKDOWN_DESKTOP_ACCEPTANCE=1` to exercise synthetic DOM input, undo/redo, Save/reload, Find, exact rendered text and cross-block selection, pointer block dragging, composition handlers, and split-mode latency. Save and close existing application instances first: the harness refuses to terminate them. Composition must reach source and preview; the five-edit split probe waits for rendering and animation frames, with a 150 ms average budget. These synthetic checks are not physical keyboard, pointer, OS IME, screen-reader, or compositor-presentation evidence. `pnpm oracle:github-readme` validates the GitHub-host fixture oracle in Rust.
-`pnpm architecture:check` verifies that `ARCHITECTURE.md` contains current
-file sizes, line counts, and curated summaries. Run `pnpm architecture:refresh`
-after adding, removing, renaming, or materially resizing a maintained file.
+The latest local release-candidate checkpoint (2026-10-16) used Node 26.9.0,
+pnpm 12.14.0, and stable Rust/Cargo 1.99.1. The `1.1.2` Windows x64 candidate
+passed the dependency verification gate, `pnpm tauri build`, `pnpm build:app`,
+and packaged acceptance on three runs (20/20 checks each time). WCAGate covered
+4,143 surfaces with zero findings and no suppressions; the dependency is current
+at upstream revision `30be59d61db6f1cc3c5e80701fb28a0346588ca7`. This is local Windows evidence
+for an unpublished candidate; the release matrix, exact-commit GitHub CI,
+signing, target-OS accessibility, and live updater-install checks still require
+their respective environments.
 
-`pnpm build:app` stages unsigned portable and installable outputs under `Apps/`. Signed release builds need `TAURI_SIGNING_PRIVATE_KEY` (or `TAURI_SIGNING_PRIVATE_KEY_PATH`) and `pnpm build:release`.
+`pnpm full:upgrade` refreshes WCAGate to the latest upstream `main` commit,
+locks that exact revision, and reruns the accessibility gate before the rest of
+the release checks.
+
+`pnpm smoke:block-drag` uses a real mouse gesture in headless Chromium. `pnpm smoke:media-privacy` checks actual browser request behavior; `pnpm smoke:lifecycle` exercises the real application UI with simulated IPC. `pnpm wcagate:verify` starts its own local server and runs WCAGate doctor and the accessibility gate over welcome, settings, documents, editing, recovery, and shutdown. `pnpm smoke:packaged` launches the built desktop binary for synthetic rendered/source editing, offline Mermaid SVG loading, undo/redo, Save/reload, Find, selection, composition, pointer dragging, split-mode latency, and native video decoding/seek. These checks do not replace physical keyboard, pointer, IME, screen-reader, compositor, or target-OS acceptance.
+
+The CI and release workflows also run the packaged interaction acceptance against
+the staged Windows x64 binary before native artifacts are accepted or uploaded.
+The other platform lanes retain native artifact and branding smoke coverage; they
+do not claim Windows WebView interaction coverage.
+Release builds and publication also depend on the reusable CI quality/security
+and six-platform native checks at the release source commit. Publishing an
+existing draft requires selecting that draft's exact tag commit.
+
+`pnpm build:app` stages unsigned portable and installable outputs under `Apps/`. Signed release builds use `pnpm build:release` with `TAURI_SIGNING_PRIVATE_KEY` or `TAURI_SIGNING_PRIVATE_KEY_PATH`.
 
 ## Privacy and updates
 
-### Upgrade the development stack
+Documents stay on your machine in the current editor; opening a file makes no provider call. Markdown rendering is sanitized, and filesystem and remote-asset access are restricted in the Rust host. Remote video files and provider embeds only contact their declared origin when the user has remote assets enabled and the rendered object is requested. Future assistant features will require an explicit provider and bounded context before Markdown leaves the machine.
 
-```text
-pnpm full:upgrade --dry-run
-pnpm full:upgrade
-```
+**Help → Check for Updates** checks a signed update manifest from GitHub Releases. Updates are never downloaded or installed until you confirm. A failed download or install remains retryable, and the signing private key is not stored in this repository. Remaining upstream Linux dependency advisories are documented in [SECURITY.md](./SECURITY.md).
 
-`full:upgrade` is the explicit major-upgrade operation, separate from
-`purge:fresh`. It updates pnpm, stable Rust/Cargo and rustfmt/Clippy, the
-Cargo edit/audit/deny tools, direct JavaScript and Rust dependency ranges,
-resolvable transitive dependencies, Git-sourced JavaScript dependencies, and
-GitHub Actions (retaining immutable action hashes). It raises the Rust
-manifest minimum to the updated stable compiler before resolving crates.
-Thus a direct dependency such as Comrak can move beyond an old `0.x` range.
-On Windows it repairs an npm-managed pnpm shim through npm before verifying the
-active command, so the upgrade is not satisfied by changing an unused pnpm
-installation.
+## About and support
 
-The project requires **pnpm >=12.3.4**, with no exact package-manager pin;
-CI installs `latest` and checks the minimum. Node remains on the supported
-26.x line; Node installers, OS SDKs and system packages are not changed.
-There are no Git submodules in this repository. If introduced later, nested
-checkouts require separate review; the command refuses to overwrite them.
+The in-app About dialog links to the [GitHub repository](https://github.com/ImYourBoyRoy/markdown-desktop) and [Roy Dawson IV](https://imyourboyroy.com). If Markdown Desktop is useful to you, the dialog also includes an optional [Venmo support link](https://account.venmo.com/itsyourboyroy); it is a secondary, non-blocking action.
 
-Save and close Markdown Desktop first. Before mutation, the command snapshots
-the current manifests, lockfiles and workflows—including uncommitted edits—to
-ignored `.upgrade-backups/run-ID/`. It retains the previous `node_modules` tree
-in the snapshot, preserves shared/build caches, and runs the
-security, test, accessibility, native packaging and synthetic packaged-input
-gates. A failure exits nonzero, retaining the candidate changes and a step
-report for inspection; it does **not** mean the upgrade is release-ready.
-Restore only the saved project metadata with:
+## Technical documentation
 
-```text
-pnpm full:upgrade --restore run-ID
-pnpm install --frozen-lockfile
-```
-
-Replace `run-ID` with the printed snapshot name. Global tools and generated
-build outputs are not rolled back. Do not edit upgrade-owned files while the
-command runs. An interrupted process may leave `.upgrade-backups/upgrade.lock`;
-remove that single lock only after confirming no upgrade is running.
-
-Some transitive versions remain constrained by upstream parents. The command
-prints remaining Rust duplicate dependency paths and direct-upgrade availability;
-it never forces incompatible transitive overrides or enables prereleases.
-Review any necessary source/API migrations before committing. Dry-run shows
-the command plan without network, installation, or deletion.
-
-The JavaScript TypeScript package follows the installed `svelte-check` peer
-contract; the native TypeScript alias can independently track its newest
-version. This prevents a blanket major update from breaking Svelte's compiler
-API integration. Unknown peer-range syntax fails for review rather than being
-guessed. Peer-dependency checks are part of the verification gate.
-
-`purge:fresh` still refreshes only within existing manifest ranges and checks
-toolchain compatibility **before** deleting caches or lockfiles. It is not a
-replacement for `full:upgrade`.
-
-### Linux GTK/GLib compatibility boundary
-
-The remaining GLib advisory is upstream of the application. Tauri's current
-Linux host uses GTK3 and WebKitGTK; its Debian package and prerequisite
-documentation describe that stack. The [RustSec advisory](https://rustsec.org/advisories/RUSTSEC-2024-0429.html)
-records the affected `glib`
-`VariantStrIter` unsoundness and identifies `glib >=0.20` as the patched line.
-This project cannot safely force that crate version because the GTK3 Rust
-bindings and FFI graph are coupled to the older GLib API/ABI. The verified
-dependency path is `tauri` -> `wry`/`webkit2gtk` -> `gtk` -> `glib` on Linux.
-
-Forcing a transitive override, replacing Tauri with a different desktop
-backend, or adopting a prerelease Tauri major would trade one visible advisory
-for an unverified build/runtime defect. The safe resolution is a reviewed
-stable Tauri/Wry migration to the GTK4/WebKitGTK6 stack when that upstream
-support is released, followed by native Linux runtime testing. Until then the
-warning remains documented in [SECURITY.md](./SECURITY.md), visible in
-`cargo audit`, and is not mislabeled as fixed. See the [Tauri Linux packaging
-requirements](https://v2.tauri.app/distribute/debian/) and [WebView version
-matrix](https://v2.tauri.app/reference/webview-versions/) for the platform
-boundary.
-
-Documents stay on your machine in the current minimum editor; no provider call
-is made by opening the app. The later Assistant milestone will require an
-explicit provider and explicit bounded context before any Markdown leaves the
-machine. Rendered Markdown is sanitized, and filesystem and remote asset
-access are restricted in the Rust host.
-
-**Help → Check for Updates** (or **About**) checks a signed update manifest from GitHub Releases. Automatic checks retry briefly after launch if the network is unavailable; updates are never downloaded or installed until you confirm. The confirmation shows readable release notes, and a failed download/install keeps the update available with a retryable error. The signing private key is a maintainer secret and is not stored in this repository.
-
-Upstream dependency advisories that remain in the stable Tauri Linux stack are documented in [SECURITY.md](./SECURITY.md).
+- [ARCHITECTURE.md](./ARCHITECTURE.md) — ownership, data flow, revision identity, selection mapping, and performance boundaries.
+- [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md) — the durable local implementation and release-readiness checkpoint.
+- [docs/PHASE-0-PERFORMANCE.md](./docs/PHASE-0-PERFORMANCE.md) and [docs/PHASE-1-PERFORMANCE.md](./docs/PHASE-1-PERFORMANCE.md) — repeatable performance baselines and packaged-WebView boundaries.
+- [SECURITY.md](./SECURITY.md) — security boundaries and remaining upstream advisories.
 
 ## License
 

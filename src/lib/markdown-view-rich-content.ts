@@ -13,6 +13,23 @@ async function loadGraphviz(): Promise<GraphvizModule> {
   return (await import(/* @vite-ignore */ GRAPHVIZ_ASSET_URL)) as GraphvizModule;
 }
 
+type GraphvizInstance = Awaited<ReturnType<GraphvizModule['instance']>>;
+let graphvizInstancePromise: Promise<GraphvizInstance> | undefined;
+
+async function loadGraphvizInstance(): Promise<GraphvizInstance> {
+  if (!graphvizInstancePromise) {
+    graphvizInstancePromise = loadGraphviz()
+      .then(({ instance }) => instance())
+      .catch((error) => {
+        // A failed optional load must remain retryable after a transient asset
+        // or WebView failure; do not poison every later diagram render.
+        graphvizInstancePromise = undefined;
+        throw error;
+      });
+  }
+  return graphvizInstancePromise;
+}
+
 async function loadMermaid(): Promise<MermaidModule> {
   if (import.meta.env.DEV) return (await import('mermaid')) as MermaidModule;
   return (await import(/* @vite-ignore */ MERMAID_ASSET_URL)) as MermaidModule;
@@ -26,6 +43,8 @@ export interface RichContentContext {
   rebuildMappedElementIndex: () => void;
   applyMapHighlights: () => void;
   applyExternalSourceSelection: (selection: TextSelection | null) => void;
+  /** Reconcile controls whose rendered root was replaced asynchronously. */
+  refreshBlockHandles?: () => void;
   /** Opens display-only media without changing the authoritative Markdown. */
   onOpenMedia?: (media: MediaPreview) => void;
 }
@@ -45,6 +64,7 @@ export function commitRichContentReplacement(
   context.rebuildMappedElementIndex();
   context.applyMapHighlights();
   context.applyExternalSourceSelection(context.getExternalSourceSelection());
+  context.refreshBlockHandles?.();
   return true;
 }
 
@@ -63,10 +83,12 @@ export async function renderMathPreview(context: RichContentContext) {
     };
     for (const node of markedMath) {
       if (!context.isCurrentRender()) return;
+      node.dataset.richContentState = 'loading';
       const expression = node.textContent ?? '';
       const display = node.dataset.mathStyle === 'display';
       if (display && node.tagName === 'CODE' && node.parentElement?.tagName === 'PRE') {
         const pre = node.parentElement;
+        pre.dataset.richContentState = 'loading';
         const output = document.createElement('div');
         output.className = 'math-output';
         if (pre.dataset.mapId) output.dataset.mapId = pre.dataset.mapId;
@@ -74,15 +96,21 @@ export async function renderMathPreview(context: RichContentContext) {
         output.textContent = `$$${expression}$$`;
         if (!commitRichContentReplacement(context, pre, output)) return;
         renderMathInElement(output, options);
+        delete output.dataset.richContentState;
       } else {
         if (!context.isCurrentRender()) return;
         node.textContent = `${display ? '$$' : '$'}${expression}${display ? '$$' : '$'}`;
         renderMathInElement(node, options);
+        delete node.dataset.richContentState;
       }
     }
     if (hasRawMath && context.isCurrentRender()) renderMathInElement(host, options);
   } catch {
     // Math remains inert source text if the optional renderer cannot load.
+    markedMath.forEach((node) => {
+      delete node.dataset.richContentState;
+      if (node.parentElement?.tagName === 'PRE') delete node.parentElement.dataset.richContentState;
+    });
   }
 }
 
@@ -93,6 +121,7 @@ export async function renderDiagram(
   className: string,
 ) {
   if (!context.isCurrentRender() || !pre.isConnected || !context.host.contains(pre)) return;
+  pre.dataset.richContentState = 'loading';
   const language = className.match(/language-(mermaid|dot|graphviz)/i)?.[1].toLowerCase();
   const output = document.createElement('div');
   output.className = 'diagram-output';
@@ -140,8 +169,7 @@ export async function renderDiagram(
       if (!context.isCurrentRender() || !pre.isConnected || !context.host.contains(pre)) return;
       output.innerHTML = DOMPurify.sanitize(result.svg, { USE_PROFILES: { svg: true, svgFilters: false } });
     } else {
-      const { instance } = await loadGraphviz();
-      const viz = await instance();
+      const viz = await loadGraphvizInstance();
       if (!context.isCurrentRender() || !pre.isConnected || !context.host.contains(pre)) return;
       const svg = viz.renderString(source, { format: 'svg' });
       output.innerHTML = DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true, svgFilters: false } });
@@ -179,6 +207,7 @@ export async function renderDiagram(
     commitRichContentReplacement(context, pre, output);
   } catch (error) {
     if (!context.isCurrentRender() || !pre.isConnected || !context.host.contains(pre)) return;
+    delete pre.dataset.richContentState;
     output.className += ' diagram-error';
     output.textContent = `Diagram could not be rendered: ${String(error)}`;
     commitRichContentReplacement(context, pre, output);

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getVersion } from '@tauri-apps/api/app';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { check, type DownloadEvent, type Update } from '@tauri-apps/plugin-updater';
+import { setUpdateShutdownApproval } from './ipc';
 import {
   aboutUpdateCopy,
   checkForAppUpdate,
@@ -18,7 +19,7 @@ import {
 vi.mock('@tauri-apps/api/app', () => ({ getVersion: vi.fn() }));
 vi.mock('@tauri-apps/plugin-process', () => ({ relaunch: vi.fn() }));
 vi.mock('@tauri-apps/plugin-updater', () => ({ check: vi.fn() }));
-vi.mock('./ipc', () => ({ isTauri: true }));
+vi.mock('./ipc', () => ({ isTauri: true, setUpdateShutdownApproval: vi.fn().mockResolvedValue(undefined) }));
 
 describe('updater helpers', () => {
   beforeEach(() => {
@@ -26,6 +27,7 @@ describe('updater helpers', () => {
     vi.mocked(check).mockReset();
     vi.mocked(getVersion).mockReset();
     vi.mocked(relaunch).mockReset();
+    vi.mocked(setUpdateShutdownApproval).mockClear();
   });
 
   it('formats version labels with a single v prefix', () => {
@@ -159,6 +161,7 @@ describe('updater helpers', () => {
 
     await expect(installAppUpdate(update, { confirmed: true })).rejects.toThrow('temporary network failure');
     expect(update.close).not.toHaveBeenCalled();
+    expect(vi.mocked(setUpdateShutdownApproval).mock.calls).toEqual([[true], [false]]);
 
     await expect(installAppUpdate(update, { confirmed: true })).resolves.toEqual({
       installed: true,

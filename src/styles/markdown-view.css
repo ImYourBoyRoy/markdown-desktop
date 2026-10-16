@@ -1,5 +1,12 @@
 .markdown-view-shell { position: relative; min-height: 100%; }
+.rendered-mount-status { position: sticky; z-index: 4; top: 12px; display: flex; align-items: center; gap: 8px; width: max-content; max-width: calc(100% - 32px); margin: 10px auto -34px; padding: 6px 10px; border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border)); border-radius: 999px; color: var(--muted); background: color-mix(in srgb, var(--panel) 92%, transparent); box-shadow: 0 5px 18px rgba(0, 0, 0, .12); font-size: 11px; pointer-events: none; }
+.rendered-mount-spinner { width: 10px; height: 10px; border: 2px solid color-mix(in srgb, var(--accent) 28%, transparent); border-top-color: var(--accent); border-radius: 50%; animation: rendered-mount-spin .7s linear infinite; }
+@keyframes rendered-mount-spin { to { transform: rotate(360deg); } }
 .markdown-view { position: relative; max-width: var(--document-width); margin: 0 auto; padding: 42px clamp(24px, 5vw, 78px) 120px; color: var(--text); }
+/* Keep the editable surface fully mounted for selection/IME/drag geometry.
+   Reader mode lets the WebView skip offscreen paint/layout work while keeping
+   mapped nodes available for instant find and source projection. */
+.markdown-view.read-only-large > * { content-visibility: auto; contain-intrinsic-size: auto 180px; }
 .markdown-view h1, .markdown-view h2, .markdown-view h3, .markdown-view h4 { color: var(--heading); letter-spacing: -0.025em; scroll-margin-top: 24px; }
 .markdown-view h1 { font-size: clamp(30px, 4vw, 46px); line-height: 1.1; margin: 0 0 24px; }
 .markdown-view h2 { font-size: 28px; margin: 42px 0 14px; }
@@ -30,9 +37,12 @@
 .markdown-view th, .markdown-view td { border: 1px solid var(--border); padding: 9px 12px; text-align: left; }
 .markdown-view th { background: var(--panel); color: var(--heading); }
 /* Match GitHub README fidelity: no decorative chrome on ordinary images. */
-.markdown-view img { max-width: 100%; height: auto; }
+.markdown-view img { display: inline-block; max-width: 100%; height: auto; vertical-align: middle; }
 .markdown-view img[data-previewable-media="image"] { cursor: zoom-in; outline: 1px solid transparent; outline-offset: 5px; transition: outline-color 120ms ease, filter 120ms ease; }
 .markdown-view img[data-previewable-media="image"]:hover, .markdown-view img[data-previewable-media="image"]:focus-visible { outline-color: color-mix(in srgb, var(--accent) 62%, transparent); filter: brightness(1.03); }
+.markdown-view img[align="left"] { display: block; margin-inline-end: auto; }
+.markdown-view img[align="center"] { display: block; margin-inline: auto; }
+.markdown-view img[align="right"] { display: block; margin-inline-start: auto; }
 .markdown-view h1 img, .markdown-view h2 img, .markdown-view h3 img,
 .markdown-view h4 img, .markdown-view h5 img, .markdown-view h6 img {
   vertical-align: middle;
@@ -45,6 +55,58 @@
   border-radius: 6px;
   background: var(--panel);
 }
+.markdown-view video,
+.markdown-view iframe {
+  display: block;
+  width: min(100%, 920px);
+  max-width: 100%;
+  margin: 24px 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel-2) 86%, var(--accent) 14%);
+}
+.markdown-view video {
+  min-height: 120px;
+  object-fit: contain;
+}
+.markdown-view iframe {
+  aspect-ratio: 16 / 9;
+  min-height: 220px;
+}
+.markdown-view video[data-media-loading-visible="true"],
+.markdown-view iframe[data-media-loading-visible="true"] {
+  background: linear-gradient(105deg,
+    color-mix(in srgb, var(--panel-2) 90%, var(--accent) 10%) 8%,
+    color-mix(in srgb, var(--panel) 72%, var(--accent) 28%) 18%,
+    color-mix(in srgb, var(--panel-2) 90%, var(--accent) 10%) 33%);
+  background-size: 220% 100%;
+  animation: media-preview-shimmer 1.4s ease-in-out infinite;
+}
+.markdown-view video[data-media-state="error"],
+.markdown-view iframe[data-media-state="error"] {
+  min-height: 72px;
+  border-style: dashed;
+  opacity: .72;
+}
+.media-error { display: block; margin: -14px 0 22px; color: var(--danger, #b74b4b); font-size: 11px; }
+.media-preview-trigger {
+  display: inline-flex;
+  margin: -14px 0 22px;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  background: var(--panel);
+  font-size: 10px;
+  cursor: zoom-in;
+}
+.media-preview-trigger:hover, .media-preview-trigger:focus-visible {
+  border-color: var(--accent);
+  color: var(--text);
+  background: var(--hover);
+  outline: none;
+}
+@keyframes media-preview-shimmer { to { background-position: -120% 0; } }
 .markdown-view .visual-empty-block { min-height: 2.4em; margin: 0 0 18px; outline: 1px dashed transparent; }
 .markdown-view .visual-empty-block:empty::before { content: 'Start writing Markdown…'; color: var(--muted); opacity: .72; pointer-events: none; }
 .markdown-view .visual-empty-block:focus { outline-color: color-mix(in srgb, var(--accent) 50%, transparent); outline-offset: 5px; }
@@ -55,6 +117,15 @@
 .diagram-output svg text { font-family: var(--font-sans); }
 .diagram-preview-trigger { position: absolute; z-index: 1; top: 10px; right: 10px; border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; color: var(--muted); background: var(--panel); font-size: 10px; cursor: zoom-in; }
 .diagram-preview-trigger:hover, .diagram-preview-trigger:focus-visible { border-color: var(--accent); color: var(--text); background: var(--hover); outline: none; }
+.markdown-view pre[data-rich-content-state="loading"],
+.markdown-view [data-math-style][data-rich-content-state="loading"] {
+  background-image: linear-gradient(105deg,
+    color-mix(in srgb, var(--code-bg) 92%, var(--accent) 8%) 8%,
+    color-mix(in srgb, var(--panel) 76%, var(--accent) 24%) 18%,
+    color-mix(in srgb, var(--code-bg) 92%, var(--accent) 8%) 33%);
+  background-size: 220% 100%;
+  animation: media-preview-shimmer 1.5s ease-in-out 180ms infinite;
+}
 .math-output { margin: 22px 0; overflow: auto; }
 .diagram-error { color: var(--danger); font-family: var(--font-mono); white-space: pre-wrap; }
 .map-find-hit { outline: 1px dashed color-mix(in srgb, var(--accent) 68%, transparent); outline-offset: 3px; background: color-mix(in srgb, var(--accent) 5%, transparent); }
@@ -70,22 +141,24 @@
 .table-toolbar { position: absolute; z-index: 7; display: flex; flex-wrap: wrap; gap: 3px; max-width: min(440px, calc(100% - 16px)); padding: 4px; border: 1px solid var(--action-border); border-radius: 8px; background: var(--action-bg); box-shadow: 0 6px 18px rgba(0, 0, 0, .18); }
 .table-toolbar button { min-width: 30px; min-height: 24px; padding: 3px 6px; border: 1px solid color-mix(in srgb, var(--action-border) 70%, transparent); border-radius: 5px; color: var(--action-text); background: transparent; font-size: 10px; font-weight: 700; cursor: pointer; }
 .table-toolbar button:hover, .table-toolbar button:focus-visible { border-color: var(--accent); background: var(--hover); outline: none; }
-.block-handle-layer { position: absolute; z-index: 3; inset: 0; pointer-events: none; }
-.block-handle { position: absolute; display: flex; align-items: flex-start; gap: 4px; width: max-content; pointer-events: none; }
+.block-handle-layer { position: absolute; z-index: 3; top: 0; left: 0; width: 0; height: 0; overflow: visible; pointer-events: none; }
+.markdown-view .block-insertion-zone:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.block-handle { position: absolute; display: flex; align-items: flex-start; gap: 4px; width: max-content; padding: 2px; border: 1px solid transparent; border-radius: 9px; pointer-events: none; opacity: .36; transform: translateX(3px); transition: opacity 140ms ease, transform 140ms ease, border-color 140ms ease, background-color 140ms ease; }
+.block-handle.is-active, .block-handle.is-selected, .block-handle:focus-within { opacity: 1; transform: translateX(0); border-color: color-mix(in srgb, var(--accent) 34%, transparent); background: color-mix(in srgb, var(--panel) 88%, transparent); box-shadow: 0 4px 14px rgba(0, 0, 0, .08); }
 .block-drag-handle, .block-delete-button { display: grid; place-items: center; box-sizing: border-box; width: 24px; height: 28px; padding: 0; border: 1px solid transparent; border-radius: 7px; pointer-events: auto; }
-.block-drag-handle { position: relative; color: var(--muted); background: transparent; cursor: grab; opacity: .7; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-user-drag: none; }
+.block-drag-handle { position: relative; color: var(--muted); background: transparent; cursor: grab; opacity: .78; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-user-drag: none; }
 .block-drag-handle::before { content: ''; width: 12px; height: 18px; background: radial-gradient(circle, currentColor 1.35px, transparent 1.6px) 0 0 / 6px 6px; cursor: inherit; pointer-events: none; }
 .block-drag-handle:hover, .block-drag-handle:focus-visible { opacity: 1; border-color: var(--accent); color: var(--accent-strong); background: var(--panel); outline: none; }
 .block-drag-handle:active { cursor: grabbing; }
+.block-handle.is-selected .block-drag-handle, .block-handle.is-active .block-drag-handle { color: var(--accent-strong); }
 .block-delete-button { color: var(--muted); background: var(--panel); cursor: pointer; opacity: 0; transform: scale(.92); transition: opacity 120ms ease, transform 120ms ease, color 120ms ease, border-color 120ms ease, background-color 120ms ease; }
-.block-handle:hover .block-delete-button, .block-handle:focus-within .block-delete-button { opacity: 1; transform: scale(1); }
+.block-handle:hover .block-delete-button, .block-handle:focus-within .block-delete-button, .block-handle.is-selected .block-delete-button { opacity: 1; transform: scale(1); }
 .block-delete-button:hover, .block-delete-button:focus-visible { border-color: var(--danger, #b74b4b); color: var(--danger, #b74b4b); background: color-mix(in srgb, var(--danger, #b74b4b) 9%, var(--panel)); outline: none; }
 .block-dragging { opacity: .24; outline: 1px dashed color-mix(in srgb, var(--accent) 72%, transparent); outline-offset: 5px; background-color: color-mix(in srgb, var(--accent) 4%, transparent); }
 .markdown-view.block-drag-preview { position: fixed; z-index: 1000; top: 0; left: 0; display: block; box-sizing: border-box; max-width: none; margin: 0; padding: 0; overflow: hidden; border: 1px solid color-mix(in srgb, var(--accent) 62%, var(--border)); border-radius: 8px; color: var(--text); background: var(--panel); box-shadow: 0 16px 38px rgba(0, 0, 0, .28), 0 4px 10px rgba(0, 0, 0, .14); opacity: .98; pointer-events: none; -webkit-user-select: none; user-select: none; cursor: grabbing; transform-origin: top left; will-change: transform; }
 .markdown-view.block-drag-preview > .block-drag-preview-content { box-sizing: border-box; width: 100%; }
 .block-drop-before { outline: 2px solid color-mix(in srgb, var(--accent) 76%, transparent); outline-offset: 7px; box-shadow: inset 0 3px 0 var(--accent); }
 .block-drop-after { outline: 2px solid color-mix(in srgb, var(--accent) 76%, transparent); outline-offset: 7px; box-shadow: inset 0 -3px 0 var(--accent); }
-.block-drop-beside { outline: 2px dashed color-mix(in srgb, var(--warning, #f0b429) 82%, transparent); outline-offset: 7px; box-shadow: inset 4px 0 0 var(--warning, #f0b429), inset -4px 0 0 var(--warning, #f0b429); }
 .slash-menu { position: absolute; z-index: 4; width: min(310px, calc(100% - 16px)); max-height: 300px; overflow: auto; padding: 6px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); box-shadow: 0 10px 30px rgba(0, 0, 0, .2); }
 .slash-menu-query { padding: 6px 8px; color: var(--faint); font: 10px var(--font-mono); border-bottom: 1px solid var(--border); }
 .slash-menu button { display: grid; width: 100%; gap: 2px; border: 0; border-radius: 7px; padding: 8px; color: var(--text); background: transparent; text-align: left; cursor: pointer; }
@@ -93,3 +166,12 @@
 .slash-menu button strong { font-size: 11px; }
 .slash-menu button span, .slash-menu-empty { color: var(--muted); font-size: 10px; }
 .slash-menu-empty { margin: 8px; }
+@media (hover: none) {
+  .block-handle { opacity: .78; transform: none; }
+  .block-handle .block-delete-button { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .block-handle, .block-delete-button, .markdown-view img[data-previewable-media="image"] { transition: none; }
+  .rendered-mount-spinner, .markdown-view video[data-media-loading-visible="true"], .markdown-view iframe[data-media-loading-visible="true"],
+  .markdown-view pre[data-rich-content-state="loading"], .markdown-view [data-math-style][data-rich-content-state="loading"] { animation: none; }
+}

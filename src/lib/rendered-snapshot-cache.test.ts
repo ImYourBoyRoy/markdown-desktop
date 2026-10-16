@@ -22,6 +22,16 @@ const rendered: RenderedSource = {
 };
 
 describe('rendered snapshot cache', () => {
+  it('counts source and maps and enforces an aggregate budget across tabs', () => {
+    const cache = new Map();
+    const limits = { maxSnapshotsPerTab: 6, maxHtmlChars: 100, maxBytesPerTab: 2000, maxTotalBytes: 2000 };
+    cacheRenderedSnapshot(cache, 'large-source', 'x'.repeat(2000), rendered, 'github', 'none', limits);
+    expect(cache.has('large-source')).toBe(false);
+    cacheRenderedSnapshot(cache, 'old', 'x'.repeat(200), rendered, 'github', 'none', limits);
+    cacheRenderedSnapshot(cache, 'new', 'y'.repeat(200), rendered, 'github', 'none', limits);
+    expect(cache.has('new')).toBe(true);
+    expect(cache.has('old')).toBe(false);
+  });
   it('reuses matching revisions and evicts oldest output within both bounds', () => {
     const cache = new Map();
     const limits = { maxSnapshotsPerTab: 2, maxHtmlChars: 16 };

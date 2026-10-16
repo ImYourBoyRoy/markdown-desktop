@@ -3,7 +3,6 @@
 //! recorded line endings, and final-newline policy. Used by save and recovery.
 
 use anyhow::{Result, anyhow};
-use encoding_rs::{UTF_8, UTF_16BE, UTF_16LE};
 use std::path::Path;
 
 pub fn decode_bytes(
@@ -14,28 +13,21 @@ pub fn decode_bytes(
         (
             "UTF-8".to_owned(),
             true,
-            UTF_8
-                .decode_without_bom_handling(&bytes[3..])
-                .0
-                .into_owned(),
+            std::str::from_utf8(&bytes[3..])
+                .map_err(|_| anyhow!("{} contains invalid UTF-8", path.display()))?
+                .to_owned(),
         )
     } else if bytes.starts_with(&[0xFF, 0xFE]) {
         (
             "UTF-16 LE".to_owned(),
             true,
-            UTF_16LE
-                .decode_without_bom_handling(&bytes[2..])
-                .0
-                .into_owned(),
+            decode_utf16(&bytes[2..], true, path)?,
         )
     } else if bytes.starts_with(&[0xFE, 0xFF]) {
         (
             "UTF-16 BE".to_owned(),
             true,
-            UTF_16BE
-                .decode_without_bom_handling(&bytes[2..])
-                .0
-                .into_owned(),
+            decode_utf16(&bytes[2..], false, path)?,
         )
     } else if let Ok(source) = std::str::from_utf8(bytes) {
         ("UTF-8".to_owned(), false, source.to_owned())
@@ -54,6 +46,29 @@ pub fn decode_bytes(
         final_newline,
         newline_sequences,
     ))
+}
+
+fn decode_utf16(bytes: &[u8], little_endian: bool, path: &Path) -> Result<String> {
+    if !bytes.len().is_multiple_of(2) {
+        return Err(anyhow!(
+            "{} contains a truncated UTF-16 code unit",
+            path.display()
+        ));
+    }
+    let units = bytes
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| {
+            let pair = [pair[0], pair[1]];
+            if little_endian {
+                u16::from_le_bytes(pair)
+            } else {
+                u16::from_be_bytes(pair)
+            }
+        })
+        .collect::<Vec<_>>();
+    String::from_utf16(&units).map_err(|_| anyhow!("{} contains invalid UTF-16", path.display()))
 }
 
 /// Infer the text-format metadata needed to re-encode a recovered source when
@@ -146,9 +161,10 @@ pub fn encode_source(
 ) -> Result<Vec<u8>> {
     let prepared = apply_recorded_newlines(source, line_ending, final_newline, newline_sequences);
     let mut bytes = match encoding {
-        "UTF-16 LE" => UTF_16LE.encode(&prepared).0.into_owned(),
-        "UTF-16 BE" => UTF_16BE.encode(&prepared).0.into_owned(),
-        _ => prepared.into_bytes(),
+        "UTF-16 LE" => prepared.encode_utf16().flat_map(u16::to_le_bytes).collect(),
+        "UTF-16 BE" => prepared.encode_utf16().flat_map(u16::to_be_bytes).collect(),
+        "UTF-8" => prepared.into_bytes(),
+        _ => return Err(anyhow!("unsupported Markdown encoding: {encoding}")),
     };
     if bom {
         let prefix: &[u8] = match encoding {
@@ -164,6 +180,46 @@ pub fn encode_source(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn utf16_round_trips_ascii_unicode_surrogates_and_mixed_newlines() {
+        let source = "# Notes\r\né 😀\r文\n";
+        for (encoding, prefix, little) in [
+            ("UTF-16 LE", [0xff, 0xfe], true),
+            ("UTF-16 BE", [0xfe, 0xff], false),
+        ] {
+            let expected = prefix
+                .into_iter()
+                .chain(source.encode_utf16().flat_map(|unit| {
+                    if little {
+                        unit.to_le_bytes()
+                    } else {
+                        unit.to_be_bytes()
+                    }
+                }))
+                .collect::<Vec<_>>();
+            let (decoded, actual_encoding, bom, ending, final_newline, sequences) =
+                decode_bytes(&expected, Path::new("test.md")).unwrap();
+            assert_eq!(decoded, source);
+            assert_eq!(actual_encoding, encoding);
+            assert_eq!(
+                encode_source(&decoded, encoding, bom, &ending, final_newline, &sequences).unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_bom_text_is_rejected_without_replacement_characters() {
+        for bytes in [
+            &[0xef, 0xbb, 0xbf, 0xff][..],
+            &[0xff, 0xfe, 0x41],
+            &[0xff, 0xfe, 0, 0xd8],
+            &[0xfe, 0xff, 0xdc, 0],
+        ] {
+            assert!(decode_bytes(bytes, Path::new("invalid.md")).is_err());
+        }
+    }
 
     #[test]
     fn apply_recorded_newlines_converts_lf_editor_text_to_crlf() {

@@ -8,17 +8,34 @@ mod github_host_oracle;
 mod markdown;
 mod markdown_incremental;
 mod markdown_source_map;
+mod media_stream;
 mod model;
 mod performance;
 #[cfg(test)]
 mod phase0_benchmark;
+mod reference_validation;
 mod security;
 mod source_format;
 mod store;
 mod workspace_scan;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, State};
+
+#[derive(Default)]
+struct ShutdownApproval(AtomicBool);
+
+#[tauri::command]
+fn set_update_shutdown_approval(approval: State<'_, ShutdownApproval>, approved: bool) {
+    approval.0.store(approved, Ordering::SeqCst);
+}
+
+#[tauri::command]
+fn complete_shutdown(app: AppHandle, approval: State<'_, ShutdownApproval>) {
+    approval.0.store(true, Ordering::SeqCst);
+    app.exit(0);
+}
 
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -123,6 +140,24 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(store::initial_state())
+        .manage(ShutdownApproval::default())
+        .register_asynchronous_uri_scheme_protocol(
+            "markdown-media",
+            |context, request, responder| {
+                let app = context.app_handle().clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    responder.respond(media_stream::respond(&app, request))
+                });
+            },
+        )
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event
+                && !window.state::<ShutdownApproval>().0.load(Ordering::SeqCst)
+            {
+                api.prevent_close();
+                let _ = window.emit("shutdown-request", ());
+            }
+        })
         .on_webview_event(|webview, event| {
             if let tauri::WebviewEvent::DragDrop(tauri::DragDropEvent::Drop { paths, position }) =
                 event
@@ -146,13 +181,17 @@ pub fn run() {
             Ok(())
         })
         .on_menu_event(|app, event| {
-            let _ = app.emit("menu-action", event.id().as_ref());
             if event.id().as_ref() == "quit" {
-                app.exit(0);
+                let _ = app.emit("shutdown-request", ());
+            } else {
+                let _ = app.emit("menu-action", event.id().as_ref());
             }
         })
         .invoke_handler(tauri::generate_handler![
             startup_paths,
+            reference_validation::validate_reference_edit,
+            complete_shutdown,
+            set_update_shutdown_approval,
             acceptance::acceptance_context,
             acceptance::write_acceptance_result,
             assistant::assistant_ollama_discover,
@@ -178,9 +217,12 @@ pub fn run() {
             store::save_document,
             store::check_document_revision,
             store::search_workspace,
+            store::document_backlinks,
             store::resolve_asset,
+            store::resolve_media_asset,
             store::reveal_asset,
             store::fetch_remote_asset,
+            store::fetch_remote_media,
             store::save_recovery,
             store::clear_recovery,
             store::list_recovery,
@@ -202,6 +244,14 @@ pub fn run() {
             store::discard_dropped_image,
             store::consolidate_referenced_images
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Markdown Desktop");
+        .build(tauri::generate_context!())
+        .expect("error while building Markdown Desktop")
+        .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = event
+                && !app.state::<ShutdownApproval>().0.load(Ordering::SeqCst)
+            {
+                api.prevent_exit();
+                let _ = app.emit("shutdown-request", ());
+            }
+        });
 }

@@ -5,7 +5,271 @@ detailed execution work order remains local and gitignored at
 `Tasks/8-27-2026_Tasklist.md`; this file records the state that must survive a
 clone or handoff.
 
-Updated: 2026-09-21
+Updated: 2026-10-16
+
+## 2026-10-16 stable upgrade and release-candidate validation checkpoint
+
+- Ran the bounded stable upgrade workflow from the existing dirty worktree. It
+  retained rollback snapshot `.upgrade-backups/run-TjxL7R`, updated the
+  JavaScript, Rust, Cargo, and toolchain lines, and retained the already-current
+  pinned CI action revisions.
+- The current local candidate is `1.1.2` on Node 26.9.0, pnpm 12.14.0, and
+  Rust/Cargo 1.99.1. The application is on Tauri 2.12.4, Vite 8.3.4, DOMPurify
+  3.4.17, Playwright 1.64.1, Vitest 5.0.5, axe-core 4.14.0, and Mermaid 12.2.0.
+  `pnpm verify:dependencies` passed with zero typecheck diagnostics, 425
+  frontend tests passed with 2 intentional skips, 104 Rust tests passed with 1
+  ignored benchmark, 4,143 WCAGate surfaces and 0 findings with no suppressions,
+  renderer/media/lifecycle/updater checks, npm audit with no known
+  vulnerabilities, cargo-deny policy checks, and cargo audit with two visible
+  upstream warnings.
+- The pinned CI actions were checked against their upstream releases on
+  2026-10-16: checkout 7.0.1, pnpm/action-setup 6.1.0, setup-node 7.1.0,
+  rust-cache 2.9.2, upload-artifact 7.0.2, and tauri-action 1.0.0. No newer
+  stable action pin was available during this check.
+- WCAGate was refreshed to the latest upstream `main` revision,
+  `30be59d61db6f1cc3c5e80701fb28a0346588ca7` (2.3.1), and the lockfile was
+  regenerated. `scripts/update-wcagate.mjs` now performs that immutable-revision
+  refresh during every `pnpm full:upgrade` before the frozen install and gates.
+- `pnpm tauri build`, `pnpm build:app`, and
+  `pnpm smoke:packaged -- --require-binary` passed for the Windows x64
+  candidate. Packaged acceptance passed all 20 checks on three runs; the
+  split-typing probe measured 116.0 ms, 119.7 ms, and 124.2 ms against its
+  150 ms budget after the acceptance fixture was reduced to a deterministic
+  96-fragment large-mount workload.
+- `pnpm outdated` now reports only the direct TypeScript 6.0.3 to 7.0.2
+  major-line difference. Direct TypeScript remains on 6.x because
+  `svelte-check 4.7.6` declares a `^5 || ^6` compiler peer range;
+  `@typescript/native` remains the separate TypeScript 7 alias. Moving the
+  compiler peer is a separate compatibility migration, not an unattended
+  patch update.
+- This is local Windows x64 evidence for the release candidate. Other
+  operating-system runtime, physical-input/accessibility, signing, live
+  updater-install, and exact-commit GitHub CI gates remain release-workflow
+  gates for the target environments. `pnpm install --frozen-lockfile` succeeds
+  but reports pnpm's WCAGate skill-approval notice; no approval mutation was
+  made. The candidate is ready for the exact-commit GitHub release workflow.
+
+## 2026-10-06 review-remediation checkpoint
+
+- Closed the review findings around source-format fidelity, recovery and
+  shutdown durability, atomic replacement, path and reference validation,
+  remote-media privacy, local-video streaming, stale workspace search,
+  backlinks, and lifecycle error handling. Markdown source remains the
+  authority; native filesystem, security, recovery, and media-grant work
+  stays in Rust.
+- Added bounded recovery snapshots with serialized writes and shutdown drain,
+  strict UTF-8/UTF-16 decoding and re-encoding, baseline-aware recovery
+  restore, permission-preserving atomic replacement, and retryable preview and
+  recovery controls. Remote media is inert until policy and viewport checks
+  pass; local video uses opaque, range-bounded native grants.
+- Current verification: `pnpm check` reports zero diagnostics; the frontend
+  suite passes 425 tests with 2 intentional skips across 82 files; native
+  formatting, Clippy with `-D warnings`, and Rust tests pass with 104 tests and
+  1 intentionally ignored benchmark; the production build and renderer
+  budgets pass; the media-privacy and lifecycle browser smokes pass; and
+  WCAGate reports 0 findings with a passing gate. The generated architecture
+  inventory and its clean-copy regression are current and passing.
+- Dependency checks pass: npm audit reports no known vulnerabilities, cargo
+  audit reports no vulnerabilities with seven allowed upstream warnings, and
+  cargo-deny passes advisories, bans, licenses, and sources with expected
+  duplicate-crate warnings. The working tree remains an unpublished `1.1.2`
+  candidate; the final Windows x64 MSI/NSIS and portable build plus packaged
+  acceptance pass all 20 checks, including local-video metadata/seek and the
+  143.5 ms split-typing probe. No commit, tag, push, or release was made by
+  this pass.
+
+## P0 authoring foundation and About/support links (2026-09-23)
+
+- Added one source-completion authority for slash commands, current-document
+  heading anchors, reference labels, authorized workspace-relative Markdown
+  paths, fence languages, Extended HTML tags, and explicit document-word
+  completion. Rendered slash commands and the ribbon continue to use the same
+  availability policy rather than maintaining a second command catalog.
+- Added idle-scheduled local diagnostics for duplicate heading/reference
+  anchors, unclosed fences, empty image alt text, empty link destinations, and
+  non-portable inline event handlers. Native Rust filesystem/reference lint
+  remains authoritative; local checks are advisory and source-preserving.
+- Added a Settings spell-check switch backed by platform WebView indicators.
+  Source editing receives the local dictionary hint, while rendered editing
+  opts in only for the focused prose block so large documents stay responsive;
+  code blocks are excluded and the app performs no provider call.
+- The About dialog now points to the Markdown Desktop GitHub repository, the
+  author site (`https://imyourboyroy.com`), and an optional secondary Venmo
+  support action (`https://account.venmo.com/itsyourboyroy`). URLs are explicit
+  HTTPS constants rather than document-controlled links.
+- Verification: full frontend suite 408 passed / 2 skipped across 81 files;
+  focused P0 suite 16/16; `pnpm check` reported zero Svelte diagnostics;
+  production build passed; renderer budgets passed; Windows x64 packaging
+  passed; packaged acceptance passed 19/19 twice after the performance fix
+  (145.1 ms and 135.6 ms synthetic split-edit latency against 150 ms); the
+  architecture inventory is current at 282 files / 56,913 lines /
+  2,337,193 bytes.
+- Remaining boundary: browser-native spell-check suggestions depend on the
+  platform WebView dictionary and the application context-menu policy; a full
+  offline language provider is intentionally not bundled in P0. Packaged
+  Windows acceptance and target-OS accessibility should be rerun after the
+  next release candidate, even though the affected frontend code is covered by
+  source/unit tests.
+
+## P1 authoring intelligence — first slice (2026-09-23)
+
+- Added exact-range source selection for current diagnostics. The Issues panel
+  consumes only a converged source/map pair, so stale ranges are not applied
+  while a new render is settling.
+- Added revision-safe diagnostic actions. The unclosed-fence warning can be
+  closed from the Issues panel; the action checks the
+  expected range and source hash, then enters the shared source-preserving
+  undo history. Unsafe semantic guesses remain navigation-only.
+- Issues navigation now selects the exact UTF-8-backed source range when one is
+  available, rather than falling back to the containing rendered block.
+- Expanded the offline completion provider with explicit empty-line Markdown
+  block snippets and Extended-profile HTML attributes whose value cursor lands
+  inside the generated quotes. The existing slash, path, heading, reference,
+  fence-language, and word contexts remain bounded and source-aware.
+- Added local-only authoring diagnostics and documented the boundary in
+  `SECURITY.md`, `README.md`, and `ARCHITECTURE.md`. Diagnostics stay in the
+  converged Issues panel rather than adding a per-keystroke inline lint pass
+  to the source editor.
+- The initial focused P1 contract suite passed 14/14; the broader verification
+  is recorded below.
+
+## P1 verification and performance boundary (2026-09-24)
+
+- The source-authoring slice now includes exact UTF-8 batch source-map
+  resolution, stale-map rejection, source-preserving diagnostic fixes,
+  context-aware completions, focused rendered spell-check attributes, and
+  local incremental DOM commits that retain selection, drag, delete, and rich
+  content behavior across mapped revisions.
+- Full frontend verification passed 414 tests with 2 intentional skips across
+  79 files. `pnpm check` reports zero Svelte diagnostics, the architecture
+  inventory is current at 282 files / 57,875 lines / 2,382,915 bytes, and the
+  production build plus Mermaid/Graphviz renderer budgets pass.
+- Native verification passed formatting, Clippy with `-D warnings`, and 94
+  Rust tests with 1 intentionally ignored benchmark. `cargo audit` reports no
+  vulnerabilities and seven visible upstream maintenance/unsoundness
+  warnings; `cargo deny check` passes advisories, bans, licenses, and sources
+  with expected duplicate-crate warnings.
+- A fresh Windows x64 `1.1.2` package passed native artifact smoke. Packaged
+  acceptance is green for all 19 interaction/rendering steps:
+  source/render selection, cross-block selection, visual editing, undo/redo,
+  IME, Mermaid, save/reload, block drag, and block deletion all pass.
+- The synthetic five-edit split-preview latency probe is now green on three
+  consecutive normal-package runs at 138.8–143.4 ms against the 150 ms budget.
+  The incremental commit token is consumed after the owning DOM revision is
+  committed, so later renders no longer retry stale incremental patches and
+  fall back expensively. This is not OS input evidence.
+- Target-OS accessibility, physical input/IME, Apple/Linux packaging/signing,
+  and live updater installation remain separate environment gates; local
+  Windows evidence does not claim those environments.
+
+## Release-readiness preparation for v1.1.2 (2026-09-23)
+
+- The local release metadata is aligned at `1.1.2` in `package.json`,
+  `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, and
+  `src-tauri/tauri.conf.json`. The existing published `v1.1.1` tag and release
+  remain unchanged; this worktree is not tagged or published by this pass.
+- Packaged interaction acceptance is now a required Windows x64 step in both
+  `.github/workflows/ci.yml` and `.github/workflows/release.yml`, after the
+  staged binary and native artifact checks. This closes the previous gap where
+  release CI could validate artifact shape without exercising the packaged
+  WebView interaction path.
+- The CI quality job also verifies the generated architecture inventory before
+  running the aggregate dependency and security gate.
+- The local aggregate frontend suite completed with 395 passed and 2 skipped;
+  the focused visual/selection suites, Svelte diagnostics, architecture
+  inventory, renderer budgets, updater audit, Rust formatting, Clippy, and
+  native tests remain part of the release gate.
+- The rebuilt `1.1.2` Windows x64 package passed native artifact smoke and all
+  19 packaged interaction checks, including offline Mermaid SVG rendering,
+  source/render selection, visual typing, drag/delete, save/reload, IME, and
+  split latency. The latest run measured 130.7 ms against the 150 ms synthetic
+  budget; this is not OS input-latency evidence.
+- The release boundary remains explicit: local packaged evidence is Windows
+  x64-specific, and target-OS accessibility, physical input/IME, Apple signing
+  or notarization, and a live updater install/restart still require their
+  respective environments.
+
+## Media support and non-janky live preview (2026-09-23)
+
+- Added source-preserving local/direct video and allowlisted YouTube, Vimeo,
+  and Google Drive embeds through both the Insert ribbon and `/media`, `/video`,
+  and `/embed` commands. The rendered/source map handles Markdown video, raw
+  HTML `<video>`/`<source>`, and approved provider iframes without changing
+  existing image/link map IDs.
+- Rust owns media authorization: document-relative local paths are revalidated,
+  remote media is SSRF-checked and fetched without redirects, provider embeds
+  are HTTPS allowlisted, and the bounded 32 MiB data-URI limit prevents large
+  media from freezing the WebView. Larger authored media remains a safe link
+  instead of being silently buffered.
+- Preview work is progressively staged. Large rendered revisions mount in
+  bounded frame-yielding batches behind a single quiet `Updating preview…`
+  status, while media/diagram/math elements load near the viewport. The 180 ms
+  delayed shimmer prevents fast content from flickering while still making
+  slow work visible; reduced-motion and `aria-busy` behavior are included.
+  Video/provider previews open in the existing focused zoomable modal.
+- Current verification: 395 frontend tests passed with 2 intentional skips,
+  `pnpm check` has zero Svelte diagnostics, architecture inventory is current
+  at 276 files / 56,134 lines / 2,302,900 bytes, renderer budget/smoke checks
+  pass, Rust fmt/check/Clippy/tests pass, and Windows x64 Tauri packaging plus
+  all 19 packaged interaction checks pass. Non-Windows target-OS, signed
+  updater installation, and direct-media fixture coverage remain separate
+  evidence gates.
+
+## Reference property editors and premium control rail (2026-09-23)
+
+- Resolved shared-reference links and images now use the bounded
+  `src/lib/reference-editor.ts` transaction to update both the selected
+  occurrence and its shared definition without flattening the Markdown,
+  including common multiline reference titles. Direct inline links/images
+  remain source-preserving property edits. Raw HTML links/images expose only
+  safe property attributes while preserving authored attributes and bodies. A
+  reference image has an explicit one-occurrence HTML conversion for sizing or
+  alignment; unresolved/complex references remain source-assisted intentionally.
+- Large reader-mode documents now apply browser-native `content-visibility`
+  containment to top-level blocks, reducing offscreen paint/layout work without
+  removing mapped nodes. Editable documents retain the complete mapped DOM for
+  caret, selection, IME, and drag correctness.
+- The rendered block-control rail now visually attaches to the document column
+  with quiet default chrome and clear hover, selection, focus, and drag states.
+  Ribbon controls received consistent sizing, interaction states, overflow
+  behavior, and reduced-motion handling using the existing design tokens.
+- Current evidence: `pnpm check` has zero Svelte diagnostics; focused reference
+  and editor tests pass 24/24; the full frontend suite passes 385 with 2
+  intentional skips; the inventory is 274 files / 55,118 lines / 2,255,061
+  bytes; build and renderer budgets pass; visual (93/93), selection (48/48),
+  real Chromium drag, and block-drag smoke pass; Windows x64 `1.1.2` packaged
+  acceptance passes 19/19. Apple/Linux target-OS, signing, accessibility, and
+  live updater installation remain separate environment gates.
+
+## Rendered editor maturation and frontend segregation (2026-09-23)
+
+- Rendered editing now uses one shared capability contract. Direct image and
+  link properties have source-preserving editors; image layout is bounded to
+  safe width/height/alignment values. Resolved reference links/images now patch
+  their shared definition without flattening the occurrence, and constrained
+  raw HTML links expose only safe href/title updates. Reference-image layout,
+  unresolved definitions, and arbitrary HTML remain explicitly source-assisted.
+- The rendered block-control lifecycle moved from `MarkdownView.svelte` into
+  `src/lib/markdown-view-block-controls.ts`. The controller owns the
+  non-contenteditable grip/delete layer, lifted pointer preview, vertical
+  before/after target feedback, keyboard movement, legacy drag compatibility,
+  and teardown. `MarkdownView` remains the revision/selection lifecycle owner
+  and supplies only guarded source callbacks; no second source authority was
+  introduced.
+- The misleading side-edge/beside drop zone was removed. Reordering now has
+  one explicit vertical model, matching what can be represented safely in
+  ordinary Markdown. Delete remains a mapped source-range transaction with
+  undo, and the control layer cannot select or edit its own UI chrome.
+- Large documents use explicit loading plus bounded progressive mounting. This
+  is intentionally not editable DOM virtualization: stable mapped nodes are
+  retained after mounting because caret, selection, IME, source projection,
+  and drag geometry require them. A future read-only virtualizer would need a
+  separate measured-placeholder contract and acceptance evidence.
+- After this segregation pass: `MarkdownView.svelte` is 2,290 lines instead
+  of 2,694; the architecture inventory is current at 272 files, 54,434 lines,
+  and 2,223,435 bytes. `pnpm check`, the full frontend suite (374 passed / 2
+  skipped), focused visual/selection suites, production build, renderer
+  budgets, real Chromium block drag, and selection/visual acceptance all pass.
 
 ## Release v1.1.1 published (2026-09-21)
 
@@ -506,7 +770,7 @@ Updated: 2026-09-21
 | 4 | Complete locally; runtime interaction partial | Source drawer preserves the mounted CodeMirror editor after first open; simple blocks, task items/checkboxes, table cells, details summaries, supported rich inline blocks, and regular fenced code bodies use bounded patches. Visual paragraph Shift+Enter now creates a source-preservable hard break rather than a DOM-only newline. Render/source/split state now reports an effective split view when the collapsible source drawer is open from Render. Cross-pane hover/selection repaint and source-drawer focus return are hardened. Async import/paste/drop/Save As operations now bind their result to the original tab/source snapshot so tab switches cannot redirect or clobber edits. Visual Save now flushes the focused mapped contenteditable before taking its source snapshot. Explicit Done editing flushes the focused block before returning to reading view. Save, Undo/Redo, navigation, and leaving Edit flush pending visual DOM edits and refuse to tear down an active IME composition; the composition state is explicit on the mapped editor. Pending unblurred visual DOM edits are marked and protected from external-change reloads and tab close. Ambiguous inline blocks, diagrams, and indented code expose a source-reveal route. Regular fenced code edits preserve markers/line endings and reject closing-fence injection. Slash cancellation restores the pre-token inline DOM, and the render enhancement pass no longer attaches duplicate listeners on initial mount. Missing-original recovery snapshots now restore into a dirty tab with preserved format metadata so the user can complete an explicit Save As. Stable-toolchain native runtime evidence covers visual paragraph edit, atomic save with surrounding Markdown preserved, source drawer open/close, app-owned Ctrl+F with a dual-pane match, and packaged Restore/render of a missing-original snapshot. Mixed root movement coverage now includes blockquotes, fenced code, tables, and headings. |
 | 5–7 | Implemented locally; acceptance in progress | Slash shell, blank-document slash insertion, pointer selection of the clicked slash command, source-preserving `/toc`, ribbon shell/gating with a compact all-tabs disclosure, fence chrome, tooltips, source-coordinate context-menu routing, profile-gated Mermaid (including strict-profile slash suppression), and Graphviz profile gating exist. Fence language controls now explicitly remain source-only for indented code; slash fence detection rejects info-bearing lines as false closing markers. |
 | 8–11 | Implemented locally; final object/runtime evidence partial | Context actions, keyboard-open context menus, direct fenced-code copy, delayed/focus tooltips, shared table-selection context, ribbon and rendered table-toolbar controls, asset-path handling, native consolidation, Rust-owned reveal, native image replacement, and app-owned non-secret asset-folder settings exist. Native asset-drop routing deterministically discards unused one-time grants when no document or an unsupported file is dropped; focused routing tests cover those paths. Source-pane context menus now preserve a selected CodeMirror range when the pointer remains inside that selection. Generic copy now prefers rendered selection, then the active source selection, then the complete authoritative source. |
-| 12A | Implemented locally; desktop interaction partial | Sequential block movement is implemented with shared source-range transactions; hidden definitions and opaque HTML are excluded from visible movement. Drag handles expose before/after zones plus a dashed beside-edge fallback that performs a sequential move and explains why persisted columns are unavailable; leaving a drop target now clears all drop-zone indicators. Final desktop drag/keyboard interaction evidence remains. |
+| 12A | Implemented locally; desktop interaction partial | Sequential block movement is implemented with shared source-range transactions; hidden definitions and opaque HTML are excluded from visible movement. Drag handles expose explicit vertical before/after zones with lifted preview feedback, keyboard movement, delete, and teardown-safe pointer capture. Side-by-side edge movement is intentionally not exposed because it has no safe portable Markdown representation. |
 | 12B | Optional / not enabled | Side-by-side persisted layout remains fixture-gated and must not weaken sequential GitHub Markdown. |
 | 13A | Complete | Stable Issue contract, unsafe-scheme and duplicate-heading diagnostics, README/object-size scopes, contextual local-path classification, clickable mapped/no-range Issues, and advisory-save behavior are implemented and tested. |
 | 13B–14 | In progress | Base lint remains advisory and now includes strict-profile portability diagnostics for GitHub alerts, GFM tables when parsed, details HTML, and semantic HTML marks. Fence/asset extensions, core block-movement hardening, and final editor/accessibility acceptance remain, along with target-runtime gates. |
@@ -514,15 +778,15 @@ Updated: 2026-09-21
 
 ## Current resume point
 
-Return to the visual-editor acceptance gate before doing any more Assistant
-work. The core source/tests are substantial, and source typing/render
-scheduling is now debounced; packaged pointer/IME/file-picker behavior and
-target-OS accessibility remain partial. Verify the complete Edit → rendered-pane
-typing → source-range patch → Save flow, then repeat for ribbon, source drawer,
-cross-pane selection/hover, block movement, and issue/source reveal. Assistant
-Phase 1 remains parked, hidden from the minimum editor shell, and is not part
-of the minimum editor milestone. Do not restart Workstreams 1–3 without
-evidence that their current tests or contracts regressed.
+The core visual-editor acceptance gate is now covered locally by the full
+frontend suite, real Chromium block drag, source/render selection acceptance,
+visual acceptance, and the rebuilt Windows x64 package. The remaining release
+boundaries are target-OS accessibility and physical pointer/IME/file-picker
+validation, Apple signing/notarization, and live updater install/restart
+evidence. Assistant Phase 1 remains parked, hidden from the minimum editor
+shell, and is not part of the minimum editor milestone. Do not restart
+Workstreams 1–3 without evidence that their current tests or contracts
+regressed.
 
 ## Local verification recorded
 
@@ -540,7 +804,7 @@ evidence that their current tests or contracts regressed.
 - `pnpm wcagate:doctor` — passed; required browser/axe tooling and Chromium are available.
 - `pnpm wcagate:audit` — Gate PASS with 2,253 surfaces and 0 active failed/unresolved findings after the Assistant panel was added; this is evidence-gate output, not a WCAG conformance score.
 - Windows packaging — `pnpm build:app` rebuilt and staged the x64 portable executable, MSI, and NSIS installer from the current source; the rebuilt portable app opened a Markdown fixture. The bridge could not complete click/type while an unrelated foreground Ollama window obscured the app, so this does not prove packaged pointer/IME/file-picker interaction or target-OS accessibility.
-- Beside-edge movement fallback — focused `MarkdownView`/block-movement tests passed (27 tests); a beside drop remains sequential and reports the unsupported persisted-column boundary instead of writing unverified HTML layout.
+- Block-control maturation — focused `MarkdownView`/movement tests and the real Chromium block-drag smoke pass; vertical before/after movement is source-preserving, while unsupported side-by-side layout is not presented as a misleading control.
 - Stable-toolchain `pnpm tauri dev` runtime smoke — temporary Markdown fixture opened through the native app; visual editing changed only the mapped paragraph, disk remained unchanged before Save, Save reported atomic success, the source drawer opened and closed, and `RUNTIME_FIND_TOKEN` produced `1 of 1` with visual/source highlights. The fixture and dev process were removed afterward; native file-picker and tab-close automation were not counted as acceptance evidence because the test bridge did not activate those controls reliably.
 - Stable-toolchain visual table smoke — a table cell was exposed as `Editable Markdown table cell`, the in-canvas table toolbar rendered with accessible add/delete/move row and column controls, and the shared table-selection state was visible in the ribbon. After wiring the rendered toolbar callback, `+ Row` successfully inserted a blank row in memory; the app reported `Updated Markdown source without reserializing the document`, showed the dirty state and 12 rendered lines, and the disk fixture remained unchanged before Save. The computer-use bridge still misrouted some unrelated indexed/coordinate actions, so keyboard/pointer coverage remains partial; source-level table mutations remain covered by 7 focused tests and the full suite.
 - Native asset-drop routing tests — 3 focused planner cases passed: no active document and unsupported drops discard all one-time grants, while a mixed drop retains only the supported image grant and discards unrelated files. The native drop flow remains unverified through a real desktop drag gesture.
@@ -567,7 +831,7 @@ evidence that their current tests or contracts regressed.
 
 ## Latest local hardening slice (2026-08-29)
 
-- `MarkdownView` clears the beside-edge drag indicator on `dragleave`, preventing a stale visual drop target after the pointer exits a block.
+- `MarkdownView` block controls clear all vertical drop indicators on `dragleave`, cancellation, release, and rebuild, preventing stale visual targets after the pointer exits a block.
 - `MarkdownEditor` preserves an existing source selection for a block-aware context menu when the user right-clicks inside that selection; point context menus remain point-based otherwise.
 - Focused verification: `pnpm check` passed with 0 errors/0 warnings; `MarkdownView`, block-movement, and source-context tests passed (31 tests).
 - These changes do not alter the Markdown source model. Packaged drag/pointer interaction and target-OS accessibility remain unverified.

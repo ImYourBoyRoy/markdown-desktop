@@ -37,6 +37,9 @@ export type SlashCommand =
   | 'mermaid'
   | 'graphviz'
   | 'math'
+  | 'media'
+  | 'video'
+  | 'embed'
   | 'footnote'
   | 'table-of-contents';
 
@@ -68,6 +71,9 @@ export const slashCommands: readonly SlashCommandOption[] = [
   { id: 'mermaid', label: 'Mermaid diagram', description: 'Insert an editable Mermaid fence', keywords: 'chart flow diagram' },
   { id: 'graphviz', label: 'Graphviz diagram', description: 'Insert an editable DOT graph fence', keywords: 'dot graphviz graph diagram network' },
   { id: 'math', label: 'Math block', description: 'Insert a display math block', keywords: 'equation latex formula' },
+  { id: 'media', label: 'Video or embed', description: 'Insert a local video or approved provider embed', keywords: 'video media youtube vimeo drive html5 embed' },
+  { id: 'video', label: 'Video', description: 'Insert a local or direct video', keywords: 'media mp4 webm movie clip' },
+  { id: 'embed', label: 'Video embed', description: 'Insert a YouTube, Vimeo, or Drive embed', keywords: 'youtube vimeo drive iframe provider' },
   { id: 'footnote', label: 'Footnote', description: 'Insert a footnote marker and definition', keywords: 'reference note citation' },
   { id: 'table-of-contents', label: 'Table of contents', description: 'Insert a heading-linked table of contents', keywords: 'toc outline headings navigation' },
   { id: 'bold', label: 'Bold text', description: 'Insert editable bold text', keywords: 'strong emphasis formatting' },
@@ -84,9 +90,11 @@ export function slashCommandAvailable(command: SlashCommand, profile: MarkdownPr
     return !new Set<SlashCommand>([
       'strikethrough', 'underline', 'subscript', 'superscript',
       'task-list', 'table', 'alert', 'details', 'mermaid', 'graphviz', 'math', 'footnote',
+      'media', 'video', 'embed',
     ]).has(command);
   }
   if (command === 'graphviz') return profile === 'extended';
+  if (command === 'media' || command === 'video' || command === 'embed') return true;
   if (profile === 'github') return true;
   return true;
 }
@@ -127,7 +135,14 @@ export function sourceTextIsInsideFence(prefix: string): boolean {
 }
 
 export function slashCommandNeedsDialog(command: SlashCommand): boolean {
-  return command === 'fence' || command === 'image' || command === 'link' || command === 'math' || command === 'footnote';
+  return command === 'fence'
+    || command === 'image'
+    || command === 'link'
+    || command === 'math'
+    || command === 'footnote'
+    || command === 'media'
+    || command === 'video'
+    || command === 'embed';
 }
 
 function insertAt(source: string, selection: TextSelection, value: string, cursorOffset = value.length): EditResult {
@@ -171,7 +186,7 @@ export function insertSlashCommand(source: string, selection: TextSelection, com
     case 'graphviz': return insertDiagram(source, selection, 'dot');
     case 'math': return insertMath(source, selection, '', true);
     case 'table-of-contents': return insertTableOfContents(source, selection);
-    case 'fence': case 'image': case 'link': case 'footnote':
+    case 'fence': case 'image': case 'link': case 'footnote': case 'media': case 'video': case 'embed':
       return null;
   }
 }
@@ -182,6 +197,7 @@ export function slashCommandInsertKind(command: SlashCommand): InsertKind | null
     case 'image': return 'image';
     case 'link': return 'link';
     case 'math': return 'math';
+    case 'media': case 'video': case 'embed': return 'media';
     case 'footnote': return 'footnote';
     default: return null;
   }

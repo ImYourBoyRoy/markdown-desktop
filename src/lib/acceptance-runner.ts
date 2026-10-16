@@ -34,12 +34,14 @@ export interface AcceptanceRunnerDeps {
   applyVisualProbeEdit(probe: string, replacement: string): Promise<boolean>;
   simulateImeEdit(probe: string, composedText: string): Promise<boolean>;
   measureSplitTypingLatency(characters: number): Promise<number>;
+  waitForRenderedDiagram?(language: 'mermaid' | 'graphviz', timeoutMs?: number): Promise<boolean>;
   selectRenderedHtmlBadge?(): Promise<boolean>;
   selectSourceHtmlBadge?(): Promise<boolean>;
   selectRenderedTextProbe?(): Promise<boolean>;
   selectSourceTextProbe?(): Promise<boolean>;
   selectRenderedCrossBlockTextProbe?(): Promise<boolean>;
   dragRenderedBlock?(): Promise<boolean>;
+  deleteRenderedBlock?(): Promise<boolean>;
   getEditorSelection?(): { from: number; to: number };
   readSplitPaneScroll?(): { source: number; rendered: number };
   isRenderedBadgeHighlighted?(): boolean;
@@ -94,6 +96,9 @@ export async function runPackagedAcceptance(deps: AcceptanceRunnerDeps): Promise
     waitForVisualParagraph: async (probe, timeoutMs = 30_000) => {
       await waitForProbeParagraph(probe, timeoutMs);
     },
+    waitForRenderedDiagram: deps.waitForRenderedDiagram
+      ? (language, timeoutMs = 30_000) => deps.waitForRenderedDiagram!(language, timeoutMs)
+      : undefined,
     selectRenderedHtmlBadge: deps.selectRenderedHtmlBadge
       ? () => deps.selectRenderedHtmlBadge!()
       : undefined,
@@ -109,6 +114,9 @@ export async function runPackagedAcceptance(deps: AcceptanceRunnerDeps): Promise
       : undefined,
     dragRenderedBlock: deps.dragRenderedBlock
       ? () => deps.dragRenderedBlock!()
+      : undefined,
+    deleteRenderedBlock: deps.deleteRenderedBlock
+      ? () => deps.deleteRenderedBlock!()
       : undefined,
     getEditorSelection: deps.getEditorSelection,
     readSplitPaneScroll: deps.readSplitPaneScroll,
@@ -136,11 +144,22 @@ export async function waitForProbeParagraph(probe: string, timeoutMs = 10_000): 
   throw new Error(`Timed out waiting for visual paragraph containing ${probe}`);
 }
 
-export function dispatchImeSequence(element: HTMLElement, composedText: string) {
+export async function dispatchImeSequence(element: HTMLElement, composedText: string) {
   element.focus();
   element.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: '' }));
   element.dispatchEvent(new CompositionEvent('compositionupdate', { bubbles: true, data: composedText }));
   element.textContent = composedText;
   element.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertCompositionText', data: composedText }));
   element.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: composedText }));
+  // Chromium/WebView may apply the synthetic compositionend default action and
+  // restore the pre-composition DOM because no native IME owns this test
+  // sequence. Reconcile only that synthetic DOM state through the actual
+  // input listener; never patch application source directly from the probe.
+  await new Promise<void>((resolve) => {
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()));
+  });
+  if (element.textContent !== composedText) {
+    element.textContent = composedText;
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+  }
 }

@@ -1,13 +1,3 @@
-const settingsContrastSuppression = {
-  outcomes: ['cantTell'],
-  adapter: 'frontend-browser-mode',
-  justification: 'Axe reports an elmPartiallyObscuring incomplete over the modal frost backdrop. Browser contrast sampling found solid panel backgrounds with 7.17:1 dark-theme and 6.36:1 light-theme ratios for the settings copy; retain the visual treatment and reverify before expiry.',
-  owner: 'Markdown Desktop maintainers',
-  ticket: 'A11Y-WCAGATE-SETTINGS-CONTRAST-2026-08',
-  createdAt: '2026-08-21T00:00:00.000Z',
-  expiresAt: '2026-11-21T00:00:00.000Z',
-};
-
 export default {
   schemaVersion: 1,
   project: {
@@ -24,6 +14,27 @@ export default {
       baseURL: 'http://localhost:1420',
       browser: 'chromium',
       scenarios: [
+        { name: 'opened-document', path: '/scripts/fixtures/app-review.html', steps: [{ action: 'expectVisible', selector: '.markdown-view p:first-of-type' }, { action: 'waitForTimeout', milliseconds: 300 }] },
+        {
+          name: 'source-editor', path: '/scripts/fixtures/app-review.html',
+          setup: async (page) => {
+            if (await page.getByRole('button', { name: 'Switch to visual editing' }).count()) await page.getByRole('button', { name: 'Switch to visual editing' }).click();
+            await page.getByRole('button', { name: 'Show source', exact: true }).click();
+            await page.locator('.cm-content').waitFor();
+          }, steps: [{ action: 'waitForTimeout', milliseconds: 300 }],
+        },
+        { name: 'recovery-dialog', path: '/scripts/fixtures/app-review.html?recovery=1', steps: [{ action: 'expectVisible', selector: '.recovery-modal' }] },
+        {
+          name: 'shutdown-dialog', path: '/scripts/fixtures/app-review.html',
+          setup: async (page) => {
+            if (await page.getByRole('button', { name: 'Switch to visual editing' }).count()) await page.getByRole('button', { name: 'Switch to visual editing' }).click();
+            const paragraph = page.locator('.markdown-view p[data-visual-editable="true"]').first();
+            await paragraph.fill('Unsaved accessibility fixture.');
+            await page.locator('.document-header h1').click();
+            await page.evaluate(() => window.reviewFixture.emit('shutdown-request'));
+            await page.locator('#shutdown-dialog').waitFor();
+          }, steps: [],
+        },
         { name: 'welcome', path: '/', steps: [] },
         {
           name: 'welcome-light-theme',
@@ -88,10 +99,5 @@ export default {
     { type: 'json', file: 'latest.json' },
     { type: 'results', file: 'results.html' },
   ],
-  suppressions: [
-    { ...settingsContrastSuppression, fingerprint: 'ce9adbe26c56b009a94e086a' },
-    { ...settingsContrastSuppression, fingerprint: '79cc3ab72ec2f31bf0fcb7e1' },
-    { ...settingsContrastSuppression, fingerprint: '5c9d29c17d25a829c342b813' },
-    { ...settingsContrastSuppression, fingerprint: 'f2e7c69180c7089e818cb1a0' },
-  ],
+  suppressions: [],
 };

@@ -39,7 +39,7 @@ function lineAlignedTop(element: HTMLElement, line: number, totalLines: number):
 function selectionMarker(root: ParentNode | null, pane: 'source' | 'rendered'): HTMLElement | null {
   if (!root) return null;
   if (pane === 'rendered') {
-    return root.querySelector<HTMLElement>('.map-source-selected, .map-selected, [data-map-kind="html_image"].map-selected, [data-map-kind="html_link"].map-selected');
+    return root.querySelector<HTMLElement>('.map-source-selected, .map-selected, [data-map-kind="html_image"].map-selected, [data-map-kind="html_link"].map-selected, [data-map-kind="html_video"].map-selected, [data-map-kind="html_iframe"].map-selected');
   }
   return root.querySelector<HTMLElement>('.cm-activeLine, .cm-selectionBackground, .cm-cursor-primary');
 }

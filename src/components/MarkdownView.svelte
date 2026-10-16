@@ -2,11 +2,12 @@
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { onMount, tick } from 'svelte';
   import { paintSelectionRanges } from '../lib/selection-highlight';
-  import { fetchRemoteAsset, resolveAsset } from '../lib/ipc';
+  import { fetchRemoteAsset, fetchRemoteMedia, resolveAsset, resolveMediaAsset } from '../lib/ipc';
   import {
     attachSourceMapIds,
     createVisibleTextSourceSelectionProjection,
     sourceSelectionForSpan,
+    sourceSelectionsForSpans,
     type VisibleTextSourceSelectionProjection,
   } from '../lib/source-map';
   import { mappedHtmlElementDescriptors, normalizeMarkupAttribute } from '../lib/html-sub-spans';
@@ -26,7 +27,6 @@
     contentElementForMappedElements,
     insertHardBreakAtSelection,
     insertPlainTextAtSelection,
-    mappedRootBlockElements,
     ownerElementForMappedElements,
     sourceCaretForVisualText,
     sourceSelectionForVisualText,
@@ -35,12 +35,14 @@
     wrapTextSelection,
   } from '../lib/markdown-view-dom';
   import { handleVisualEditingKeydown } from '../lib/markdown-view-visual-editing';
-  import { decorateBlockInsertionZones } from '../lib/markdown-view-insertion';
+  import { applyVisibleTextTransaction, visibleTextChange } from '../lib/visual-text-transaction';
+  import { decorateBlockInsertionZones, type BlockInsertionController } from '../lib/markdown-view-insertion';
   import {
     isBlockSelectionKind,
     isExactObjectSelectionKind,
     resolveMappedSourceSelection,
   } from '../lib/block-selection';
+  import { createBlockControls } from '../lib/markdown-view-block-controls';
   import {
     captureVisualSelection,
     restoreVisualSelection,
@@ -50,11 +52,16 @@
   import { filterSlashCommands, type SlashCommand } from '../lib/slash';
   import { applyMapTooltips, decorateFenceChrome, decorateTaskCheckboxes, tinyPlaceholder } from '../lib/markdown-view-decoration';
   import { tryIncrementalBlockCommit } from '../lib/markdown-view-dom-commit';
+  import { mountRenderedHtml, shouldChunkRenderedHtml, splitTopLevelHtml } from '../lib/large-document-mount';
   import { renderDiagram, renderMathPreview, type RichContentContext } from '../lib/markdown-view-rich-content';
   import type { MediaPreview } from '../lib/media-preview';
   import { sanitizeImageAsset } from '../lib/safe-image';
+  import { MediaAssetCache } from '../lib/media-asset-cache';
+  import { isAllowedMediaEmbedUrl, isSafeMediaReference } from '../lib/media';
   import { performanceCount, performanceSpan } from '../lib/performance';
+  import { applyVisualSpellcheck } from '../lib/spellcheck';
   import type { VisualStructurePatch } from '../lib/visual-structure';
+  import { visualBlockCapabilities } from '../lib/visual-editor-contract';
   import type { AssetResult, MarkdownProfile, RenderedBlock, SourceMap } from '../lib/types';
 
   export let html = '';
@@ -65,11 +72,16 @@
   export let renderedBlocks: RenderedBlock[] = [];
   let committedBlocks: RenderedBlock[] = [];
   export let profile: MarkdownProfile = 'github';
+  export let spellcheckEnabled = true;
+  export let spellcheckLocale = 'en-US';
   export let documentId = '';
   export let headingSlugs: string[] = [];
   export let allowRemoteImages = true;
+  /** The source/map pair is being rendered; keep the previous DOM readable but inert. */
+  export let rendering = false;
   export let incrementalCommitMapId: string | undefined = undefined;
   export let incrementalCommitSourceRange: TextSelection | undefined = undefined;
+  export let onIncrementalCommitConsumed: (mapId: string) => void = () => undefined;
   export let highlightedMapIds: string[] = [];
   export let activeMapIds: string[] = [];
   export let hoveredMapIds: string[] = [];
@@ -90,7 +102,6 @@
   export let onDetailsSummaryEdit: (mapId: string, text: string) => boolean = () => false;
   export let onTableEdit: (action: TableEditAction, mapId?: string) => void = () => undefined;
   export let onBlockMove: (movingMapId: string, targetMapId: string, position: 'before' | 'after') => void = () => undefined;
-  export let onBlockBeside: (movingMapId: string, targetMapId: string) => void = () => undefined;
   export let onBlockDelete: (mapId: string) => void = () => undefined;
   export let onSlashCommand: (mapId: string, command: SlashCommand, sourceSelection?: TextSelection) => void = () => undefined;
   export let onRevealSource: (mapId: string) => void = () => undefined;
@@ -135,13 +146,18 @@
   $: filteredSlashCommands = filterSlashCommands(slashQuery, profile);
   let rendered = '';
   let renderVersion = 0;
+  let mounting = false;
+  $: readOnlyLargeDocument = !editable && shouldChunkRenderedHtml(html, renderedBlocks);
   let observers: IntersectionObserver[] = [];
   let sourceRevealButton: HTMLButtonElement | undefined;
   let tableToolbar: HTMLDivElement | undefined;
   let tableToolbarTarget: HTMLElement | undefined;
   let blockHandleLayer: HTMLDivElement | undefined;
+  let blockHandleByMapId = new Map<string, HTMLElement>();
   let blockHandleCleanup: (() => void)[] = [];
-  let insertionZoneCleanup: (() => void) | undefined;
+  let blockHandleUpdate: ((sourceMap: SourceMap) => boolean) | undefined;
+  let rebuildBlockHandles: (() => void) | undefined;
+  let insertionZoneController: BlockInsertionController | undefined;
   let mapTooltip: HTMLDivElement | undefined;
   let mapTooltipTarget: HTMLElement | undefined;
   let mapTooltipTimer: number | undefined;
@@ -155,11 +171,8 @@
   let lastEnhancedSourceHash = '';
   let lastEnhancedEditable = false;
   let lastEnhancedRemoteImages = true;
-  const resolvedAssetCache = new Map<string, { asset: AssetResult; bytes: number }>();
-  const pendingAssetLoads = new Map<string, Promise<AssetResult>>();
-  let resolvedAssetCacheBytes = 0;
-  const MAX_RESOLVED_ASSET_CACHE_ENTRIES = 16;
-  const MAX_RESOLVED_ASSET_CACHE_BYTES = 8 * 1024 * 1024;
+  const mediaAssetCache = new MediaAssetCache();
+  const mediaLoadingTimers = new Map<Element, number>();
   let mappedElementIndex = new Map<string, HTMLElement[]>();
   let mappedSpanIndex = new Map<string, SourceMap['spans'][number]>();
   let mappedSourceSelectionIndex: SourceSelectionIndex = {
@@ -198,43 +211,81 @@
     hovered: new Set<string>(),
     selected: new Set<string>(),
   };
+  let mountedSpellcheckKey = '';
+  const activeSpellcheckElements = new Set<HTMLElement>();
+
+  function activateVisualSpellcheck(element: HTMLElement): void {
+    if (!element.isConnected || element.closest('pre, code')) return;
+    if (!spellcheckEnabled) {
+      activeSpellcheckElements.delete(element);
+      applyVisualSpellcheck(element, false, spellcheckLocale);
+      return;
+    }
+    activeSpellcheckElements.add(element);
+    applyVisualSpellcheck(element, true, spellcheckLocale);
+  }
+
+  function updateMountedSpellcheck(): void {
+    if (!host) return;
+    const key = `${spellcheckEnabled}:${spellcheckLocale}`;
+    if (key === mountedSpellcheckKey) return;
+    mountedSpellcheckKey = key;
+    // Keep the article root off so the browser does not spell-check every
+    // rendered paragraph in a large document. Focused prose blocks opt in
+    // through the delegated focus handler; code surfaces remain excluded.
+    host.setAttribute('spellcheck', 'false');
+    host.setAttribute('lang', spellcheckLocale || 'en-US');
+    for (const element of activeSpellcheckElements) {
+      if (!element.isConnected || !host.contains(element)) {
+        activeSpellcheckElements.delete(element);
+        continue;
+      }
+      applyVisualSpellcheck(element, spellcheckEnabled, spellcheckLocale);
+    }
+  }
 
   function cachedAsset(
     key: string,
     loader: () => Promise<AssetResult>,
   ): Promise<AssetResult> {
-    const cached = resolvedAssetCache.get(key);
-    if (cached) {
-      resolvedAssetCache.delete(key);
-      resolvedAssetCache.set(key, cached);
-      return Promise.resolve(cached.asset);
-    }
-    const pending = pendingAssetLoads.get(key);
-    if (pending) return pending;
+    return mediaAssetCache.get(key, loader);
+  }
 
-    const request = loader().then((asset) => {
-      pendingAssetLoads.delete(key);
-      const bytes = asset.dataUri.length;
-      const previous = resolvedAssetCache.get(key);
-      if (previous) resolvedAssetCacheBytes -= previous.bytes;
-      resolvedAssetCache.delete(key);
-      resolvedAssetCache.set(key, { asset, bytes });
-      resolvedAssetCacheBytes += bytes;
-      while (resolvedAssetCache.size > MAX_RESOLVED_ASSET_CACHE_ENTRIES
-        || resolvedAssetCacheBytes > MAX_RESOLVED_ASSET_CACHE_BYTES) {
-        const oldestKey = resolvedAssetCache.keys().next().value as string | undefined;
-        if (oldestKey === undefined) break;
-        const oldest = resolvedAssetCache.get(oldestKey);
-        resolvedAssetCache.delete(oldestKey);
-        resolvedAssetCacheBytes -= oldest?.bytes ?? 0;
+  function beginMediaLoad(element: Element) {
+    const previous = mediaLoadingTimers.get(element);
+    if (previous !== undefined) window.clearTimeout(previous);
+    element.setAttribute('aria-busy', 'true');
+    element.setAttribute('data-media-state', 'pending');
+    // Fast local clips should appear immediately. Only expose the animated
+    // affordance when the native fetch/decode has actually taken noticeable
+    // time, avoiding skeleton flicker while keeping slow renders legible.
+    const timer = window.setTimeout(() => {
+      if (element.isConnected && element.getAttribute('data-media-state') === 'pending') {
+        element.setAttribute('data-media-loading-visible', 'true');
       }
-      return asset;
-    }).catch((error) => {
-      pendingAssetLoads.delete(key);
-      throw error;
-    });
-    pendingAssetLoads.set(key, request);
-    return request;
+    }, 180);
+    mediaLoadingTimers.set(element, timer);
+  }
+
+  function finishMediaLoad(element: Element, state: 'ready' | 'error') {
+    const timer = mediaLoadingTimers.get(element);
+    if (timer !== undefined) window.clearTimeout(timer);
+    mediaLoadingTimers.delete(element);
+    element.removeAttribute('aria-busy');
+    element.removeAttribute('data-media-loading-visible');
+    element.setAttribute('data-media-state', state);
+  }
+
+  function showMediaError(element: Element, message: string) {
+    finishMediaLoad(element, 'error');
+    element.setAttribute('data-media-error', message);
+    const parent = element.parentElement;
+    if (!parent || parent.querySelector(':scope > .media-error')) return;
+    const note = document.createElement('span');
+    note.className = 'media-error';
+    note.setAttribute('role', 'status');
+    note.textContent = message;
+    element.insertAdjacentElement('afterend', note);
   }
 
   $: {
@@ -258,6 +309,7 @@
       lastEnhancedRemoteImages = allowRemoteImages;
       const nextVersion = renderVersion + 1;
       renderVersion = nextVersion;
+      mounting = true;
       const sourceForRender = renderedSource || source;
       const sourceMapForRender = sourceMap;
       const editableForRender = editable;
@@ -284,6 +336,10 @@
   }
 
   $: if (host) {
+    updateMountedSpellcheck();
+  }
+
+  $: if (host) {
     const nextExternalSourceSelection = externalSourceSelection;
     if (externalSelectionFrame !== undefined) cancelAnimationFrame(externalSelectionFrame);
     externalSelectionFrame = requestAnimationFrame(() => {
@@ -305,7 +361,7 @@
       return mapped?.classList.contains('source-reveal') ? null : mapped;
     };
     const sourceRevealTarget = (target: EventTarget | null): HTMLButtonElement | null => {
-      return target instanceof Element ? target.closest<HTMLButtonElement>('.source-reveal, .fence-source-button, .copy-code') : null;
+      return target instanceof Element ? target.closest<HTMLButtonElement>('.source-reveal, .fence-source-button, .copy-code, .media-preview-trigger') : null;
     };
     const handlePointerOver = (event: PointerEvent) => {
       if (sourceRevealTarget(event.target)) {
@@ -337,6 +393,9 @@
       scheduleMapTooltip(next);
     };
     const handleFocusIn = (event: FocusEvent) => {
+      if (event.target instanceof HTMLElement && event.target.isContentEditable) {
+        activateVisualSpellcheck(event.target);
+      }
       const target = mapTarget(event.target);
       if (target) {
         positionTableToolbar(target);
@@ -402,7 +461,7 @@
       return null;
     };
     const textOwnerKinds = new Set(['heading', 'paragraph', 'list_item', 'task_item', 'table_cell', 'details_summary', 'list', 'blockquote', 'alert']);
-    const exactInlineKinds = new Set(['link', 'image', 'html_link', 'html_image']);
+    const exactInlineKinds = new Set(['link', 'image', 'html_link', 'html_image', 'html_video', 'html_iframe']);
     const ancestorMappedKind = (element: HTMLElement | null, kinds: Set<string>): HTMLElement | null => {
       let current = element;
       while (current && current !== host) {
@@ -448,27 +507,27 @@
     };
     const mappedObjectTarget = (element: HTMLElement): HTMLElement | null => {
       let mapped = mapTarget(element);
-      if (element.tagName.toLowerCase() !== 'img') return mapped;
-      const image = element as HTMLImageElement;
-      if (!image.dataset.mapId) {
-        const sourceValue = normalizeMarkupAttribute(image.dataset.source ?? image.getAttribute('src') ?? '');
+      const tag = element.tagName.toLowerCase();
+      if (!['img', 'video', 'iframe'].includes(tag)) return mapped;
+      if (!element.dataset.mapId) {
+        const sourceValue = normalizeMarkupAttribute(element.dataset.source ?? element.dataset.mediaSrc ?? element.getAttribute('src') ?? '');
         const span = [...mappedSourceSelectionIndex.spansByMapId.values()]
-          .find((candidate) => candidate.kind === 'html_image'
+          .find((candidate) => ['html_image', 'html_video', 'html_iframe'].includes(candidate.kind)
             && typeof candidate.attrs.src === 'string'
             && normalizeMarkupAttribute(candidate.attrs.src) === sourceValue);
         if (span) {
-          image.dataset.mapId = span.mapId;
-          image.dataset.mapKind = span.kind;
+          element.dataset.mapId = span.mapId;
+          element.dataset.mapKind = span.kind;
         } else {
           const descriptor = mappedHtmlElementDescriptors(source, sourceMap)
-            .find((entry) => entry.tag === 'img' && entry.value === sourceValue);
+            .find((entry) => entry.tag === tag && entry.value === sourceValue);
           if (descriptor) {
-            image.dataset.mapId = descriptor.mapId;
-            image.dataset.mapKind = descriptor.kind;
+            element.dataset.mapId = descriptor.mapId;
+            element.dataset.mapKind = descriptor.kind;
           }
         }
       }
-      mapped = image.dataset.mapId ? image : mapped;
+      mapped = element.dataset.mapId ? element : mapped;
       return mapped;
     };
     const selectMappedObject = (element: HTMLElement): boolean => {
@@ -820,7 +879,17 @@
     };
   });
 
-  function teardown() {
+  function clearBlockHandles() {
+    blockHandleCleanup.forEach((cleanup) => cleanup());
+    blockHandleCleanup = [];
+    blockHandleByMapId.clear();
+    blockHandleUpdate = undefined;
+    blockHandleLayer?.remove();
+    blockHandleLayer = undefined;
+    rebuildBlockHandles = undefined;
+  }
+
+  function teardown(preserveInteractiveSurfaces = false) {
     if (highlightFrame !== undefined) {
       cancelAnimationFrame(highlightFrame);
       highlightFrame = undefined;
@@ -838,12 +907,13 @@
     clearExternalSourceSelection();
     observers.forEach((observer) => observer.disconnect());
     observers = [];
-    blockHandleCleanup.forEach((cleanup) => cleanup());
-    blockHandleCleanup = [];
-    insertionZoneCleanup?.();
-    insertionZoneCleanup = undefined;
-    blockHandleLayer?.remove();
-    blockHandleLayer = undefined;
+    mediaLoadingTimers.forEach((timer) => window.clearTimeout(timer));
+    mediaLoadingTimers.clear();
+    if (!preserveInteractiveSurfaces) {
+      clearBlockHandles();
+      insertionZoneController?.();
+      insertionZoneController = undefined;
+    }
     tableToolbar?.remove();
     tableToolbar = undefined;
     tableToolbarTarget = undefined;
@@ -868,6 +938,7 @@
       hovered: new Set(),
       selected: new Set(),
     };
+    activeSpellcheckElements.clear();
     closeSlashMenu();
   }
 
@@ -1014,16 +1085,17 @@
       sourceRevealButton = undefined;
       return;
     }
-    // Kind alone is not an edit capability. A paragraph containing a link,
-    // image, hard-to-project syntax, or unsupported inline HTML remains
-    // source-only even though its AST kind is still "paragraph".
+    // Kind alone is not an edit capability. A paragraph containing unsupported
+    // inline syntax remains source-only even though its AST kind is still
+    // "paragraph". Images are allowed when the rich serializer has opted the
+    // block into visual editing.
     const visualEditable = target.dataset.visualEditable === 'true';
-    const supportedBlock = new Set([
-      'blockquote', 'code_block', 'table', 'table_cell', 'task_item',
-      'alert', 'details', 'details_summary', 'html_block', 'math', 'diagram',
-      'heading', 'paragraph', 'list_item',
-    ]);
-    if (!kind || visualEditable || !supportedBlock.has(kind)) {
+    const capabilities = visualBlockCapabilities(kind);
+    // A kind can be generally text-editable while one concrete instance is
+    // still source-assisted (nested lists, hard breaks, or other structural
+    // children). Only hide the escape hatch when this exact element is
+    // visually editable or has a dedicated property editor.
+    if (!kind || visualEditable || capabilities.properties) {
       sourceRevealButton?.remove();
       sourceRevealButton = undefined;
       return;
@@ -1155,6 +1227,7 @@
         element.classList.toggle('map-hover', hoveredSet.has(mapId));
         element.classList.toggle('map-selected', selectedSet.has(mapId));
       });
+      blockHandleByMapId.get(mapId)?.classList.toggle('is-selected', selectedSet.has(mapId));
     });
     lastHighlightState = {
       highlighted: highlightedSet,
@@ -1347,7 +1420,7 @@
       // Browser ranges paint editable text without introducing markup into
       // the next visual edit. Raw HTML objects keep their mapped owner cue.
       if (visibleSelection
-        && !['html_block', 'html_layout_table', 'html_link', 'html_image'].includes(owner.kind)) {
+        && !['html_block', 'html_layout_table', 'html_link', 'html_image', 'html_video', 'html_iframe'].includes(owner.kind)) {
         textRanges.push({ element: owner.element, selection: visibleSelection });
       }
     });
@@ -1364,428 +1437,55 @@
     performanceCount('source-selection.projected', owners.length);
   }
 
-  function decorateBlockHandles() {
-    const blocks = mappedRootBlockElements(host);
-    if (!blocks.length) return;
-    blockHandleLayer = document.createElement('div');
-    blockHandleLayer.className = 'block-handle-layer';
-    blockHandleLayer.setAttribute('aria-label', 'Markdown block movement controls');
-    host.append(blockHandleLayer);
-    let draggingMapId: string | undefined;
-    type PointerDrag = {
-      pointerId: number;
-      mapId: string;
-      handle: HTMLButtonElement;
-      block: HTMLElement;
-      startX: number;
-      startY: number;
-      grabOffsetX: number;
-      grabOffsetY: number;
-      active: boolean;
-      nativeStarted: boolean;
-      dropBounds: Array<{ block: HTMLElement; rect: DOMRect }>;
-      preview?: HTMLElement;
-      targetMapId?: string;
-      position?: 'before' | 'after' | 'beside';
-    };
-    let pointerDrag: PointerDrag | undefined;
-    const blocksByMapId = new Map(
-      blocks.flatMap((block) => block.dataset.mapId
-        ? [[block.dataset.mapId, block] as const]
-        : []),
-    );
-
-    const clearDropState = () => {
-      blocks.forEach((block) => block.classList.remove('block-drop-before', 'block-drop-after', 'block-drop-beside'));
-    };
-    const clearDragPreview = (drag: PointerDrag) => {
-      drag.preview?.remove();
-      drag.preview = undefined;
-    };
-    const clearDragVisuals = (drag: PointerDrag) => {
-      clearDragPreview(drag);
-      drag.block.classList.remove('block-dragging');
-      drag.handle.setAttribute('aria-grabbed', 'false');
-    };
-    const updateDragPreview = (drag: PointerDrag, clientX: number, clientY: number) => {
-      if (!drag.preview) {
-        const rect = drag.block.getBoundingClientRect();
-        const preview = document.createElement('div');
-        preview.className = 'markdown-view block-drag-preview';
-        preview.setAttribute('data-block-drag-preview', '');
-        preview.setAttribute('aria-hidden', 'true');
-        preview.setAttribute('inert', '');
-        preview.style.width = `${rect.width}px`;
-        preview.style.height = `${rect.height}px`;
-
-        const clone = drag.block.cloneNode(true) as HTMLElement;
-        const scrubPreviewNode = (node: HTMLElement) => {
-          [...node.attributes].forEach(({ name }) => {
-            if (name === 'id' || name === 'contenteditable' || name === 'tabindex'
-              || name.startsWith('data-map-') || name.startsWith('data-source')) {
-              node.removeAttribute(name);
-            }
-          });
-          node.classList.remove(
-            'block-dragging',
-            'block-drop-before',
-            'block-drop-after',
-            'block-drop-beside',
-            'map-hover',
-          );
-        };
-        [clone, ...clone.querySelectorAll<HTMLElement>('*')].forEach(scrubPreviewNode);
-        clone.classList.add('block-drag-preview-content');
-        clone.style.margin = '0';
-        clone.style.width = '100%';
-        preview.append(clone);
-        document.body.append(preview);
-        drag.preview = preview;
-      }
-      drag.preview.style.transform = `translate3d(${clientX - drag.grabOffsetX}px, ${clientY - drag.grabOffsetY}px, 0) scale(1.015)`;
-    };
-    const isBesideZone = (clientX: number, rect: DOMRect) => {
-      const edgeWidth = Math.min(72, Math.max(28, rect.width * 0.18));
-      return clientX - rect.left <= edgeWidth || rect.right - clientX <= edgeWidth;
-    };
-    const blockAtPoint = (clientX: number, clientY: number, fallbackTarget?: EventTarget | null): HTMLElement | null => {
-      const blockForElement = (element: Element | null): HTMLElement | null => {
-        let current: Element | null = element;
-        while (current && current !== host) {
-          const mapId = current instanceof HTMLElement ? current.dataset.mapId : undefined;
-          const block = mapId ? blocksByMapId.get(mapId) : undefined;
-          if (block) return block;
-          current = current.parentElement;
-        }
-        return null;
-      };
-      const hit = document.elementFromPoint?.(clientX, clientY);
-      const hitBlock = blockForElement(hit);
-      if (hitBlock && hitBlock !== pointerDrag?.block) return hitBlock;
-      if (hit && !host.contains(hit)) return hitBlock;
-
-      // Pointer capture retargets pointer events to the handle, and some
-      // WebViews can return no useful element from elementFromPoint while a
-      // captured drag is in progress. Use the per-gesture geometry snapshot
-      // in those cases instead of mistaking the captured handle for the drop
-      // target. Bounds are refreshed on scroll/resize, not on every move.
-      const hostRect = host.getBoundingClientRect();
-      const pointInsideHost = clientX >= hostRect.left && clientX <= hostRect.right
-        && clientY >= hostRect.top && clientY <= hostRect.bottom;
-      if (pointInsideHost && pointerDrag) {
-        const bounds = pointerDrag.dropBounds;
-        const contained = bounds.find(({ rect }) => clientX >= rect.left && clientX <= rect.right
-          && clientY >= rect.top && clientY <= rect.bottom);
-        if (contained) return contained.block;
-
-        // Whitespace between blocks is also a useful drop surface. Snap to
-        // the nearest other block within a modest radius; the existing source
-        // transaction remains the final authority on whether that move is safe.
-        let nearest: { block: HTMLElement; distance: number } | undefined;
-        for (const { block, rect } of bounds) {
-          if (block === pointerDrag.block) continue;
-          const dx = Math.max(rect.left - clientX, 0, clientX - rect.right);
-          const dy = Math.max(rect.top - clientY, 0, clientY - rect.bottom);
-          const distance = Math.hypot(dx, dy);
-          if (!nearest || distance < nearest.distance) nearest = { block, distance };
-        }
-        if (nearest && nearest.distance <= 72) return nearest.block;
-      }
-
-      return hitBlock
-        ?? blockForElement(fallbackTarget instanceof Element ? fallbackTarget : null);
-    };
-    const updatePointerDropTarget = (event: PointerEvent) => {
-      if (!pointerDrag?.active) return;
-      const target = blockAtPoint(event.clientX, event.clientY, event.target);
-      if (!target || target.dataset.mapId === pointerDrag.mapId) {
-        clearDropState();
-        pointerDrag.targetMapId = undefined;
-        pointerDrag.position = undefined;
-        return;
-      }
-      const targetMapId = target.dataset.mapId;
-      if (!targetMapId) return;
-      const rect = target.getBoundingClientRect();
-      const beside = isBesideZone(event.clientX, rect);
-      const position = beside
-        ? 'beside'
-        : event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
-      clearDropState();
-      target.classList.toggle('block-drop-beside', beside);
-      target.classList.toggle('block-drop-before', position === 'before');
-      target.classList.toggle('block-drop-after', position === 'after');
-      pointerDrag.targetMapId = targetMapId;
-      pointerDrag.position = position;
-    };
-    const updateHandlePositions = () => {
-      if (!blockHandleLayer) return;
-      const hostRect = host.getBoundingClientRect();
-      const dropBounds: Array<{ block: HTMLElement; rect: DOMRect }> = [];
-      [...blockHandleLayer.children].forEach((child, index) => {
-        const block = blocks[index];
-        if (!(child instanceof HTMLElement) || !block) return;
-        const rect = block.getBoundingClientRect();
-        dropBounds.push({ block, rect });
-        // Keep the action group anchored to the block's first line. Centering
-        // it against a tall list made the six-dot grip look detached from the
-        // content it moved, especially in the rendered reader.
-        child.style.top = `${Math.max(4, rect.top - hostRect.top + 2)}px`;
-        child.style.left = `${Math.max(4, rect.left - hostRect.left - 54)}px`;
-      });
-      if (pointerDrag) pointerDrag.dropBounds = dropBounds;
-    };
-    const updateForContainingScroll = (event: Event) => {
-      const target = event.target;
-      if (target === document || target === window
-        || (target instanceof Element && target.contains(host))) {
-        updateHandlePositions();
-      }
-    };
-
-    const handlePointerMove = (event: PointerEvent) => {
-      if (!pointerDrag || event.pointerId !== pointerDrag.pointerId || pointerDrag.nativeStarted) return;
-      const activating = !pointerDrag.active;
-      if (activating) {
-        if (Math.hypot(event.clientX - pointerDrag.startX, event.clientY - pointerDrag.startY) < 4) return;
-        pointerDrag.active = true;
-        pointerDrag.handle.setAttribute('aria-grabbed', 'true');
-      }
-      event.preventDefault();
-      updateDragPreview(pointerDrag, event.clientX, event.clientY);
-      if (activating) pointerDrag.block.classList.add('block-dragging');
-      updatePointerDropTarget(event);
-    };
-    const handlePointerUp = (event: PointerEvent) => {
-      if (!pointerDrag || event.pointerId !== pointerDrag.pointerId) return;
-      const current = pointerDrag;
-      if (current.nativeStarted || draggingMapId) {
-        pointerDrag = undefined;
-        clearDragVisuals(current);
-        return;
-      }
-      if (!current.active) {
-        pointerDrag = undefined;
-        clearDragVisuals(current);
-        return;
-      }
-      updatePointerDropTarget(event);
-      pointerDrag = undefined;
-      clearDragVisuals(current);
-      const targetMapId = current.targetMapId;
-      const position = current.position;
-      clearDropState();
-      if (!targetMapId || targetMapId === current.mapId || !position) return;
-      if (position === 'beside') onBlockBeside(current.mapId, targetMapId);
-      else onBlockMove(current.mapId, targetMapId, position);
-    };
-    const handlePointerCancel = (event: PointerEvent) => {
-      if (!pointerDrag || event.pointerId !== pointerDrag.pointerId) return;
-      try {
-        if (pointerDrag.handle.hasPointerCapture?.(event.pointerId)) {
-          pointerDrag.handle.releasePointerCapture?.(event.pointerId);
-        }
-      } catch {
-        // Pointer capture can already be gone when a WebView cancels a drag.
-      }
-      clearDragVisuals(pointerDrag);
-      pointerDrag = undefined;
-      clearDropState();
-    };
-    // Capture at the window boundary so nested editor handlers cannot swallow
-    // a drag before it reaches the document bubble phase.
-    window.addEventListener('pointermove', handlePointerMove, true);
-    window.addEventListener('pointerup', handlePointerUp, true);
-    window.addEventListener('pointercancel', handlePointerCancel, true);
-
-    blocks.forEach((block, index) => {
-      const mapId = block.dataset.mapId;
-      if (!mapId) return;
-      const controlGroup = document.createElement('div');
-      controlGroup.className = 'block-handle';
-      controlGroup.dataset.blockMapId = mapId;
-      controlGroup.setAttribute('role', 'group');
-      controlGroup.setAttribute('aria-label', `${block.dataset.mapKind?.replaceAll('_', ' ') ?? 'Markdown'} block actions`);
-
-      const handle = document.createElement('button');
-      handle.type = 'button';
-      handle.className = 'block-drag-handle';
-      // Grip controls are UI chrome, not rendered Markdown nodes. Keep their
-      // identity separate so source-map selection/highlighting and visual
-      // editing never treat the button as a second editable copy of its block.
-      handle.dataset.blockMapId = mapId;
-      // Pointer events are the source of truth for reordering. Native HTML
-      // drag-and-drop steals the gesture in some Tauri WebViews before the
-      // document-level pointer path can establish a target, which makes the
-      // handle appear inert. Keep the legacy drag listeners below for older
-      // harnesses/embedders that dispatch them explicitly, but do not let a
-      // browser-native drag race the deterministic pointer implementation.
-      handle.draggable = false;
-      handle.setAttribute('aria-grabbed', 'false');
-      handle.setAttribute('aria-label', `Move ${block.dataset.mapKind?.replaceAll('_', ' ') ?? 'Markdown'} block`);
-      handle.title = 'Drag to reorder this Markdown block. Alt+↑ / Alt+↓ also moves it.';
-      handle.addEventListener('pointerdown', (event) => {
-        if (event.button !== 0 || event.isPrimary === false) return;
-        // Keep grip gestures out of browser text selection and the rendered
-        // selection bridge. The host capture listener above already records
-        // this pointer before propagation is stopped here.
-        event.preventDefault();
-        event.stopPropagation();
-        const dropBounds = blocks.map((candidate) => ({
-          block: candidate,
-          rect: candidate.getBoundingClientRect(),
-        }));
-        const blockRect = dropBounds.find(({ block: candidate }) => candidate === block)?.rect;
-        pointerDrag = {
-          pointerId: event.pointerId,
-          mapId,
-          handle,
-          block,
-          startX: event.clientX,
-          startY: event.clientY,
-          grabOffsetX: event.clientX - (blockRect?.left ?? 0),
-          grabOffsetY: event.clientY - (blockRect?.top ?? 0),
-          active: false,
-          nativeStarted: false,
-          dropBounds,
-        };
-        try {
-          handle.setPointerCapture?.(event.pointerId);
-        } catch {
-          // Older WebViews may expose Pointer Events without capture support.
-        }
-      });
-      handle.addEventListener('dragstart', (event) => {
-        draggingMapId = mapId;
-        if (pointerDrag?.mapId === mapId) {
-          pointerDrag.nativeStarted = true;
-          clearDragPreview(pointerDrag);
-        }
-        block.classList.add('block-dragging');
-        handle.setAttribute('aria-grabbed', 'true');
-        if (event.dataTransfer) {
-          event.dataTransfer.effectAllowed = 'move';
-          event.dataTransfer.setData('text/plain', mapId);
-        }
-      });
-      handle.addEventListener('dragend', () => {
-        draggingMapId = undefined;
-        if (pointerDrag?.mapId === mapId) {
-          clearDragVisuals(pointerDrag);
-          pointerDrag = undefined;
-        }
-        block.classList.remove('block-dragging');
-        handle.setAttribute('aria-grabbed', 'false');
-        clearDropState();
-      });
-      handle.addEventListener('click', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-      });
-      handle.addEventListener('keydown', (event) => {
-        if (event.key === 'Delete' || event.key === 'Backspace') {
-          event.preventDefault();
-          onBlockDelete(mapId);
-          return;
-        }
-        if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
-        const target = blocks[index + (event.key === 'ArrowUp' ? -1 : 1)];
-        const targetMapId = target?.dataset.mapId;
-        if (!targetMapId) return;
-        event.preventDefault();
-        onBlockMove(mapId, targetMapId, event.key === 'ArrowUp' ? 'before' : 'after');
-      });
-
-      const deleteButton = document.createElement('button');
-      deleteButton.type = 'button';
-      deleteButton.className = 'block-delete-button';
-      deleteButton.setAttribute('aria-label', `Delete ${block.dataset.mapKind?.replaceAll('_', ' ') ?? 'Markdown'} block`);
-      deleteButton.title = 'Delete this Markdown block. Undo is available.';
-      deleteButton.textContent = '×';
-      deleteButton.addEventListener('pointerdown', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-      });
-      deleteButton.addEventListener('click', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        onBlockDelete(mapId);
-      });
-      controlGroup.append(handle, deleteButton);
-      blockHandleLayer?.append(controlGroup);
-
-      const dragOver = (event: DragEvent) => {
-        if (!draggingMapId || draggingMapId === mapId) return;
-        event.preventDefault();
-        if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-        const rect = block.getBoundingClientRect();
-        const beside = isBesideZone(event.clientX, rect);
-        block.classList.toggle('block-drop-beside', beside);
-        block.classList.toggle('block-drop-before', !beside && event.clientY < rect.top + rect.height / 2);
-        block.classList.toggle('block-drop-after', !beside && event.clientY >= rect.top + rect.height / 2);
-      };
-      const dragLeave = (event: DragEvent) => {
-        if (event.relatedTarget instanceof Node && block.contains(event.relatedTarget)) return;
-        block.classList.remove('block-drop-before', 'block-drop-after', 'block-drop-beside');
-      };
-      const drop = (event: DragEvent) => {
-        if (!draggingMapId || draggingMapId === mapId) return;
-        event.preventDefault();
-        const rect = block.getBoundingClientRect();
-        const beside = isBesideZone(event.clientX, rect);
-        const movingMapId = draggingMapId;
-        draggingMapId = undefined;
-        clearDropState();
-        if (beside) onBlockBeside(movingMapId, mapId);
-        else onBlockMove(movingMapId, mapId, event.clientY < rect.top + rect.height / 2 ? 'before' : 'after');
-      };
-      block.addEventListener('dragover', dragOver);
-      block.addEventListener('dragleave', dragLeave);
-      block.addEventListener('drop', drop);
-      blockHandleCleanup.push(() => {
-        controlGroup.remove();
-        block.removeEventListener('dragover', dragOver);
-        block.removeEventListener('dragleave', dragLeave);
-        block.removeEventListener('drop', drop);
-      });
+  function decorateBlockHandles(sourceMapForRender: SourceMap) {
+    const controls = createBlockControls({
+      host,
+      sourceMap: sourceMapForRender,
+      selectedMapIds,
+      onBlockMove,
+      onBlockDelete,
     });
-    updateHandlePositions();
-    window.addEventListener('resize', updateHandlePositions);
-    window.addEventListener('scroll', updateForContainingScroll, { capture: true, passive: true });
-    blockHandleCleanup.push(() => {
-      if (pointerDrag) {
-        try {
-          if (pointerDrag.handle.hasPointerCapture?.(pointerDrag.pointerId)) {
-            pointerDrag.handle.releasePointerCapture?.(pointerDrag.pointerId);
-          }
-        } catch {
-          // Cleanup is best-effort if the WebView already released capture.
-        }
-        clearDragVisuals(pointerDrag);
-      }
-      window.removeEventListener('pointermove', handlePointerMove, true);
-      window.removeEventListener('pointerup', handlePointerUp, true);
-      window.removeEventListener('pointercancel', handlePointerCancel, true);
-      pointerDrag = undefined;
-      draggingMapId = undefined;
-      clearDropState();
-      window.removeEventListener('resize', updateHandlePositions);
-      window.removeEventListener('scroll', updateForContainingScroll, true);
-    });
+    if (!controls) return;
+    blockHandleLayer = controls.layer;
+    blockHandleByMapId = controls.byMapId;
+    blockHandleCleanup = [controls.cleanup];
+    blockHandleUpdate = controls.update;
+    rebuildBlockHandles = () => {
+      clearBlockHandles();
+      decorateBlockHandles(sourceMapForRender);
+    };
   }
 
-  function enableSimpleBlockEditing(sourceForRender: string, sourceMapForRender: SourceMap) {
-    host.querySelectorAll<HTMLElement>('[data-map-kind="heading"], [data-map-kind="paragraph"], [data-map-kind="list_item"], [data-map-kind="task_item"], [data-map-kind="table_cell"]').forEach((element) => {
+  function enableSimpleBlockEditing(
+    sourceForRender: string,
+    sourceMapForRender: SourceMap,
+    root: ParentNode = host,
+    includeDetails = true,
+  ) {
+    const selections = sourceSelectionsForSpans(
+      sourceForRender,
+      sourceMapForRender,
+      sourceMapForRender.sourceHash,
+    );
+    const editableElements = [
+      ...(root instanceof HTMLElement && root.matches('[data-map-kind="heading"], [data-map-kind="paragraph"], [data-map-kind="list_item"], [data-map-kind="task_item"], [data-map-kind="table_cell"]')
+        ? [root]
+        : []),
+      ...root.querySelectorAll<HTMLElement>('[data-map-kind="heading"], [data-map-kind="paragraph"], [data-map-kind="list_item"], [data-map-kind="task_item"], [data-map-kind="table_cell"]'),
+    ];
+    editableElements.forEach((element) => {
       const mapId = element.dataset.mapId;
       const kind = element.dataset.mapKind;
       if (!mapId || !kind) return;
-      const selection = sourceSelectionForSpan(sourceForRender, sourceMapForRender, mapId, sourceMapForRender.sourceHash);
+      const selection = selections.get(mapId);
       if (!selection) return;
       const markdown = sourceForRender.slice(selection.from, selection.to);
       if (kind === 'list_item' && element.querySelector('[data-map-kind]')) return;
-      // Image objects and nested lists remain source-assisted even when the
-      // rich serializer could round-trip surrounding text safely.
-      if (element.querySelector('img, ul, ol')) return;
+      // Nested lists remain source-assisted because their indentation and
+      // continuation blocks are structural. Inline images are different: the
+      // rich serializer preserves their Markdown source, so image-containing
+      // paragraphs remain real visual editing surfaces.
+      if (element.querySelector('ul, ol')) return;
       // Plain blocks use the deliberately conservative serializer. Blocks
       // containing supported inline markup use a separate whitelist serializer
       // that still replaces only this mapped source range.
@@ -1843,27 +1543,85 @@
       const replacementForCurrentElement = (): string | null => {
         const text = element.textContent ?? '';
         const hasVisualHardBreak = kind === 'paragraph' && Boolean(element.querySelector('br'));
-        const useRichSerializer = richEditable || hasVisualHardBreak;
-        const replacementMarkdown = useRichSerializer
-          ? markdownForRichVisualBlock(kind as 'heading' | 'paragraph' | 'list_item', markdown, element)
-          : kind === 'task_item'
-            ? markdownForSimpleVisualBlock('task_item', markdown, text, undefined, taskCheckbox?.checked)
-            : markdownForSimpleVisualBlock(kind as SimpleVisualBlockKind, markdown, text, Number(element.dataset.mapLevel));
-        if (useRichSerializer && replacementMarkdown === null) {
-          onVisualEditRejected('This visual edit used unsupported inline markup; edit the block in source instead');
-          return null;
+        const taskStateChanged = taskCheckbox !== null && taskCheckbox.checked !== originalTaskChecked;
+        const visibleChange = visibleTextChange(originalText, text);
+
+        // Normal rendered typing is a source transaction, not a DOM
+        // serialization. The projection preserves the mapped block's
+        // Markdown wrappers, destinations, list markers, heading markers,
+        // entities, and untouched whitespace. The DOM remains a visual input
+        // surface only; it never becomes a second document model.
+        if (!hasVisualHardBreak && !taskStateChanged && visibleChange) {
+          const transaction = applyVisibleTextTransaction(
+            draftMarkdown,
+            kind,
+            originalText,
+            text,
+          );
+          if (transaction) return transaction.nextBlockMarkdown;
         }
-        return replacementMarkdown;
+
+        // These cases need a deliberately bounded serializer because the
+        // visual DOM carries information that is not represented by ordinary
+        // visible text: hard-break nodes, checkbox state, and backtick
+        // delimiter edits. They remain conservative and never serialize the
+        // article or any neighboring mapped block.
+        const useRichSerializer = richEditable && (hasVisualHardBreak
+          || visibleChange?.insertedText.includes('`') === true
+          // A block can be rich-editable even when its visible text has no
+          // one-to-one source projection (for example literal underscores or
+          // escaped punctuation). In that case the bounded rich serializer is
+          // the correct source-authoritative fallback; rejecting the edit
+          // makes ordinary Unicode replacement appear broken in the visual
+          // editor.
+          || !simpleEditable);
+        if (useRichSerializer || hasVisualHardBreak) {
+          const replacementMarkdown = markdownForRichVisualBlock(
+            kind as 'heading' | 'paragraph' | 'list_item',
+            draftMarkdown,
+            element,
+          );
+          if (replacementMarkdown === null) {
+            onVisualEditRejected('This visual edit used unsupported inline markup; edit the block in source instead');
+            return null;
+          }
+          return replacementMarkdown;
+        }
+        if (kind === 'task_item' || taskStateChanged) {
+          return markdownForSimpleVisualBlock('task_item', draftMarkdown, text, undefined, taskCheckbox?.checked);
+        }
+        if (simpleEditable) {
+          return markdownForSimpleVisualBlock(
+            kind as SimpleVisualBlockKind,
+            draftMarkdown,
+            text,
+            Number(element.dataset.mapLevel),
+          );
+        }
+        if (!visibleChange || text === originalText) return draftMarkdown;
+        onVisualEditRejected('This visual edit could not be mapped exactly; edit the block in source instead');
+        return null;
       };
       const applyDraft = (): boolean => {
         if (kind === 'table_cell') return false;
+        const text = element.textContent ?? '';
+        const taskStateChanged = taskCheckbox !== null && taskCheckbox.checked !== originalTaskChecked;
+        const hasVisualHardBreak = kind === 'paragraph' && Boolean(element.querySelector('br'));
+        if (text === originalText && !taskStateChanged && !hasVisualHardBreak) {
+          // Browser editing commands can mutate equivalent HTML without
+          // changing visible Markdown text. Reject that mutation instead of
+          // turning a formatting-only DOM difference into a source rewrite.
+          element.innerHTML = originalHtml;
+          element.dataset.visualDirty = 'false';
+          return false;
+        }
         const replacementMarkdown = replacementForCurrentElement();
         if (replacementMarkdown === null) {
           element.innerHTML = originalHtml;
           element.dataset.visualDirty = 'false';
           return false;
         }
-        const nextSelection = applyVisualDraftEdit(mapId, draftSelection, draftMarkdown, replacementMarkdown, element.textContent ?? '');
+        const nextSelection = applyVisualDraftEdit(mapId, draftSelection, draftMarkdown, replacementMarkdown, text);
         if (!nextSelection) {
           element.innerHTML = originalHtml;
           element.dataset.visualDirty = 'false';
@@ -1988,7 +1746,9 @@
           setPendingVisualCaret: (nextSelection) => { pendingVisualCaret = nextSelection; },
         });
       });
-      element.addEventListener('compositionstart', () => setCompositionState(true));
+      element.addEventListener('compositionstart', () => {
+        setCompositionState(true);
+      });
       element.addEventListener('compositionend', () => {
         setCompositionState(false);
         if (blurPending) {
@@ -2045,7 +1805,9 @@
       });
       taskCheckbox?.addEventListener('change', commitTaskCheckbox);
      });
-    enableDetailsSummaryEditing(host, sourceForRender, sourceMapForRender, onDetailsSummaryEdit, onVisualDraftEdit ? applyVisualDraftEdit : undefined, onVisualDraftCommit);
+    if (includeDetails && root instanceof HTMLElement) {
+      enableDetailsSummaryEditing(root, sourceForRender, sourceMapForRender, onDetailsSummaryEdit, onVisualDraftEdit ? applyVisualDraftEdit : undefined, onVisualDraftCommit);
+    }
   }
 
   function enableEmptyVisualEditing(sourceInsertionOffset = 0) {
@@ -2168,7 +1930,9 @@
         }
       }
     });
-    element.addEventListener('compositionstart', () => setCompositionState(true));
+    element.addEventListener('compositionstart', () => {
+      setCompositionState(true);
+    });
     element.addEventListener('compositionend', () => {
       setCompositionState(false);
       if (blurPending) {
@@ -2244,6 +2008,11 @@
   function restorePendingVisualCaret(sourceForRender: string, sourceMapForRender: SourceMap) {
     const request = pendingVisualCaret;
     if (!request || request.from !== request.to) return;
+    const selections = sourceSelectionsForSpans(
+      sourceForRender,
+      sourceMapForRender,
+      sourceMapForRender.sourceHash,
+    );
     const candidates = [...host.querySelectorAll<HTMLElement>('[data-visual-editable="true"]')]
       .map((element) => {
         const mapId = element.dataset.mapId;
@@ -2272,8 +2041,76 @@
     }
   }
 
+  const renderedRootKinds = new Set([
+    'heading', 'paragraph', 'blockquote', 'list', 'code_block', 'table',
+    'thematic_break', 'details', 'alert', 'math', 'html_block',
+    'html_layout_table',
+  ]);
+
+  /**
+   * Initial document opens intentionally use one native render and do not
+   * populate Rust's warm block cache. Reconstruct the equivalent immutable
+   * fragment list from that already-mounted HTML so the first visual edit can
+   * use the same guarded one-block commit as later edits.
+   */
+  function deriveMountedRenderedBlocks(
+    htmlForRender: string,
+    sourceMapForRender: SourceMap,
+  ): RenderedBlock[] {
+    const fragments = splitTopLevelHtml(htmlForRender);
+    const rootSpans = sourceMapForRender.spans
+      .filter((span) => renderedRootKinds.has(span.kind))
+      .sort((left, right) => left.sourceByteStart - right.sourceByteStart
+        || left.sourceByteEnd - right.sourceByteEnd);
+    if (!fragments) return [];
+    const mountedRoots = [...host.children].filter((element): element is HTMLElement => element instanceof HTMLElement);
+    if (fragments.length !== mountedRoots.length) return [];
+    return fragments.flatMap((fragment, index) => {
+      const root = mountedRoots[index];
+      const mapId = root?.dataset.mapId
+        ?? root?.querySelector<HTMLElement>('[data-map-id][data-map-kind]')?.dataset.mapId
+        ?? rootSpans[index]?.mapId;
+      return mapId ? [{ mapId, html: fragment }] : [];
+    });
+  }
+
+  function incrementalEditingRoot(
+    sourceForRender: string,
+    sourceMapForRender: SourceMap,
+    sourceRange: TextSelection | undefined,
+  ): HTMLElement | null {
+    if (!sourceRange) return null;
+    const selections = sourceSelectionsForSpans(
+      sourceForRender,
+      sourceMapForRender,
+      sourceMapForRender.sourceHash,
+    );
+    return [...host.querySelectorAll<HTMLElement>('[data-map-id][data-map-kind]')]
+      .map((element) => {
+        const kind = element.dataset.mapKind ?? '';
+        if (!renderedRootKinds.has(kind)) return null;
+        const mapId = element.dataset.mapId;
+        if (!mapId) return null;
+        const selection = selections.get(mapId);
+        if (!selection || selection.from > sourceRange.from || selection.to < sourceRange.to) return null;
+        return { element, selection };
+      })
+      .filter((candidate): candidate is { element: HTMLElement; selection: TextSelection } => candidate !== null)
+      .sort((left, right) => {
+        const leftLength = left.selection.to - left.selection.from;
+        const rightLength = right.selection.to - right.selection.from;
+        return leftLength - rightLength || left.selection.from - right.selection.from;
+      })[0]?.element ?? null;
+  }
+
   async function enhance(remoteImagesAllowed: boolean, version: number, sourceForRender: string, sourceMapForRender: SourceMap, editableForRender: boolean) {
     if (!host || !host.isConnected || version !== renderVersion) return;
+    const renderHost = host;
+    // Capture this token once. The parent may clear it as soon as this
+    // enhancement has committed; later stages must continue using the
+    // revision that was actually rendered rather than a newer visual edit.
+    const incrementalMapIdForRender = incrementalCommitMapId;
+    const incrementalSourceRangeForRender = incrementalCommitSourceRange;
     const finishEnhance = performanceSpan('rendered-pane.enhance', {
       sourceBytes: sourceForRender.length,
       mappedSpans: sourceMapForRender.spans.length,
@@ -2285,13 +2122,18 @@
     // old DOM is torn down; the source patch result is preferred on restore
     // when the edit changed wrapper offsets.
     pendingVisualSelection = captureVisualSelection(host, lastEnhancedSource, lastEnhancedSourceMap);
+    const commitSpan = performanceSpan('rendered-pane.dom-commit', {
+      incremental: Boolean(incrementalCommitMapId),
+    });
     const incrementalCommitted = Boolean(
-      incrementalCommitMapId
+      incrementalMapIdForRender
       && tryIncrementalBlockCommit(host, rendered, {
-        mapId: incrementalCommitMapId,
-        sourceRange: incrementalCommitSourceRange,
+        mapId: incrementalMapIdForRender,
+        sourceRange: incrementalSourceRangeForRender,
         source: sourceForRender,
         sourceMap: sourceMapForRender,
+        previousSource: lastEnhancedSource,
+        previousSourceMap: lastEnhancedSourceMap,
         renderedBlocks,
         previousRenderedBlocks: committedBlocks,
         attachSourceMapIds,
@@ -2299,20 +2141,56 @@
     );
     if (!incrementalCommitted) {
       teardown();
-      host.innerHTML = rendered;
-      attachSourceMapIds(host, sourceForRender, sourceMapForRender);
+      const mounted = await mountRenderedHtml(renderHost, {
+        html: rendered,
+        renderedBlocks,
+        source: sourceForRender,
+        sourceMap: sourceMapForRender,
+        isCurrent: () => version === renderVersion && renderHost.isConnected,
+        attachSourceMapIds,
+      });
+      if (!mounted || version !== renderVersion || host !== renderHost || !renderHost.isConnected) {
+        if (version === renderVersion && incrementalMapIdForRender) {
+          onIncrementalCommitConsumed(incrementalMapIdForRender);
+        }
+        if (version === renderVersion) mounting = false;
+        finishEnhance();
+        return;
+      }
+      if (mounted.strategy === 'chunked') {
+        performanceCount('rendered-pane.chunked-mounts');
+        performanceCount('rendered-pane.chunked-mount-yields', mounted.yieldedChunks);
+      }
     } else {
-      teardown();
+      // The host-level event bridge and the existing block controllers stay
+      // valid across a one-block replacement. Clear only transient observers
+      // and selection paint; rebuilding every insertion zone and every block
+      // editor here was the dominant cost of visual typing in long files.
+      teardown(true);
     }
-    decorateTaskCheckboxes(host);
-    committedBlocks = renderedBlocks;
-    decorateFenceChrome(host, sourceMapForRender, editable, onRevealSource);
-    applyMapTooltips(host, sourceMapForRender);
+    // A render request owns its incremental token. Consume it after the DOM
+    // commit so unrelated later renders do not repeatedly attempt a patch
+    // against an old map and then pay for a full remount fallback.
+    if (incrementalMapIdForRender) onIncrementalCommitConsumed(incrementalMapIdForRender);
+    commitSpan();
+    const incrementalRoot = incrementalCommitted && editableForRender
+      ? incrementalEditingRoot(sourceForRender, sourceMapForRender, incrementalSourceRangeForRender)
+      : null;
+    const decorationRoot = incrementalCommitted ? incrementalRoot ?? host : host;
+    const decorationSpan = performanceSpan('rendered-pane.decoration', {
+      incremental: incrementalCommitted,
+    });
+    decorateTaskCheckboxes(decorationRoot);
+    committedBlocks = renderedBlocks.length
+      ? renderedBlocks
+      : deriveMountedRenderedBlocks(rendered, sourceMapForRender);
+    decorateFenceChrome(decorationRoot, sourceMapForRender, editable, onRevealSource);
+    applyMapTooltips(decorationRoot, sourceMapForRender);
     rebuildMappedElementIndex(sourceForRender, sourceMapForRender);
     const richContentContext: RichContentContext = {
       host,
       profile,
-      isCurrentRender: () => version === renderVersion && host.isConnected,
+      isCurrentRender: () => version === renderVersion && host === renderHost && renderHost.isConnected,
       getExternalSourceSelection: () => externalSourceSelection,
       rebuildMappedElementIndex: () => {
         if (version === renderVersion) rebuildMappedElementIndex(sourceForRender, sourceMapForRender);
@@ -2325,11 +2203,36 @@
       applyExternalSourceSelection: (selection) => {
         if (version === renderVersion) applyExternalSourceSelection(selection);
       },
+      refreshBlockHandles: () => {
+        if (version === renderVersion) rebuildBlockHandles?.();
+      },
       onOpenMedia,
     };
-    if (editableForRender) decorateBlockHandles();
     if (editableForRender) {
-      insertionZoneCleanup = decorateBlockInsertionZones(host, sourceForRender, sourceMapForRender, {
+      if (incrementalCommitted) {
+        const updated = blockHandleUpdate?.(sourceMapForRender) ?? false;
+        if (!updated) {
+          clearBlockHandles();
+          decorateBlockHandles(sourceMapForRender);
+        } else {
+          // Keep rich-media refreshes on the current source-map revision even
+          // when the existing chrome was updated in place.
+          rebuildBlockHandles = () => {
+            clearBlockHandles();
+            decorateBlockHandles(sourceMapForRender);
+          };
+        }
+      } else decorateBlockHandles(sourceMapForRender);
+    }
+    decorationSpan();
+    const insertionSpan = performanceSpan('rendered-pane.insertion-zones', {
+      incremental: incrementalCommitted,
+    });
+    if (editableForRender) {
+      if (incrementalCommitted) {
+        insertionZoneController?.update(sourceForRender, sourceMapForRender);
+      } else {
+        insertionZoneController = decorateBlockInsertionZones(host, sourceForRender, sourceMapForRender, {
         onVisualDraftEdit: applyVisualDraftEdit,
         onVisualDraftCommit,
         onOpenSlashMenu: (element, query, sourceSelection) => {
@@ -2356,26 +2259,37 @@
           cancelSlashMenu();
           return true;
         },
-      });
+        });
+      }
     }
+    insertionSpan();
     if (version !== renderVersion) {
       finishEnhance();
       return;
     }
     if (editableForRender) {
+      const editingSpan = performanceSpan('rendered-pane.block-editing', {
+        incremental: incrementalCommitted,
+      });
       const needsTrailingVisualInsertion = pendingVisualCaret?.from === sourceForRender.length
         && pendingVisualCaret?.to === sourceForRender.length
         && /(?:\r\n|\r|\n)$/.test(sourceForRender);
       if (sourceForRender.length === 0 || needsTrailingVisualInsertion) enableEmptyVisualEditing(sourceForRender.length);
       else {
-        enableSimpleBlockEditing(sourceForRender, sourceMapForRender);
-        enableFencedCodeEditing(host, sourceForRender, sourceMapForRender, {
+        enableSimpleBlockEditing(
+          sourceForRender,
+          sourceMapForRender,
+          incrementalRoot ?? host,
+          !incrementalCommitted,
+        );
+        enableFencedCodeEditing(incrementalRoot ?? host, sourceForRender, sourceMapForRender, {
           onBlockEdit,
           onVisualDraftEdit: applyVisualDraftEdit,
           onVisualDraftCommit,
           onVisualEditRejected,
         });
       }
+      updateMountedSpellcheck();
       restorePendingVisualCaret(sourceForRender, sourceMapForRender);
       if (!pendingVisualCaret) {
         restoreVisualSelection(
@@ -2386,8 +2300,10 @@
           externalSourceSelection,
         );
       }
+      editingSpan();
     }
     onMapReady();
+    if (version === renderVersion) mounting = false;
     const thisVersion = version;
     type LazyObserver = {
       observe: (target: Element, callback: () => void) => void;
@@ -2419,6 +2335,7 @@
     // every image/diagram in a long document while keeping their preload
     // distances independent.
     const lazyImageObserver = createLazyObserver('240px');
+    const lazyMediaObserver = createLazyObserver('360px');
     const lazyDiagramObserver = createLazyObserver('400px');
     host.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6').forEach((heading, index) => {
       const slug = headingSlugs[index];
@@ -2449,8 +2366,17 @@
       });
     });
 
-    host.querySelectorAll<HTMLImageElement>('img[src]').forEach((image) => {
-      const target = image.getAttribute('src') ?? '';
+    host.querySelectorAll<HTMLImageElement>('img[src], img[data-media-src]').forEach((image) => {
+      // The rendered pane can be enhanced more than once without replacing
+      // the DOM (for example after a bounded visual commit in a long file).
+      // Keep the authored Markdown target separate from the resolved data URI
+      // and from the loading placeholder; otherwise the second enhancement
+      // would treat the placeholder as the source, lose the probe/path used by
+      // the source map, and make image selection appear disconnected.
+      if (image.dataset.imageEnhanced === 'true') return;
+      const target = image.dataset.source?.trim() || image.dataset.mediaSrc?.trim() || image.getAttribute('src')?.trim() || '';
+      if (!target || target === tinyPlaceholder()) return;
+      image.dataset.imageEnhanced = 'true';
       image.dataset.source = target;
       image.src = tinyPlaceholder();
       image.setAttribute('aria-busy', 'true');
@@ -2463,9 +2389,10 @@
             ? `remote:${target}`
             : `local:${documentId}:${target}`;
           const asset = await cachedAsset(cacheKey, async () => {
+            if (thisVersion !== renderVersion || !image.isConnected || (/^https?:\/\//i.test(target) && !allowRemoteImages)) throw new Error('Media request was cancelled');
             const fetched = await (/^https?:\/\//i.test(target)
               ? fetchRemoteAsset(target)
-              : resolveAsset(documentId, decodeURIComponent(target)));
+              : resolveAsset(documentId, target));
             return sanitizeImageAsset(fetched);
           });
           if (thisVersion !== renderVersion) return;
@@ -2486,6 +2413,7 @@
           image.dataset.mapTooltip = `Image · ${image.dataset.source || 'no source'} · ${image.naturalWidth || '?'}×${image.naturalHeight || '?'}`;
           image.removeAttribute('title');
         } catch (error) {
+          if (thisVersion !== renderVersion || !image.isConnected) return;
           image.removeAttribute('aria-busy');
           delete image.dataset.previewableMedia;
           image.removeAttribute('role');
@@ -2500,6 +2428,127 @@
       lazyImageObserver.observe(image, () => {
         void load();
       });
+    });
+
+    const resolveMediaReference = async (target: string): Promise<AssetResult> => {
+      const remote = /^https?:\/\//i.test(target);
+      if (remote && !remoteImagesAllowed) throw new Error('Remote media is disabled in Settings');
+      const cacheKey = remote ? `remote-media:${target}` : `local-media:${documentId}:${target}`;
+      return cachedAsset(cacheKey, () => {
+        if (thisVersion !== renderVersion || !renderHost.isConnected || (remote && !allowRemoteImages)) throw new Error('Media request was cancelled');
+        return remote ? fetchRemoteMedia(target) : resolveMediaAsset(documentId, target);
+      });
+    };
+    const resolvePosterReference = async (target: string): Promise<AssetResult> => {
+      const remote = /^https?:\/\//i.test(target);
+      if (remote && !remoteImagesAllowed) throw new Error('Remote media is disabled in Settings');
+      const cacheKey = remote ? `remote:${target}` : `local:${documentId}:${target}`;
+      const asset = await cachedAsset(cacheKey, () => {
+        if (thisVersion !== renderVersion || !renderHost.isConnected || (remote && !allowRemoteImages)) throw new Error('Media request was cancelled');
+        return remote ? fetchRemoteAsset(target) : resolveAsset(documentId, target);
+      });
+      return sanitizeImageAsset(asset);
+    };
+    const addMediaPreviewButton = (
+      element: HTMLVideoElement | HTMLIFrameElement,
+      media: MediaPreview,
+    ) => {
+      const parent = element.parentElement;
+      if (!parent || parent.querySelector(':scope > .media-preview-trigger')) return;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'media-preview-trigger';
+      button.textContent = media.kind === 'video' ? 'Open video preview' : 'Open embed preview';
+      button.setAttribute('aria-label', button.textContent);
+      button.title = 'Open a larger preview';
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onOpenMedia(media);
+      });
+      element.insertAdjacentElement('afterend', button);
+    };
+    host.querySelectorAll<HTMLVideoElement>('video').forEach((video) => {
+      const sourceElement = video.querySelector<HTMLSourceElement>('source[src], source[data-media-src]');
+      const target = video.dataset.mediaSrc?.trim() || video.getAttribute('src')?.trim() || sourceElement?.dataset.mediaSrc?.trim() || sourceElement?.getAttribute('src')?.trim();
+      if (!target || video.dataset.mediaEnhanced === 'true') return;
+      video.dataset.mediaEnhanced = 'true';
+      video.dataset.source = target;
+      video.removeAttribute('src');
+      video.querySelectorAll<HTMLSourceElement>('source[src]').forEach((source) => {
+        source.dataset.source = source.getAttribute('src')?.trim() || target;
+        source.removeAttribute('src');
+      });
+      video.setAttribute('preload', 'metadata');
+      video.setAttribute('playsinline', '');
+      beginMediaLoad(video);
+      const load = async () => {
+        try {
+          if (!isSafeMediaReference(target)) throw new Error('Video source is not safe');
+          const asset = await resolveMediaReference(target);
+          if (thisVersion !== renderVersion || !video.isConnected) return;
+          video.src = asset.dataUri;
+          const poster = video.dataset.mediaPoster?.trim() || video.getAttribute('poster')?.trim();
+          if (poster && isSafeMediaReference(poster)) {
+            try {
+              const posterAsset = await resolvePosterReference(poster);
+              if (thisVersion === renderVersion && video.isConnected) video.poster = posterAsset.dataUri;
+            } catch {
+              // A missing poster must not make an otherwise playable video fail.
+            }
+          }
+          const ready = () => {
+            finishMediaLoad(video, 'ready');
+            addMediaPreviewButton(video, {
+              kind: 'video',
+              src: video.currentSrc || video.src,
+              alt: video.getAttribute('title') || 'Video preview',
+              title: video.getAttribute('title') || 'Video preview',
+              poster: video.poster || undefined,
+            });
+          };
+          const failed = () => {
+            showMediaError(video, 'Video could not be loaded');
+          };
+          video.addEventListener('loadedmetadata', ready, { once: true });
+          video.addEventListener('error', failed, { once: true });
+          video.load();
+        } catch {
+          if (thisVersion !== renderVersion || !video.isConnected) return;
+          showMediaError(video, 'Video unavailable');
+        }
+      };
+      lazyMediaObserver.observe(video, () => void load());
+    });
+    host.querySelectorAll<HTMLIFrameElement>('iframe[src], iframe[data-media-src]').forEach((frame) => {
+      const target = frame.dataset.mediaSrc?.trim() || frame.getAttribute('src')?.trim();
+      if (!target || frame.dataset.mediaEnhanced === 'true') return;
+      frame.dataset.mediaEnhanced = 'true';
+      frame.dataset.source = target;
+      frame.removeAttribute('src');
+      beginMediaLoad(frame);
+      const load = () => {
+        if (!remoteImagesAllowed || !allowRemoteImages || thisVersion !== renderVersion || !frame.isConnected) {
+          showMediaError(frame, 'Remote media is disabled in Settings');
+          return;
+        }
+        if (!isAllowedMediaEmbedUrl(target)) {
+          showMediaError(frame, 'Embed provider is not allowed');
+          return;
+        }
+        const ready = () => {
+          finishMediaLoad(frame, 'ready');
+          addMediaPreviewButton(frame, {
+            kind: 'embed',
+            src: target,
+            alt: frame.title || 'Video embed preview',
+            title: frame.title || 'Video embed preview',
+          });
+        };
+        frame.addEventListener('load', ready, { once: true });
+        frame.src = target;
+      };
+      lazyMediaObserver.observe(frame, load);
     });
 
     host.querySelectorAll<HTMLPreElement>('pre').forEach((pre) => {
@@ -2552,7 +2601,13 @@
 </script>
 
 <div class="markdown-view-shell" bind:this={shell}>
-  <article class="markdown-view" bind:this={host} aria-label="Rendered Markdown"></article>
+  <article class="markdown-view" class:read-only-large={readOnlyLargeDocument} bind:this={host} aria-label="Rendered Markdown" aria-busy={rendering || mounting} inert={rendering || mounting}></article>
+  {#if rendering || mounting}
+    <div class="rendered-mount-status" role="status" aria-live="polite">
+      <span class="rendered-mount-spinner" aria-hidden="true"></span>
+      Updating preview…
+    </div>
+  {/if}
 {#if slashOpen}
     <div id="markdown-slash-menu" class="slash-menu" bind:this={slashMenu} role="listbox" aria-label="Markdown slash commands">
       <div class="slash-menu-query">/{slashQuery || 'commands'}</div>

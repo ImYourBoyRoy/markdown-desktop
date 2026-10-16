@@ -5,6 +5,7 @@
 .cm-activeLine, .cm-activeLineGutter { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .cm-selectionBackground, .cm-focused .cm-selectionBackground { background: color-mix(in srgb, var(--accent) 34%, transparent) !important; }
 .cm-content { caret-color: var(--accent-strong); }
+.cm-content:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .cm-cursor { border-left-color: var(--accent-strong); }
 .cm-find-match { background: color-mix(in srgb, var(--accent) 18%, transparent); border-bottom: 2px dashed color-mix(in srgb, var(--accent) 74%, transparent); }
 .cm-find-match-active { background: color-mix(in srgb, var(--warning, #f0b429) 58%, transparent); border-bottom: 2px solid var(--warning, #f0b429); }

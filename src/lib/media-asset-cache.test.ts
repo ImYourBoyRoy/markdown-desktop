@@ -1,0 +1,30 @@
+import { expect, it, vi } from 'vitest';
+import { MediaAssetCache } from './media-asset-cache';
+it('bounds distinct in-flight loads and releases a failed slot', async () => {
+  const cache = new MediaAssetCache(16, 1024, 2);
+  const completions: Array<(value: { dataUri: string; assetId: string; mime: string }) => void> = [];
+  const loader = vi.fn(() => new Promise<{ dataUri: string; assetId: string; mime: string }>((resolve) => completions.push(resolve)));
+  const requests = ['a', 'b', 'c', 'd'].map((key) => cache.get(key, loader));
+  await Promise.resolve();
+  expect(loader).toHaveBeenCalledTimes(2);
+  const asset = { dataUri: 'data', assetId: 'media', mime: 'image/png' };
+  completions[0](asset); completions[1](asset);
+  await requests[0]; await requests[1];
+  expect(loader).toHaveBeenCalledTimes(4);
+  completions[2](asset); completions[3](asset);
+  await Promise.all(requests);
+  await expect(cache.get('bad', async () => { throw Error('offline'); })).rejects.toThrow('offline');
+  await expect(cache.get('next', async () => asset)).resolves.toEqual(asset);
+});
+it('coalesces concurrent requests, evicts by bytes, and retries failed loads', async () => {
+  const cache = new MediaAssetCache(2, 16);
+  const loader = vi.fn().mockResolvedValue({ dataUri: '12345', assetId: 'a', mime: 'image/png' });
+  await Promise.all([cache.get('a', loader), cache.get('a', loader)]);
+  expect(loader).toHaveBeenCalledTimes(1);
+  await cache.get('b', loader);
+  await cache.get('a', loader);
+  expect(loader).toHaveBeenCalledTimes(3);
+  const failing = vi.fn().mockRejectedValueOnce(Error('offline')).mockResolvedValue({ dataUri: 'ok' });
+  await expect(cache.get('failed', failing)).rejects.toThrow('offline');
+  await expect(cache.get('failed', failing)).resolves.toEqual({ dataUri: 'ok' });
+});

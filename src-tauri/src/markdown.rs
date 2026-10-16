@@ -90,8 +90,9 @@ fn render_with_context(
     options.extension.tasklist = github;
     options.extension.autolink = github;
     // Comrak's GFM tagfilter extension is deprecated and removed in 0.56.
-    // Disallowed raw HTML (script, iframe, xmp, …) is stripped by Ammonia below
-    // instead of relying on Comrak's escape-at-render tagfilter.
+    // Disallowed raw HTML (script, arbitrary iframe, xmp, …) is stripped by
+    // the renderer boundary instead of relying on Comrak's escape-at-render
+    // tagfilter. Approved provider frames are allowlisted separately.
     options.extension.front_matter_delimiter = extended.then(|| "---".to_owned());
     // GitHub documents both dollar-delimited math and reference footnotes in
     // Markdown files. Keep them enabled for the GitHub profile while leaving
@@ -1150,6 +1151,22 @@ mod tests {
     }
 
     #[test]
+    fn preserves_approved_video_and_provider_embed_markup() {
+        let rendered = render(
+            "<video controls preload=\"metadata\" src=\"assets/demo.mp4\"><a href=\"assets/demo.mp4\">Open video</a></video>\n\n<iframe src=\"https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ\" title=\"Demo\" loading=\"lazy\" allowfullscreen></iframe>",
+            "github",
+        );
+        assert!(rendered.html.contains("<video"));
+        assert!(rendered.html.contains("assets/demo.mp4"));
+        assert!(
+            rendered
+                .html
+                .contains("https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ")
+        );
+        assert!(rendered.html.contains("<iframe"));
+    }
+
+    #[test]
     fn ammonia_covers_gfm_disallowed_raw_html_tags() {
         // GFM tagfilter blacklist (title, textarea, style, xmp, iframe, noembed,
         // noframes, script, plaintext). Comrak no longer enables that extension;
@@ -1213,6 +1230,18 @@ mod tests {
             "expected centered paragraph align to survive sanitization, got {}",
             rendered.html
         );
+    }
+
+    #[test]
+    fn preserves_safe_image_layout_attributes_without_allowing_event_handlers() {
+        let rendered = render(
+            "<img src=\"diagram.png\" alt=\"Architecture\" width=\"640\" height=\"480\" align=\"center\" onerror=\"alert(1)\" />",
+            "github",
+        );
+        assert!(rendered.html.contains("width=\"640\""));
+        assert!(rendered.html.contains("height=\"480\""));
+        assert!(rendered.html.contains("align=\"center\""));
+        assert!(!rendered.html.to_ascii_lowercase().contains("onerror"));
     }
 
     #[test]

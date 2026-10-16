@@ -56,18 +56,37 @@ const workDir = mkdtempSync(join(tmpdir(), 'markdown-desktop-acceptance-'));
 const fixturePath = join(workDir, 'acceptance-fixture.md');
 const resultPath = join(workDir, 'acceptance-result.json');
 const scrollFixture = Array.from({ length: 32 }, (_, index) => `Scroll synchronization fixture line ${index + 1}.`).join('\n\n');
+const largeMountFixture = Array.from(
+  { length: 96 },
+  (_, index) => `Large DOM mount paragraph ${index + 1}: ${'This paragraph exercises bounded rendered mounting in the packaged WebView. '.repeat(18)}`,
+).join('\n\n');
 const fixture = `# Acceptance Fixture
 
 ${'PACKAGED_VISUAL_PROBE'} paragraph for packaged acceptance.
 
+PACKAGED_DRAG_TARGET_PROBE is the adjacent paragraph used by the packaged move probe.
+
 <p align="center"><a href="https://example.com"><img src="${'PACKAGED_BADGE_PROBE'}.png" alt="Badge" /></a></p>
 
+\`\`\`mermaid
+flowchart TD
+  A[Async rich block] --> B[Control refresh]
+\`\`\`
+
+${'PACKAGED_DELETE_TARGET_PROBE'} should be deleted by its rendered block control.
+
+${'PACKAGED_DELETE_SENTINEL_PROBE'} must remain after that deletion.
+
 ${'RUNTIME_FIND_TOKEN'} is searchable in this document.
+
+${largeMountFixture}
 
 ${scrollFixture}
 `;
 
 writeFileSync(fixturePath, fixture, 'utf8');
+// Locally generated VP8 canvas clip; no downloaded or third-party media.
+writeFileSync(join(workDir, 'acceptance-video.webm'), Buffer.from(readFileSync(join(projectRoot, 'scripts', 'fixtures', 'acceptance-video.webm.base64'), 'utf8').trim(), 'base64'));
 
 const child = spawn(binary, [fixturePath], {
   env: {
@@ -114,6 +133,22 @@ function finish() {
     console.log(`Packaged acceptance ${report.pass ? 'passed' : 'failed'} (${report.steps?.length ?? 0} steps)`);
     for (const step of report.steps ?? []) {
       console.log(`${step.pass ? 'PASS' : 'FAIL'} ${step.name}: ${step.detail}`);
+    }
+    if (report.performance?.measures?.length) {
+      const totals = new Map();
+      for (const measure of report.performance.measures) {
+        const current = totals.get(measure.name) ?? { count: 0, total: 0, max: 0 };
+        current.count += 1;
+        current.total += measure.durationMs;
+        current.max = Math.max(current.max, measure.durationMs);
+        totals.set(measure.name, current);
+      }
+      const summary = [...totals.entries()]
+        .sort((left, right) => right[1].total - left[1].total)
+        .slice(0, 12)
+        .map(([name, value]) => `${name}=${value.total.toFixed(1)}ms/${value.count}`)
+        .join(' | ');
+      console.log(`Perf spans: ${summary}`);
     }
     cleanup(report.pass ? 0 : 1, failures.length ? undefined : null);
   } catch (error) {

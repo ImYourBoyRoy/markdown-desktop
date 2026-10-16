@@ -84,6 +84,8 @@ pub struct OpenedDocument {
     pub links: Vec<LinkInfo>,
     pub issues: Vec<Issue>,
     pub source_map: SourceMap,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocks: Vec<RenderedBlock>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

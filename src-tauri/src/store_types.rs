@@ -6,7 +6,6 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::Instant;
 use tauri::{AppHandle, Manager};
 
 pub(crate) const MAX_IMPORT_BYTES: u64 = 30 * 1024 * 1024;
@@ -62,7 +61,8 @@ pub struct AppState {
     pub documents: HashMap<String, StoredDocument>,
     pub workspaces: HashMap<String, StoredWorkspace>,
     pub watchers: HashMap<String, RecommendedWatcher>,
-    pub watch_ignore_until: HashMap<String, Instant>,
+    pub workspace_watchers: HashMap<String, RecommendedWatcher>,
+    pub media_grants: HashMap<String, crate::media_stream::MediaGrant>,
     pub path_grants: HashMap<String, PathGrantEntry>,
     pub staged_assets: HashMap<String, StagedAsset>,
     pub block_render_caches: HashMap<String, BlockRenderCache>,
@@ -149,7 +149,8 @@ pub fn initial_state() -> SharedState {
         documents: HashMap::new(),
         workspaces: HashMap::new(),
         watchers: HashMap::new(),
-        watch_ignore_until: HashMap::new(),
+        workspace_watchers: HashMap::new(),
+        media_grants: HashMap::new(),
         path_grants: HashMap::new(),
         staged_assets: HashMap::new(),
         block_render_caches: HashMap::new(),

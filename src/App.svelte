@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
+  import { DocumentRecoveryController } from './lib/document-recovery-controller';
   import { openUrl } from '@tauri-apps/plugin-opener';
   import type { Update as TauriUpdate } from '@tauri-apps/plugin-updater';
-  import EditorRibbon from './components/EditorRibbon.svelte';
   import DocumentSurface from './components/DocumentSurface.svelte';
   import UpdateBanner from './components/UpdateBanner.svelte';
   import AppToolbar from './components/AppToolbar.svelte';
@@ -16,9 +16,11 @@
   import MediaPreview from './components/MediaPreview.svelte';
   import ReaderFullscreenBar from './components/ReaderFullscreenBar.svelte';
   import { runAcceptanceProbeIfEnabled } from './lib/acceptance-app';
-  import { mergeFilesystemIssues } from './lib/document-diagnostics';
+  import { analyzeMarkdown, applyIssueFix, mergeFilesystemIssues, mergeLocalIssues } from './lib/document-diagnostics';
   import { applyFormatting, type EditResult, type FormatAction, type TextSelection } from './lib/formatting';
-  import { applyHeadingLevel, insertImage, markdownLineEnding, updateImage, type InsertKind } from './lib/inserts';
+  import { applyHeadingLevel, insertImage, markdownLineEnding, type InsertKind } from './lib/inserts';
+  import { parseImageObject, updateImageObject } from './lib/image-editor';
+  import { parseReferenceOccurrence } from './lib/reference-editor';
   import {
     findMatches,
     visualMapIdsForMatches,
@@ -55,11 +57,14 @@
     saveDocument,
     saveDocumentAs,
     saveRecovery,
-    clearRecovery,
+    clearRecovery as clearNativeRecovery,
+    completeShutdown,
+    validateReferenceEdit,
     listRecovery,
     restoreRecovery,
     discardRecovery,
     searchWorkspace,
+    documentBacklinks,
     startupPaths,
     closeDocument,
     createUntitledDocument,
@@ -69,13 +74,14 @@
     requestDefaultMarkdownApp,
     revealAsset,
   } from './lib/ipc';
-  import type { CompatibilityTarget, DroppedImageInfo, FileNode, Issue, LinkInfo, MarkdownProfile, PathGrant, RecoveryInfo, RenderedSource, SearchResult, SourceMap, Theme, ViewMode, WorkspaceInfo } from './lib/types';
+  import type { CompatibilityTarget, DroppedImageInfo, FileNode, Issue, LinkInfo, MarkdownProfile, OpenedDocument, PathGrant, RecoveryInfo, RenderedSource, SearchResult, SourceMap, Theme, ViewMode, WorkspaceInfo } from './lib/types';
   import { htmlToMarkdown, plainTextPaste } from './lib/clipboard';
   import { applySourceDocumentChanges, type SourceDocumentChange } from './lib/source-sync';
   import { escapeHtml, isUntitledDocumentId } from './lib/app-utils';
   import { renderedSelectionForSource, sourceSelectionMapResolution } from './lib/selection-bridge';
   import { buildSourceSelectionIndex, type SourceSelectionIndex } from './lib/source-selection-index';
   import { sourceContextTargetAtPosition, sourceMapIdAtPosition, type SourceContextTarget } from './lib/source-context';
+  import { utf8ByteOffsetToUtf16 } from './lib/source-map';
   import { applyMappedSourcePatch, applySourcePatches, isValidSourceRange } from './lib/source-patch';
   import { applyVisualDraftPatch } from './lib/visual-draft';
   import {
@@ -102,17 +108,24 @@
   import { insertSlashCommand, slashCommandAvailable, slashCommandInsertKind, type SlashCommand } from './lib/slash';
   import { diagramInsertAvailable, diagramInsertUnavailableMessage } from './lib/markdown-profile';
   import { assetFolderSetting } from './lib/asset-path';
-  import { appendSourceHistory, type SourceHistoryEntry } from './lib/source-history';
+  import { appendSourceHistory, boundSourceHistory, type SourceHistoryEntry } from './lib/source-history';
   import type { VisualStructurePatch } from './lib/visual-structure';
   import { persistAssetFolderSetting, persistCompatibilityTarget, persistEditingEnabledSetting, persistRecentDocumentPaths, readAssetFolderSetting, readCompatibilityTarget, readEditingEnabledSetting, readRecentDocumentPaths } from './lib/app-settings';
   import { compatibilityStatus, issuesForCompatibilityTarget } from './lib/compatibility';
   import { readBrowserSetting, writeBrowserSetting } from './lib/browser-settings';
+  import { defaultSpellcheckLocale, SPELLCHECK_SETTING_KEY } from './lib/spellcheck';
+  import { AUTHOR_SITE_URL, DONATE_VENMO_URL, PROJECT_GITHUB_URL } from './lib/project-links';
   import { syncSplitPaneScroll } from './lib/pane-scroll-sync';
   import { normalizeRecentDocumentPaths, rememberRecentDocument, removeRecentDocumentPath } from './lib/recent-documents';
   import { removeTabFromHistory, replaceTabInHistory } from './lib/tab-history';
   import { contextCopyText } from './lib/context-copy';
   import { planAssetDrop } from './lib/asset-drop';
   import { documentMetrics } from './lib/document-metrics';
+  import {
+    openingDocumentLoading,
+    renderingDocumentLoading,
+    type DocumentLoadingState,
+  } from './lib/document-loading';
   import type { MediaPreview as MediaPreviewData } from './lib/media-preview';
   import { performanceCount, performanceSpan } from './lib/performance';
   import { createRenderController } from './lib/render-controller';
@@ -174,6 +187,8 @@
   const storedCompatibilityTarget = readBrowserSetting('markdown-native-compatibility-target');
   let compatibilityTarget = $state<CompatibilityTarget>(storedCompatibilityTarget === 'none' ? 'none' : 'githubReadme');
   let remoteImagesEnabled = $state(readBrowserSetting('markdown-native-remote-images') !== 'false');
+  let spellcheckEnabled = $state(readBrowserSetting(SPELLCHECK_SETTING_KEY) !== 'false');
+  const spellcheckLocale = defaultSpellcheckLocale();
   let assetFolder = $state(assetFolderSetting(readBrowserSetting('markdown-native-asset-folder')));
   // Native preferences load asynchronously from the app-data store. Keep
   // the initial legacy value usable until that read finishes, but do not
@@ -197,6 +212,10 @@
   let issueFilter = $state<'all' | 'compatibility'>('all');
   let searchQuery = $state('');
   let searchResults = $state<SearchResult[]>([]);
+  let backlinks = $state<SearchResult[]>([]);
+  let backlinksStatus = $state('Open a workspace to find inbound Markdown links.');
+  let backlinksGeneration = 0;
+  let backlinksVersion = $state(0);
   let showFind = $state(false);
   let editing = $state(readBrowserSetting('markdown-native-editing') !== 'false');
   // Keep the source editor lazy on first rendered view, but once opened treat
@@ -214,6 +233,10 @@
   let showAbout = $state(false);
   let showDefaultAppConfirm = $state(false);
   let showReloadConfirm = $state(false);
+  let showShutdownConfirm = $state(false);
+  let shutdownBusy = $state(false);
+  let shutdownError = $state<string | undefined>();
+  let recoveryError = $state<string | undefined>();
   let pendingReloadTabId = $state<string | undefined>();
   let pendingCloseTabId = $state<string | undefined>();
   let showUpdateConfirm = $state(false);
@@ -226,6 +249,15 @@
   let updateErrorMessage = $state<string | undefined>();
   let showWelcome = $state(true);
   let statusMessage = $state('Ready');
+  let documentLoading = $state<DocumentLoadingState | null>(null);
+  let documentLoadingSequence = 0;
+  let renderedMountWaiter: {
+    generation: number;
+    documentId: string;
+    resolve: () => void;
+    timeoutId: number;
+  } | undefined;
+  const RENDERED_MOUNT_WAIT_TIMEOUT_MS = 30_000;
   let statusResetTimer: number | undefined;
   const STATUS_RESET_MS = 6500;
   let conflict = $state<ConflictState | null>(null);
@@ -266,6 +298,18 @@
   // not change this token, so the expensive view remount remains out of the
   // keystroke path.
   let visualResetToken = $state(0);
+  let previewError = $state<string | undefined>();
+  let EditorRibbon = $state<typeof import('./components/EditorRibbon.svelte').default>();
+  let ribbonLoading = false;
+  $effect(() => {
+    if (!(editing || mode === 'source' || mode === 'split') || EditorRibbon || ribbonLoading) return;
+    ribbonLoading = true;
+    void import('./components/EditorRibbon.svelte').then((module) => {
+      EditorRibbon = module.default;
+    }).catch(() => {
+      statusMessage = 'Editor controls could not load. Turn editing off and on to retry.';
+    }).finally(() => { ribbonLoading = false; });
+  });
   let incrementalCommitMapId = $state<string | undefined>();
   let incrementalCommitSourceRange = $state<TextSelection | undefined>();
   let insertDialogRequest = $state<{ kind: InsertKind; token: number } | null>(null);
@@ -278,13 +322,73 @@
   let searchGeneration = 0;
   const filesystemLintTimers = new Map<string, number>();
   const FILESYSTEM_LINT_IDLE_MS = 450;
+  const localDiagnosticTimers = new Map<string, number>();
+  const localDiagnosticKeys = new Map<string, string>();
+  const localDiagnosticsByTab = new Map<string, Issue[]>();
+  let localDiagnosticsVersion = $state(0);
+  const LOCAL_DIAGNOSTIC_IDLE_MS = 320;
   const sourceHistory = new Map<string, SourceHistoryEntry[]>();
   const sourceRedoHistory = new Map<string, SourceHistoryEntry[]>();
   const renderedSnapshots = new Map<string, RenderedSnapshot[]>();
   const MAX_RENDERED_SNAPSHOTS_PER_TAB = 6;
   const MAX_RENDERED_SNAPSHOT_HTML_CHARS = 8 * 1024 * 1024;
-  const recoveryTimers = new Map<string, number>();
+  const recoveryController = new DocumentRecoveryController({
+    read: (id) => tabs.find((tab) => tab.id === id),
+    save: (tab) => isTauri ? saveRecovery(tab.id, tab.source, tab.revision) : Promise.resolve(),
+    clear: (id) => isTauri ? clearNativeRecovery(id) : Promise.resolve(),
+    onError: (error) => { recoveryError = `Recovery snapshot failed: ${invokeErrorMessage(error)}`; },
+  });
+  function clearRecovery(id: string) {
+    return recoveryController.clear(id).catch((error) => {
+      recoveryError = `Could not clear recovery: ${invokeErrorMessage(error)}`;
+    });
+  }
   const externalChangeGenerations = new Map<string, number>();
+  const pendingSaves = new Map<string, Promise<void>>();
+  const pendingSaveAs = new Map<string, Promise<void>>();
+
+  async function requestShutdown() {
+    if (showShutdownConfirm || shutdownBusy || updateCheckState === 'installing') return;
+    if (!flushPendingVisualEdit()) return;
+    await tick();
+    shutdownError = undefined;
+    if (tabs.some((tab) => tab.dirty) || pendingSaves.size || pendingSaveAs.size) {
+      showShutdownConfirm = true;
+      await tick();
+      document.getElementById('shutdown-cancel')?.focus();
+    } else { await finishShutdown('recover'); }
+  }
+
+  async function finishShutdown(choice: 'save' | 'recover') {
+    if (shutdownBusy) return;
+    shutdownBusy = true;
+    shutdownError = undefined;
+    try {
+      await Promise.all([...pendingSaves.values(), ...pendingSaveAs.values()]);
+      if (choice === 'save') {
+        for (const tab of tabs.filter((tab) => tab.dirty)) {
+          selectTab(tab.id);
+          await saveActive();
+          if (tabs.some((current) => current.id === tab.id && current.dirty)) {
+            throw new Error('Save was cancelled or could not complete. Your edits remain open.');
+          }
+        }
+      }
+      await recoveryController.drain(tabs.map((tab) => tab.id));
+      await completeShutdown();
+    } catch (error) {
+      shutdownError = invokeErrorMessage(error);
+      showShutdownConfirm = !conflict;
+      if (!conflict) recoveryError = shutdownError;
+    } finally { shutdownBusy = false; }
+  }
+
+  async function retryRecovery() {
+    try {
+      await recoveryController.drain(tabs.map((tab) => tab.id));
+      recoveryError = undefined;
+    } catch (error) { recoveryError = invokeErrorMessage(error); }
+  }
   let cachedSourceSelection: { source: string; sourceMap: SourceMap; index: SourceSelectionIndex } | undefined;
   const renderController = createRenderController({
     getTabs: () => tabs,
@@ -301,8 +405,28 @@
     },
     scheduleFilesystemLintRefresh,
     scheduleRecoverySnapshot,
-    setStatusMessage: (message) => { statusMessage = message; },
+    setStatusMessage: (message) => {
+      statusMessage = message;
+      if (message.startsWith('Preview refresh failed')) previewError = message;
+    },
   });
+
+  async function retryPreview() {
+    if (!active || !flushPendingVisualEdit()) return;
+    const id = active.id;
+    previewError = undefined;
+    await renderController.rerender(id, active.source, markdownProfile);
+    if (activeId === id) visualResetToken += 1;
+  }
+
+  function consumeIncrementalCommit(mapId: string): void {
+    // A newer visual edit may already have queued another token by the time
+    // an older enhancement finishes. Clear only the token that this DOM
+    // commit actually consumed so the newer edit cannot lose its mapping.
+    if (incrementalCommitMapId !== mapId) return;
+    incrementalCommitMapId = undefined;
+    incrementalCommitSourceRange = undefined;
+  }
 
   const platformModifier = typeof navigator !== 'undefined' && /Mac/i.test(`${navigator.platform} ${navigator.userAgent}`) ? '⌘' : 'Ctrl';
   const platformOpenShortcut = platformModifier === '⌘' ? '⌘O' : 'Ctrl+O';
@@ -316,6 +440,96 @@
 
   function sourcePaneElement(): HTMLDivElement | null {
     return document.querySelector<HTMLDivElement>('.source-pane');
+  }
+
+  function resolveRenderedMountWaiter(generation?: number): void {
+    if (!renderedMountWaiter || (generation !== undefined && renderedMountWaiter.generation !== generation)) return;
+    const waiter = renderedMountWaiter;
+    renderedMountWaiter = undefined;
+    window.clearTimeout(waiter.timeoutId);
+    waiter.resolve();
+  }
+
+  function waitForRenderedMount(generation: number, documentId: string): Promise<void> {
+    resolveRenderedMountWaiter();
+    return new Promise((resolve) => {
+      const timeoutId = window.setTimeout(() => {
+        resolveRenderedMountWaiter(generation);
+      }, RENDERED_MOUNT_WAIT_TIMEOUT_MS);
+      renderedMountWaiter = { generation, documentId, resolve, timeoutId };
+    });
+  }
+
+  function beginDocumentLoading(title: string): number {
+    resolveRenderedMountWaiter();
+    const generation = ++documentLoadingSequence;
+    documentLoading = openingDocumentLoading(generation, title);
+    return generation;
+  }
+
+  function finishDocumentLoading(generation: number): void {
+    if (documentLoading?.generation !== generation) return;
+    resolveRenderedMountWaiter(generation);
+    documentLoading = null;
+  }
+
+  function nextPaint(): Promise<void> {
+    if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') return Promise.resolve();
+    // requestAnimationFrame callbacks run before the frame is painted. Wait
+    // for the following callback so the loading surface has had one actual
+    // compositor frame to become visible before a large WebView commit can
+    // occupy the main thread.
+    return new Promise((resolve) => window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => resolve());
+    }));
+  }
+
+  /**
+   * Give the opening surface one compositor turn before committing a large
+   * HTML/source-map tree. Without this yield, the native result can arrive
+   * successfully but the first expensive WebView DOM mount paints as a frozen
+   * old document with no explanation.
+   */
+  async function prepareDocumentCommit(generation: number, document: OpenedDocument): Promise<boolean> {
+    if (documentLoading?.generation !== generation) return false;
+    documentLoading = renderingDocumentLoading(
+      generation,
+      document.id,
+      document.title,
+      document.meta.bytes,
+    );
+    await tick();
+    await nextPaint();
+    return documentLoading?.generation === generation;
+  }
+
+  /** Keep the phase card visible through the first mounted preview frame. */
+  async function finishDocumentCommit(generation: number): Promise<void> {
+    if (documentLoading?.generation !== generation) return;
+    const documentId = documentLoading.documentId;
+    const renderedReady = documentId && renderedViewVisible
+      ? waitForRenderedMount(generation, documentId)
+      : Promise.resolve();
+    await tick();
+    await nextPaint();
+    await renderedReady;
+    if (documentLoading?.generation !== generation) return;
+    // The map-ready callback runs before paint. Give the replacement one
+    // compositor turn after that callback so the loading surface never
+    // disappears over a still-mounting document.
+    await tick();
+    await nextPaint();
+    finishDocumentLoading(generation);
+  }
+
+  function handleRenderedMapReady(): void {
+    const waiter = renderedMountWaiter;
+    if (waiter
+      && documentLoading?.generation === waiter.generation
+      && active?.id === waiter.documentId) {
+      resolveRenderedMountWaiter(waiter.generation);
+    }
+    void revealFindMatch();
   }
 
   function schedulePaneScrollSync(anchorOffset: number, origin: 'source' | 'rendered') {
@@ -373,6 +587,11 @@
   }
 
   let active = $derived(tabs.find((tab) => tab.id === activeId));
+  function workspaceMarkdownPaths(node: FileNode): string[] {
+    if (node.isDirectory) return node.children.flatMap(workspaceMarkdownPaths);
+    return /\.(?:md|markdown|mdown|mkdown)$/i.test(node.relativePath) ? [node.relativePath] : [];
+  }
+  let completionPaths = $derived(workspace ? workspaceMarkdownPaths(workspace.root) : []);
   let activeDocumentMetrics = $derived(active ? documentMetrics(active.source) : undefined);
   let activeMapping = $derived(active ? mappingSourceFor(active) : null);
   function sourceSelectionIndexFor(source: string, sourceMap: SourceMap, sourceHash: string): SourceSelectionIndex {
@@ -394,12 +613,28 @@
   let sourceViewVisible = $derived(sourceViewVisibleForState(mode, editing, sourceVisible));
   let effectiveViewMode = $derived(effectiveViewModeForState(mode, editing, sourceVisible));
   let splitViewVisible = $derived(renderedViewVisible && sourceViewVisible);
+  // A rendered revision is usable only after its source/map pair has been
+  // accepted. During a source edit, keep the last valid preview visible but
+  // make its controls inert until the replacement map is mounted. This avoids
+  // stale delete/move actions targeting the previous source revision while a
+  // large document is being rendered in the worker and mounted in chunks.
+  let renderedViewBusy = $derived(Boolean(
+    active
+      && !active.draft
+      && (active.source !== active.renderedSource || active.sourceMap.version !== 1),
+  ));
+  let activeIssues = $derived.by(() => {
+    void localDiagnosticsVersion;
+    return active
+      ? mergeLocalIssues(active.issues, localDiagnosticsByTab.get(active.id) ?? [])
+      : [];
+  });
   let activeCompatibilityIssues = $derived(active
-    ? issuesForCompatibilityTarget(active.issues, compatibilityTarget)
+    ? issuesForCompatibilityTarget(activeIssues, compatibilityTarget)
     : []);
   let compatibilitySummary = $derived(compatibilityStatus(activeCompatibilityIssues, compatibilityTarget));
   let visibleIssues = $derived(active
-    ? issueFilter === 'compatibility' ? activeCompatibilityIssues : active.issues
+    ? issueFilter === 'compatibility' ? activeCompatibilityIssues : activeIssues
     : []);
   let documentFindMatches = $derived(active && showFind
     ? findMatches(active.source, findQuery, { caseSensitive: findCaseSensitive })
@@ -531,6 +766,26 @@
   });
 
   $effect(() => {
+    const id = active?.id;
+    const workspaceId = workspace?.id;
+    const indexing = workspace?.indexing;
+    const panel = rightPanel;
+    void backlinksVersion;
+    const generation = ++backlinksGeneration;
+    backlinks = [];
+    if (!id || !workspaceId || panel !== 'backlinks' || !isTauri) {
+      backlinksStatus = 'Open a workspace to find inbound Markdown links.';
+      return;
+    }
+    backlinksStatus = indexing ? 'Refreshing the workspace index…' : 'Finding inbound links…';
+    void documentBacklinks(workspaceId, id).then((results) => {
+      if (generation !== backlinksGeneration) return;
+      backlinks = results;
+      backlinksStatus = indexing ? 'Showing the previous index while it refreshes.' : results.length ? `${results.length} inbound link${results.length === 1 ? '' : 's'} in saved Markdown files.` : 'No inbound Markdown links in this workspace.';
+    }).catch((error) => { if (generation === backlinksGeneration) backlinksStatus = `Could not read backlinks: ${invokeErrorMessage(error)}. Rescan the workspace to retry.`; });
+  });
+
+  $effect(() => {
     writeBrowserSetting('markdown-native-startup-view', startupViewPreference);
   });
 
@@ -551,6 +806,21 @@
 
   $effect(() => {
     writeBrowserSetting('markdown-native-remote-images', String(remoteImagesEnabled));
+    if (!remoteImagesEnabled) mediaPreview = null;
+  });
+
+  $effect(() => {
+    writeBrowserSetting(SPELLCHECK_SETTING_KEY, String(spellcheckEnabled));
+  });
+
+  $effect(() => {
+    const current = active;
+    if (!current) return;
+    const renderedMapKey = current.renderedSource === current.source
+      && current.sourceMap.version === 1
+      ? current.sourceMap.sourceHash
+      : '';
+    scheduleLocalDiagnosticsRefresh(current.id, current.source, current.contentRevision, markdownProfile, renderedMapKey);
   });
 
   $effect(() => {
@@ -584,7 +854,7 @@
   });
 
   $effect(() => {
-    if (showPalette || showRecent || showSettings || showAbout || showDefaultAppConfirm || showReloadConfirm || pendingCloseTabId || showUpdateConfirm || showUpdateDirtyWarn || recoveryItems.length || conflict) {
+    if (showPalette || showRecent || showSettings || showAbout || showDefaultAppConfirm || showReloadConfirm || pendingCloseTabId || showUpdateConfirm || showUpdateDirtyWarn || recoveryItems.length || conflict || recoveryError) {
       void tick().then(() => {
         if (showPalette) { paletteIndex = 0; document.getElementById('palette-input')?.focus(); }
         else if (showRecent) document.getElementById('recent-close')?.focus();
@@ -595,6 +865,7 @@
         else if (showSettings) document.getElementById('settings-close')?.focus();
         else if (showAbout) aboutCloseButton?.focus();
         else if (recoveryItems.length) recoveryPrimaryButton?.focus();
+        else if (recoveryError) document.querySelector<HTMLButtonElement>('[aria-label="Recovery needs attention"] button')?.focus();
         else conflictPrimaryButton?.focus();
       });
     }
@@ -638,6 +909,7 @@
         if (!await registerAppEvent<{ workspaceId: string; ok: boolean; indexing: boolean }>('workspace-indexed', (event) => {
           if (workspace?.id !== event.workspaceId) return;
           workspace = { ...workspace, indexing: event.indexing };
+          backlinksVersion += 1;
           if (!event.indexing) {
             statusMessage = event.ok ? 'Workspace index ready' : 'Workspace index unavailable; live search remains available';
           }
@@ -645,7 +917,11 @@
         if (!await registerAppEvent<string>('document-changed', (documentId) => {
           void handleExternalChange(documentId);
         })) return;
+        if (!await registerAppEvent<WorkspaceInfo>('workspace-refreshed', (info) => {
+          if (workspace?.id === info.id) workspace = { ...info, indexing: workspace.indexing };
+        })) return;
         if (!await registerAppEvent<string>('menu-action', (action) => void handleMenuAction(action))) return;
+        if (!await registerAppEvent<null>('shutdown-request', () => void requestShutdown())) return;
         if (!await registerAppEvent<AssetDropEvent>('asset-drop', (event) => {
           void handleNativeAssetDrop(event.grants, event.position);
         })) return;
@@ -746,8 +1022,7 @@
     return () => {
       disposed = true;
       if (quietUpdateTimer !== undefined) window.clearTimeout(quietUpdateTimer);
-      recoveryTimers.forEach((timer) => window.clearTimeout(timer));
-      recoveryTimers.clear();
+      recoveryController.dispose();
       renderController.dispose();
       if (paneScrollSyncFrame !== undefined) window.cancelAnimationFrame(paneScrollSyncFrame);
       if (paneScrollSyncSecondFrame !== undefined) window.cancelAnimationFrame(paneScrollSyncSecondFrame);
@@ -782,10 +1057,12 @@
     if (!isTauri) return (statusMessage = 'New documents are available in the desktop build');
     if (!flushPendingVisualEdit()) return;
     const operation = ++documentNavigationGeneration;
+    const loadingGeneration = beginDocumentLoading('Creating document…');
     statusMessage = 'Creating document…';
     try {
       const document = await createUntitledDocument(markdownProfile, compatibilityTarget);
       if (operation !== documentNavigationGeneration) return;
+      if (!await prepareDocumentCommit(loadingGeneration, document)) return;
       if (showWelcome && !active) {
         leftCollapsed = false;
         rightCollapsed = false;
@@ -797,10 +1074,13 @@
       showWelcome = false;
       editing = true;
       statusMessage = 'Untitled document';
+      await finishDocumentCommit(loadingGeneration);
     } catch (error) {
       if (operation === documentNavigationGeneration) {
         statusMessage = `Could not create document: ${invokeErrorMessage(error)}`;
       }
+    } finally {
+      finishDocumentLoading(loadingGeneration);
     }
   }
 
@@ -810,16 +1090,18 @@
     if (selected) await openWorkspacePath(selected.token);
   }
 
-  async function openDocumentPath(token: string) {
+  async function openDocumentPath(token: string, existingLoadingGeneration?: number) {
     if (!isTauri) return;
     if (!flushPendingVisualEdit()) return;
     performanceCount('document-open.requested');
     const finishOpen = performanceSpan('document-open.total');
     const operation = ++documentNavigationGeneration;
+    const loadingGeneration = existingLoadingGeneration ?? beginDocumentLoading('Opening document…');
     statusMessage = 'Opening document…';
     try {
       const document = await openDocumentGrant(token, markdownProfile, compatibilityTarget);
       if (operation !== documentNavigationGeneration) return;
+      if (!await prepareDocumentCommit(loadingGeneration, document)) return;
       if (showWelcome && !active) {
         leftCollapsed = false;
         rightCollapsed = false;
@@ -839,9 +1121,11 @@
       rememberOpenedDocument(document.meta.path);
       scheduleFilesystemLintRefresh(document.id);
       statusMessage = 'Rendered from the current source';
+      await finishDocumentCommit(loadingGeneration);
     } catch (error) {
       if (operation === documentNavigationGeneration) statusMessage = `Could not open document: ${invokeErrorMessage(error)}`;
     } finally {
+      finishDocumentLoading(loadingGeneration);
       finishOpen();
     }
   }
@@ -884,6 +1168,7 @@
     if (!recentDocuments.includes(path)) return;
     if (!flushPendingVisualEdit()) return;
     openingRecentPath = path;
+    const loadingGeneration = beginDocumentLoading('Opening recent document…');
     try {
       const grant = await issueRecentDocumentGrant(path);
       if (!grant) {
@@ -891,11 +1176,12 @@
         statusMessage = 'That recent Markdown file is no longer available';
         return;
       }
-      await openDocumentPath(grant.token);
+      await openDocumentPath(grant.token, loadingGeneration);
       showRecent = false;
     } catch (error) {
       statusMessage = `Could not open recent document: ${invokeErrorMessage(error)}`;
     } finally {
+      finishDocumentLoading(loadingGeneration);
       openingRecentPath = undefined;
     }
   }
@@ -1026,10 +1312,16 @@
     if (!requestedWorkspace || node.isDirectory) return;
     if (!flushPendingVisualEdit()) return;
     const operation = ++documentNavigationGeneration;
+    const loadingGeneration = beginDocumentLoading('Opening workspace document…');
     try {
       const document = await openWorkspaceDocument(requestedWorkspace.id, node.relativePath, markdownProfile, compatibilityTarget);
       if (operation !== documentNavigationGeneration || workspace?.id !== requestedWorkspace.id) return;
+      if (!await prepareDocumentCommit(loadingGeneration, document)) return;
       const existing = tabs.find((tab) => tab.id === document.id);
+      if (existing?.dirty || hasPendingVisualEdit(document.id)) {
+        statusMessage = 'Save or close the current edits before restoring this snapshot';
+        return;
+      }
       if (activeId && activeId !== document.id) clearPaneSelection();
       if (existing) activeId = existing.id;
       else {
@@ -1040,8 +1332,11 @@
       showWelcome = false;
       rememberOpenedDocument(document.meta.path);
       scheduleFilesystemLintRefresh(document.id);
+      await finishDocumentCommit(loadingGeneration);
     } catch (error) {
       if (operation === documentNavigationGeneration) statusMessage = `Could not open document: ${invokeErrorMessage(error)}`;
+    } finally {
+      finishDocumentLoading(loadingGeneration);
     }
   }
 
@@ -1055,37 +1350,57 @@
     filesystemLintTimers.delete(tabId);
   }
 
+  function clearLocalDiagnosticsTimer(tabId: string) {
+    const timer = localDiagnosticTimers.get(tabId);
+    if (timer !== undefined) window.clearTimeout(timer);
+    localDiagnosticTimers.delete(tabId);
+  }
+
+  function scheduleLocalDiagnosticsRefresh(tabId: string, source: string, contentRevision: number, profile: MarkdownProfile, renderedMapKey: string) {
+    const key = `${profile}:${contentRevision}:${renderedMapKey}`;
+    if (localDiagnosticKeys.get(tabId) === key) return;
+    clearLocalDiagnosticsTimer(tabId);
+    localDiagnosticTimers.set(tabId, window.setTimeout(() => {
+      localDiagnosticTimers.delete(tabId);
+      const current = tabs.find((entry) => entry.id === tabId);
+      if (!current || current.source !== source || markdownProfile !== profile) return;
+      // Local diagnostics are advisory. Never compete with a source render or
+      // parse a large document while the split panes are still converging on
+      // the same revision; the next rendered-map effect will schedule it.
+      if (current.renderedSource !== source || current.sourceMap.version !== 1) return;
+      const sourceMap = renderedMapKey && current.renderedSource === source
+        ? current.sourceMap
+        : undefined;
+      const diagnostics = analyzeMarkdown(source, profile, sourceMap);
+      localDiagnosticsByTab.set(tabId, diagnostics);
+      localDiagnosticKeys.set(tabId, key);
+      localDiagnosticsVersion += 1;
+    }, LOCAL_DIAGNOSTIC_IDLE_MS));
+  }
+
   /** Release all per-tab async/cache state without changing visible tabs. */
   function releaseTabRuntimeState(tabId: string) {
     clearFilesystemLintTimer(tabId);
-    const recoveryTimer = recoveryTimers.get(tabId);
-    if (recoveryTimer !== undefined) window.clearTimeout(recoveryTimer);
-    recoveryTimers.delete(tabId);
+    clearLocalDiagnosticsTimer(tabId);
+    localDiagnosticKeys.delete(tabId);
+    localDiagnosticsByTab.delete(tabId);
+    localDiagnosticsVersion += 1;
+    recoveryController.cancelTimer(tabId);
     renderController.releaseTab(tabId);
     sourceHistory.delete(tabId);
     sourceRedoHistory.delete(tabId);
     externalChangeGenerations.delete(tabId);
     renderedSnapshots.delete(tabId);
-    if (activeId === tabId) incrementalCommitSourceRange = undefined;
+    if (activeId === tabId) {
+      incrementalCommitMapId = undefined;
+      incrementalCommitSourceRange = undefined;
+    }
   }
 
   function scheduleRecoverySnapshot(tabId: string, source: string) {
     const current = tabs.find((tab) => tab.id === tabId);
     if (!current || current.source !== source) return;
-    const existingRecoveryTimer = recoveryTimers.get(tabId);
-    if (existingRecoveryTimer !== undefined) window.clearTimeout(existingRecoveryTimer);
-    recoveryTimers.delete(tabId);
-    if (source === current.savedSource) {
-      if (isTauri) void clearRecovery(tabId);
-      return;
-    }
-    const recoveryTimer = window.setTimeout(() => {
-      recoveryTimers.delete(tabId);
-      const latest = tabs.find((item) => item.id === tabId);
-      if (!latest || latest.source !== source || latest.savedSource === source) return;
-      if (isTauri) void saveRecovery(tabId, source, latest.revision);
-    }, 750);
-    recoveryTimers.set(tabId, recoveryTimer);
+    recoveryController.schedule(tabId);
   }
 
   function renderUpdatedSource(
@@ -1137,6 +1452,7 @@
       render?: 'immediate' | 'debounced' | 'none';
       preserveRenderedMap?: boolean;
       draft?: VisualDraftState | null;
+      skipFilesystemLint?: boolean;
     },
   ) {
     const tabId = targetTabId ?? active?.id;
@@ -1163,6 +1479,7 @@
       };
     });
     clearSourceRenderTimer(tabId);
+    scheduleRecoverySnapshot(tabId, source);
     if (options?.render === 'none') {
       performanceCount('source-change.render-suppressed');
       // Visual drafts deliberately wait to rerender until the block loses
@@ -1182,7 +1499,9 @@
       renderController.scheduleDebounced(tabId, SOURCE_RENDER_DEBOUNCE_MS, runDebouncedRender);
       return;
     }
-    renderUpdatedSource(tabId, source, renderGeneration);
+    renderUpdatedSource(tabId, source, renderGeneration, {
+      skipFilesystemLint: options?.skipFilesystemLint === true,
+    });
   }
 
   async function rerenderActiveDocument(tabId: string, source: string, profile: MarkdownProfile) {
@@ -1347,11 +1666,43 @@
   }
 
   function revealIssue(issue: Issue) {
+    if (active && issue.sourceByteStart !== undefined && issue.sourceByteEnd !== undefined) {
+      const from = utf8ByteOffsetToUtf16(active.source, issue.sourceByteStart);
+      const to = utf8ByteOffsetToUtf16(active.source, issue.sourceByteEnd);
+      if (from !== null && to !== null && from <= to && setViewMode('split')) {
+        selectedMapId = issue.mapId;
+        editorSelection = { from, to };
+        selectedVisualSourceSelection = { from, to };
+        sourceSelectionActive = true;
+        statusMessage = 'Selected the exact issue range in the Markdown source editor';
+        return;
+      }
+    }
     if (!issue.mapId) {
       statusMessage = issue.detail;
       return;
     }
     revealMapInSource(issue.mapId);
+  }
+
+  function fixIssue(issue: Issue) {
+    if (!active || !issue.fix) return;
+    if (!editing) {
+      statusMessage = 'Enable editing before applying a Markdown fix';
+      return;
+    }
+    const result = applyIssueFix(active.source, issue, active.sourceMap.sourceHash);
+    if (!result) {
+      statusMessage = 'This diagnostic is stale; wait for the preview to refresh and try again';
+      return;
+    }
+    const beforeSelection = { from: issue.fix.from, to: issue.fix.to };
+    recordSourceChange(active.id, active.source, result.source, beforeSelection, result.selection, 'diagnostic-fix');
+    editorSelection = result.selection;
+    selectedVisualSourceSelection = undefined;
+    sourceSelectionActive = true;
+    updateSource(result.source, true);
+    statusMessage = `Applied fix: ${issue.fix.label}`;
   }
 
   function toggleEditing() {
@@ -1503,8 +1854,13 @@
 
   /** Start one render after a visual draft leaves its contenteditable block. */
   function completeVisualDraft() {
-    const tab = active;
-    if (!tab) return;
+    // A compositionend/input event can call this callback in the same turn as
+    // applyVisualDraftEdit(). Read the authoritative tab collection instead
+    // of the derived `active` value so a just-applied draft is never lost to a
+    // stale derived snapshot. This is especially important for large
+    // documents, where the following render is intentionally asynchronous.
+    const tab = activeId ? tabs.find((item) => item.id === activeId) : undefined;
+    if (!tab?.draft) return;
     const historyCommit = visualDraftHistoryCommit(tab.draft, tab.source, editorSelection);
     if (historyCommit) {
       recordSourceChange(
@@ -1518,7 +1874,10 @@
     }
     incrementalCommitMapId = tab.draft?.mapId ?? undefined;
     incrementalCommitSourceRange = tab.draft?.currentRange;
-    updateSource(tab.source, true, tab.id, { render: 'immediate' });
+    updateSource(tab.source, true, tab.id, {
+      render: 'immediate',
+      skipFilesystemLint: true,
+    });
   }
 
   function commitVisualBlock(mapId: string, text: string, replacementMarkdown?: string): boolean {
@@ -1708,15 +2067,6 @@
     return true;
   }
 
-  function moveBlockBeside(movingMapId: string, targetMapId: string) {
-    // Persisted columns remain disabled until a current GitHub fixture proves
-    // one canonical representation. Keep the drop useful by using the core
-    // sequential transaction and explain the fallback to the user.
-    if (moveBlock(movingMapId, targetMapId, 'after')) {
-      statusMessage = 'Side-by-side Markdown is not enabled for this profile; placed the block sequentially after the target';
-    }
-  }
-
   function deleteBlock(mapId: string): boolean {
     if (!active) return false;
     if (!sourceMapIsCurrentFor(active)) {
@@ -1757,6 +2107,7 @@
     const history = sourceHistory.get(tabId) ?? [];
     sourceHistory.set(tabId, appendSourceHistory(history, before, after, beforeSelection, afterSelection, group));
     sourceRedoHistory.delete(tabId);
+    boundSourceHistory([sourceHistory, sourceRedoHistory]);
   }
 
   function undoVisualChange() {
@@ -2261,10 +2612,28 @@
     }
   }
 
-  function applySourceEdit(patch: (source: string) => EditResult, preserveVisualSelection = false) {
+  async function validateReferenceSelection(source: string, selection: TextSelection): Promise<boolean> {
+    const reference = parseReferenceOccurrence(source, selection, source[selection.from] === '!');
+    if (!reference || !isTauri) return true;
+    const byteOffset = (offset: number) => new TextEncoder().encode(source.slice(0, offset)).length;
+    return validateReferenceEdit(source, { occurrenceFrom: byteOffset(selection.from), occurrenceTo: byteOffset(selection.to), definitionFrom: byteOffset(reference.definition.from), definitionTo: byteOffset(reference.definition.to), label: reference.definition.label });
+  }
+
+  async function applySourceEdit(patch: (source: string) => EditResult, preserveVisualSelection = false) {
     if (!active) return;
+    const tabId = active.id;
     const before = active.source;
     const result = patch(before);
+    const reference = parseReferenceOccurrence(before, editorSelection, before[editorSelection.from] === '!');
+    if (reference && isTauri) {
+      try {
+        if (!await validateReferenceSelection(before, editorSelection)) {
+          statusMessage = 'The shared reference could not be verified. Edit its definition in Source view.';
+          return;
+        }
+      } catch (error) { statusMessage = invokeErrorMessage(error); return; }
+      if (active?.id !== tabId || active.source !== before) { statusMessage = 'Edit cancelled because the document changed during validation'; return; }
+    }
     // The returned selection belongs to the edited source, not the pre-edit
     // source. Insertions at the end commonly place the caret beyond the old
     // length; validating against `before` would incorrectly reject them.
@@ -2279,18 +2648,28 @@
     statusMessage = 'Updated Markdown source without reserializing the document';
   }
 
-  async function saveActive() {
+  function saveActive(): Promise<void> {
+    const id = activeId;
+    if (!id) return Promise.resolve();
+    const existing = pendingSaves.get(id);
+    if (existing) return existing;
+    const pending = performSaveActive(id).finally(() => pendingSaves.delete(id));
+    pendingSaves.set(id, pending);
+    return pending;
+  }
+
+  async function performSaveActive(id: string) {
     if (!flushPendingVisualEdit()) return;
     // contentEditable blur invokes the source-range callback synchronously,
     // but allow Svelte to publish the updated tab before taking the save
     // snapshot. This prevents Ctrl+S from saving stale DOM-only text.
     await tick();
-    const tab = active;
+    const tab = tabs.find((entry) => entry.id === id);
     if (!tab) return;
-    if (!tab.dirty) return (statusMessage = 'No changes to save');
+    if (!tab.dirty) { statusMessage = 'No changes to save'; return; }
     if (!isTauri) return;
     if (isUntitledDocumentId(tab.id)) {
-      await saveActiveAs();
+      await saveActiveAs(tab.id);
       return;
     }
     const tabId = tab.id;
@@ -2301,9 +2680,7 @@
       const latest = tabs.find((item) => item.id === tabId);
       const stillAtSavedSource = latest?.source === sourceAtSave;
       if (stillAtSavedSource) {
-        const recoveryTimer = recoveryTimers.get(tabId);
-        if (recoveryTimer !== undefined) window.clearTimeout(recoveryTimer);
-        recoveryTimers.delete(tabId);
+        recoveryController.cancelTimer(tabId);
       }
       tabs = tabs.map((item) => (item.id === tabId
         ? {
@@ -2327,15 +2704,24 @@
     }
   }
 
-  async function saveActiveAs() {
-    const tab = active;
+  function saveActiveAs(id = activeId): Promise<void> {
+    if (!id) return Promise.resolve();
+    const existing = pendingSaveAs.get(id);
+    if (existing) return existing;
+    const pending = performSaveActiveAs(id).finally(() => pendingSaveAs.delete(id));
+    pendingSaveAs.set(id, pending);
+    return pending;
+  }
+
+  async function performSaveActiveAs(id: string) {
+    const tab = tabs.find((item) => item.id === id);
     if (!tab) return;
-    if (!isTauri) return (statusMessage = 'Save As is available in the desktop build');
-    if (!flushPendingVisualEdit()) return;
+    if (!isTauri) { statusMessage = 'Save As is available in the desktop build'; return; }
+    if (id === activeId && !flushPendingVisualEdit()) return;
     const tabId = tab.id;
-    const selected = await pickSavePath(isUntitledDocumentId(tab.id) ? 'Untitled.md' : (tab.meta.fileName || `${tab.title}.md`));
-    if (!selected) return;
     try {
+      const selected = await pickSavePath(isUntitledDocumentId(tab.id) ? 'Untitled.md' : (tab.meta.fileName || `${tab.title}.md`));
+      if (!selected) return;
       // The native picker and Save As IPC are both await points. Resolve the
       // source again after the picker so a tab switch or edit cannot cause an
       // older snapshot to replace newer in-memory work.
@@ -2400,6 +2786,7 @@
   async function reloadTab(tabId: string, expectedExternalGeneration?: number) {
     const observed = tabs.find((item) => item.id === tabId);
     if (!observed || !isTauri) return;
+    const loadingGeneration = beginDocumentLoading('Reloading document…');
     try {
       const fresh = await readDocument(tabId, markdownProfile, compatibilityTarget);
       const current = tabs.find((item) => item.id === tabId);
@@ -2408,6 +2795,7 @@
         statusMessage = 'Reload cancelled because the document changed while it was being read';
         return;
       }
+      if (!await prepareDocumentCommit(loadingGeneration, fresh)) return;
       if (activeId === tabId) clearPaneSelection();
       clearSourceRenderTimer(tabId);
       nextRenderGeneration(tabId);
@@ -2415,14 +2803,15 @@
       sourceRedoHistory.delete(tabId);
       renderedSnapshots.delete(tabId);
       cacheRenderedSnapshot(tabId, fresh.source, fresh);
-      const recoveryTimer = recoveryTimers.get(tabId);
-      if (recoveryTimer !== undefined) window.clearTimeout(recoveryTimer);
-      recoveryTimers.delete(tabId);
+      recoveryController.cancelTimer(tabId);
       tabs = tabs.map((item) => (item.id === tabId ? asOpenTab(fresh) : item));
       void clearRecovery(tabId);
       statusMessage = 'Reloaded the disk version';
+      await finishDocumentCommit(loadingGeneration);
     } catch (error) {
       statusMessage = `Could not reload the disk version: ${invokeErrorMessage(error)}`;
+    } finally {
+      finishDocumentLoading(loadingGeneration);
     }
   }
 
@@ -2451,8 +2840,9 @@
     if (!conflict) return;
     const resolution = conflict;
     const id = resolution.tabId;
-      const observed = tabs.find((tab) => tab.id === id);
+    const observed = tabs.find((tab) => tab.id === id);
     if (!observed || !isTauri) return;
+    const loadingGeneration = beginDocumentLoading('Reloading disk version…');
     try {
       const fresh = await readDocument(id, markdownProfile, compatibilityTarget);
       const current = tabs.find((tab) => tab.id === id);
@@ -2460,6 +2850,7 @@
         statusMessage = 'Reload cancelled because newer edits were made while resolving the conflict';
         return;
       }
+      if (!await prepareDocumentCommit(loadingGeneration, fresh)) return;
       conflict = null;
       if (activeId === id) clearPaneSelection();
       clearSourceRenderTimer(id);
@@ -2470,8 +2861,11 @@
       cacheRenderedSnapshot(id, fresh.source, fresh);
       tabs = tabs.map((tab) => tab.id === id ? asOpenTab(fresh) : tab);
       statusMessage = 'Reloaded the disk version';
+      await finishDocumentCommit(loadingGeneration);
     } catch (error) {
       statusMessage = `Could not reload the disk version: ${invokeErrorMessage(error)}`;
+    } finally {
+      finishDocumentLoading(loadingGeneration);
     }
   }
 
@@ -2520,8 +2914,14 @@
     completeCloseTab(id);
   }
 
-  function completeCloseTab(id: string) {
-    if (isTauri) void closeDocument(id);
+  async function completeCloseTab(id: string) {
+    try {
+      await recoveryController.clear(id);
+      if (isTauri) await closeDocument(id);
+    } catch (error) {
+      statusMessage = `Could not close document: ${invokeErrorMessage(error)}`;
+      return;
+    }
     clearSourceRenderTimer(id);
     releaseTabRuntimeState(id);
     backHistory = removeTabFromHistory(backHistory, id);
@@ -2617,9 +3017,11 @@
     if (!requestedWorkspace) return;
     if (!flushPendingVisualEdit()) return;
     const operation = ++documentNavigationGeneration;
+    const loadingGeneration = beginDocumentLoading('Opening search result…');
     try {
       const document = await openWorkspaceDocument(requestedWorkspace.id, result.relativePath, markdownProfile, compatibilityTarget);
       if (operation !== documentNavigationGeneration || workspace?.id !== requestedWorkspace.id) return;
+      if (!await prepareDocumentCommit(loadingGeneration, document)) return;
       const existing = tabs.find((tab) => tab.id === document.id);
       if (existing) activeId = existing.id;
       else {
@@ -2631,8 +3033,17 @@
       rememberOpenedDocument(document.meta.path);
       scheduleFilesystemLintRefresh(document.id);
       rightPanel = 'outline';
+      await finishDocumentCommit(loadingGeneration);
+      const currentSource = tabs.find((tab) => tab.id === document.id)?.source ?? document.source;
+      const lines = Array.from(currentSource.matchAll(/[^\r\n]*(?:\r\n|\r|\n|$)/g));
+      const lineIndex = Math.max(0, Math.min(result.line - 1, lines.length - 1));
+      const from = lines[lineIndex]?.index ?? 0;
+      mode = 'split'; sourceVisible = true;
+      editorSelection = { from, to: from + (lines[lineIndex]?.[0].replace(/[\r\n]+$/, '').length ?? 0) };
     } catch (error) {
       if (operation === documentNavigationGeneration) statusMessage = `Could not open search result: ${invokeErrorMessage(error)}`;
+    } finally {
+      finishDocumentLoading(loadingGeneration);
     }
   }
 
@@ -2643,24 +3054,29 @@
     if (!path && fragment) return void scrollToHeading(fragment, origin.id);
     if (!flushPendingVisualEdit()) return;
     const operation = ++documentNavigationGeneration;
+    const loadingGeneration = beginDocumentLoading('Opening linked document…');
     void openDocumentLink(origin.id, path, markdownProfile, compatibilityTarget).then((document) => {
-      if (operation !== documentNavigationGeneration) return;
-      const existing = tabs.find((tab) => tab.id === document.id);
-      if (existing) activeId = existing.id;
-      else {
-        cacheRenderedSnapshot(document.id, document.source, document);
-        tabs = [...tabs, asOpenTab(document)];
-        activeId = document.id;
-      }
-      showWelcome = false;
-      rememberOpenedDocument(document.meta.path);
-      scheduleFilesystemLintRefresh(document.id);
-      if (fragment) window.setTimeout(() => {
-        if (operation === documentNavigationGeneration && activeId === document.id) void scrollToHeading(fragment, document.id);
-      }, 80);
+      if (operation !== documentNavigationGeneration) return undefined;
+      return prepareDocumentCommit(loadingGeneration, document).then((prepared) => {
+        if (!prepared) return;
+        const existing = tabs.find((tab) => tab.id === document.id);
+        if (existing) activeId = existing.id;
+        else {
+          cacheRenderedSnapshot(document.id, document.source, document);
+          tabs = [...tabs, asOpenTab(document)];
+          activeId = document.id;
+        }
+        showWelcome = false;
+        rememberOpenedDocument(document.meta.path);
+        scheduleFilesystemLintRefresh(document.id);
+        if (fragment) window.setTimeout(() => {
+          if (operation === documentNavigationGeneration && activeId === document.id) void scrollToHeading(fragment, document.id);
+        }, 80);
+        return finishDocumentCommit(loadingGeneration);
+      });
     }).catch((error) => {
       if (operation === documentNavigationGeneration) statusMessage = invokeErrorMessage(error);
-    });
+    }).finally(() => finishDocumentLoading(loadingGeneration));
   }
 
   function openLinkTarget(target: string) {
@@ -2787,6 +3203,16 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
+    if (showShutdownConfirm || shutdownBusy || updateCheckState === 'installing') {
+      if (event.key === 'Escape' && !shutdownBusy) showShutdownConfirm = false;
+      if (event.key === 'Tab' && showShutdownConfirm) {
+        const controls = Array.from(document.querySelectorAll<HTMLButtonElement>('#shutdown-dialog button:not(:disabled)'));
+        const first = controls[0]; const last = controls.at(-1);
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      }
+      return;
+    }
     const keyboardContextMenu = event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey);
     if (keyboardContextMenu) {
       event.preventDefault();
@@ -2891,7 +3317,7 @@
     if (event.altKey && event.key === 'ArrowLeft') { event.preventDefault(); goBack(); }
     if (event.altKey && event.key === 'ArrowRight') { event.preventDefault(); goForward(); }
     if (event.key === 'Tab') {
-      const dialog = document.querySelector<HTMLElement>('[role="dialog"], [role="alertdialog"]');
+      const dialog = [...document.querySelectorAll<HTMLElement>('[role="dialog"], [role="alertdialog"]')].find((element) => !element.closest('[inert]'));
       const focusable = dialog ? [...dialog.querySelectorAll<HTMLElement>('button, input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter((element) => !element.hasAttribute('disabled')) : [];
       if (focusable.length) {
         const current = focusable.indexOf(document.activeElement as HTMLElement);
@@ -2959,7 +3385,7 @@
   }
 
   async function openGithub() {
-    const url = 'https://github.com/ImYourBoyRoy/markdown-desktop';
+    const url = PROJECT_GITHUB_URL;
     try {
       if (isTauri) await openUrl(url);
       else window.open(url, '_blank', 'noopener,noreferrer');
@@ -3034,6 +3460,15 @@
     if (manual) showAbout = true;
   }
 
+  async function openProjectLink(url: string, label: string) {
+    try {
+      if (isTauri) await openUrl(url);
+      else window.open(url, '_blank', 'noopener,noreferrer');
+    } catch {
+      statusMessage = `Could not open ${label}`;
+    }
+  }
+
   function scheduleAutomaticUpdateCheck(attempt = 0) {
     if (!isTauri || attempt >= AUTOMATIC_UPDATE_RETRY_DELAYS_MS.length) return;
     if (quietUpdateTimer !== undefined) window.clearTimeout(quietUpdateTimer);
@@ -3072,7 +3507,7 @@
     if (!dirtyTabs.length) return true;
     statusMessage = 'Saving recovery snapshots before update…';
     try {
-      await Promise.all(dirtyTabs.map((tab) => saveRecovery(tab.id, tab.source, tab.revision)));
+      await recoveryController.drain(dirtyTabs.map((tab) => tab.id));
       return true;
     } catch (error) {
       updateCheckState = 'available';
@@ -3085,6 +3520,15 @@
   async function confirmInstallUpdate() {
     const update = pendingUpdate;
     if (!update || updateCheckState === 'installing') return;
+    if (!flushPendingVisualEdit()) return;
+    updateCheckState = 'installing';
+    try { await Promise.all([...pendingSaves.values(), ...pendingSaveAs.values()]); }
+    catch (error) {
+      updateCheckState = 'available';
+      updateErrorMessage = invokeErrorMessage(error);
+      return;
+    }
+    await tick();
     const dirtyTabs = tabs.filter((tab) => tab.dirty);
     if (dirtyTabs.length) {
       showUpdateConfirm = false;
@@ -3396,12 +3840,27 @@
         statusMessage = `Copied ${relativePath}, but the original image is no longer present`;
         return;
       }
-      const result = updateImage(
+      const parsedImage = parseImageObject(current.source, currentSelection, { kind: currentSpan.kind });
+      if (!await validateReferenceSelection(current.source, currentSelection)) {
+        await discardStagedAsset(tabId, staged.cleanupToken);
+        statusMessage = 'The shared image definition could not be verified; use Source view';
+        return;
+      }
+      if (tabs.find((tab) => tab.id === tabId)?.source !== current.source) { await discardStagedAsset(tabId, staged.cleanupToken); return; }
+      const result = updateImageObject(
         current.source,
         currentSelection,
-        String(currentSpan.attrs.alt ?? ''),
-        relativePath,
-        String(currentSpan.attrs.title ?? ''),
+        {
+          alt: parsedImage?.alt ?? String(currentSpan.attrs.alt ?? ''),
+          url: relativePath,
+          title: parsedImage?.title ?? String(currentSpan.attrs.title ?? ''),
+          width: parsedImage?.width ?? String(currentSpan.attrs.width ?? ''),
+          height: parsedImage?.height ?? String(currentSpan.attrs.height ?? ''),
+          align: parsedImage?.align ?? (currentSpan.attrs.align === 'left'
+            || currentSpan.attrs.align === 'center'
+            || currentSpan.attrs.align === 'right' ? currentSpan.attrs.align : 'inline'),
+        },
+        { kind: currentSpan.kind },
       );
       if (result.source === current.source) {
         await discardStagedAsset(tabId, staged.cleanupToken).catch(() => undefined);
@@ -3517,6 +3976,11 @@
 
   async function restoreSelectedRecovery() {
     if (!selectedRecoveryId || !isTauri) return;
+    const alreadyOpen = tabs.find((tab) => tab.id === selectedRecoveryId);
+    if (alreadyOpen?.dirty || hasPendingVisualEdit(selectedRecoveryId)) {
+      statusMessage = 'Save or close the current edits before restoring this snapshot';
+      return;
+    }
     try {
       const document = await restoreRecovery(selectedRecoveryId, markdownProfile, compatibilityTarget);
       const recovered = asOpenTab(document, {
@@ -3540,9 +4004,11 @@
 
   async function discardSelectedRecovery() {
     if (!selectedRecoveryId || !isTauri) return;
-    await discardRecovery(selectedRecoveryId);
-    recoveryItems = recoveryItems.filter((item) => item.documentId !== selectedRecoveryId);
-    selectedRecoveryId = recoveryItems[0]?.documentId;
+    try {
+      await discardRecovery(selectedRecoveryId);
+      recoveryItems = recoveryItems.filter((item) => item.documentId !== selectedRecoveryId);
+      selectedRecoveryId = recoveryItems[0]?.documentId;
+    } catch (error) { recoveryError = invokeErrorMessage(error); }
   }
 
   function handlePaletteKeydown(event: KeyboardEvent) {
@@ -3564,7 +4030,7 @@
 
 <svelte:window onkeydown={handleKeydown} oncontextmenu={handleContextMenu} onpointerdown={handleShellClick} />
 
-<div class="app-shell" class:reader-fullscreen={readerFullscreen} aria-busy={workspaceLoading}>
+<div class="app-shell" class:reader-fullscreen={readerFullscreen} aria-busy={workspaceLoading || shutdownBusy} inert={showShutdownConfirm || shutdownBusy || updateCheckState === 'installing' || recoveryItems.length > 0 || Boolean(conflict) || Boolean(recoveryError)}>
   <AppToolbar
     workspaceName={workspace?.name ?? 'No folder open'}
     documentPath={active?.meta.path ?? workspace?.displayPath ?? 'No folder open'}
@@ -3620,7 +4086,7 @@
     </div>
   {/if}
 
-  {#if active && (editing || mode === 'source' || mode === 'split')}
+  {#if active && EditorRibbon && (editing || mode === 'source' || mode === 'split')}
     <EditorRibbon
       selection={editorSelection}
       source={active.source}
@@ -3708,9 +4174,16 @@
       splitViewVisible={splitViewVisible}
       effectiveViewMode={effectiveViewMode}
       renderedViewVisible={renderedViewVisible}
+      renderedViewBusy={renderedViewBusy}
       sourceEditorMounted={sourceEditorMounted}
       readerFullscreen={readerFullscreen}
+      documentLoading={documentLoading}
+      previewError={previewError}
+      onRetryPreview={() => void retryPreview()}
       markdownProfile={markdownProfile}
+      spellcheckEnabled={spellcheckEnabled}
+      spellcheckLocale={spellcheckLocale}
+      completionPaths={completionPaths}
       remoteImagesEnabled={remoteImagesEnabled}
       findMapIds={findMapIds}
       activeFindMapIds={activeFindMapIds}
@@ -3720,6 +4193,7 @@
       renderResetToken={visualResetToken}
       incrementalCommitMapId={incrementalCommitMapId}
       incrementalCommitSourceRange={incrementalCommitSourceRange}
+      onIncrementalCommitConsumed={consumeIncrementalCommit}
       hoveredSourceSelection={hoveredSourceSelection}
       externalSourceSelection={externalSourceSelection}
       sourceSelectionActive={sourceSelectionActive}
@@ -3741,7 +4215,7 @@
       onRevealCompatibilityIssues={() => revealIssues('compatibility')}
       onToggleSource={toggleSourceDrawer}
       onToggleReaderFullscreen={toggleReaderFullscreen}
-      onMapReady={revealFindMatch}
+      onMapReady={handleRenderedMapReady}
       onMapHover={updateVisualHover}
       onMapSelect={updateVisualSelection}
       onBlockEdit={commitVisualBlock}
@@ -3754,7 +4228,6 @@
       onDetailsSummaryEdit={commitDetailsSummary}
        onTableEdit={applyTableEdit}
        onBlockMove={moveBlock}
-       onBlockBeside={moveBlockBeside}
        onBlockDelete={deleteBlock}
        onSlashCommand={handleSlashCommand}
       onRevealSource={revealMapInSource}
@@ -3769,10 +4242,14 @@
     />
 
     <InspectorSidebar
+      {backlinks}
+      {backlinksStatus}
+      onBacklink={openSearchResult}
       panel={rightPanel}
       active={active ?? null}
       activeHeadingSlug={activeHeadingSlug}
       issues={visibleIssues}
+      editing={editing}
       issueFilter={issueFilter}
       compatibilityTarget={compatibilityTarget}
       compatibilityIssueCount={activeCompatibilityIssues.length}
@@ -3783,15 +4260,16 @@
       onLink={focusLink}
       onOpenLink={openLinkTarget}
       onIssue={revealIssue}
+      onFixIssue={fixIssue}
       onLearnMore={(url) => void openIssueLearnMore(url)}
       onIssueFilterChange={(filter) => (issueFilter = filter)}
     />
 
     {#if leftCollapsed}
-      <button class="sidebar-restore left-restore" type="button" aria-label="Expand left sidebar" title="Expand left sidebar" onclick={() => (leftCollapsed = false)}><span class="restore-glyph" aria-hidden="true"></span><span class="restore-label">Files</span><span class="restore-chevron" aria-hidden="true">›</span></button>
+      <button class="sidebar-restore left-restore" type="button" aria-label="Files — expand left sidebar" title="Expand left sidebar" onclick={() => (leftCollapsed = false)}><span class="restore-glyph" aria-hidden="true"></span><span class="restore-label">Files</span><span class="restore-chevron" aria-hidden="true"></span></button>
     {/if}
     {#if rightCollapsed}
-      <button class="sidebar-restore right-restore" type="button" aria-label="Expand right sidebar" title="Expand right sidebar" onclick={() => (rightCollapsed = false)}><span class="restore-chevron" aria-hidden="true">‹</span><span class="restore-label">Inspect</span><span class="restore-glyph" aria-hidden="true"></span></button>
+      <button class="sidebar-restore right-restore" type="button" aria-label="Inspect — expand right sidebar" title="Expand right sidebar" onclick={() => (rightCollapsed = false)}><span class="restore-chevron" aria-hidden="true"></span><span class="restore-label">Inspect</span><span class="restore-glyph" aria-hidden="true"></span></button>
     {/if}
   </div>
 
@@ -3882,6 +4360,7 @@
     startupViewPreference={startupViewPreference}
     markdownProfile={markdownProfile}
     compatibilityTarget={compatibilityTarget}
+    spellcheckEnabled={spellcheckEnabled}
     remoteImagesEnabled={remoteImagesEnabled}
     scanDepth={scanDepth}
     assetFolder={assetFolder}
@@ -3892,6 +4371,7 @@
     onStartupViewChange={(preference) => (startupViewPreference = preference)}
     onProfileChange={(nextProfile) => (markdownProfile = nextProfile)}
     onCompatibilityTargetChange={changeCompatibilityTarget}
+    onSpellcheckChange={(enabled) => (spellcheckEnabled = enabled)}
     onRemoteImagesChange={(enabled) => (remoteImagesEnabled = enabled)}
     onScanDepthChange={(depth) => void changeScanDepth(depth)}
     onAssetFolderChange={(folder) => (assetFolder = assetFolderSetting(folder))}
@@ -3973,6 +4453,8 @@
       <p class="about-version">Version {appVersion}</p>
       <div class="about-actions">
         <button class="secondary-button about-github" type="button" onclick={() => void openGithub()}>GitHub repository ↗</button>
+        <button class="secondary-button" type="button" onclick={() => void openProjectLink(AUTHOR_SITE_URL, 'the author website')}>Roy Dawson IV ↗</button>
+        <button class="secondary-button about-donate" type="button" onclick={() => void openProjectLink(DONATE_VENMO_URL, 'Venmo')}>Support development ↗</button>
         {#if updateCheckState === 'available' && pendingUpdate}
           <button class="primary-button" type="button" onclick={promptInstallUpdate}>Install {formatVersionLabel(pendingUpdate.version)}…</button>
         {:else if updateCheckState === 'installing'}
@@ -3991,7 +4473,7 @@
 {#if recoveryItems.length}
   <div class="modal-backdrop" role="presentation">
     <div class="conflict-modal recovery-modal" role="alertdialog" aria-modal="true" aria-label="Recover unsaved edits" tabindex="-1">
-      <div class="conflict-icon">↺</div>
+      <div class="conflict-icon recovery-icon" aria-hidden="true"></div>
       <h2>Unsaved edits were recovered</h2>
       <p>Markdown Desktop found crash snapshots. Restore keeps your in-memory edits; discard deletes the snapshot.</p>
       <div class="recovery-list">
@@ -4013,9 +4495,36 @@
 {#if conflict}
   <div class="modal-backdrop" role="presentation">
     <div class="conflict-modal" role="alertdialog" aria-modal="true" aria-label="File changed on disk" tabindex="-1">
-      <div class="conflict-icon">!</div><h2>File changed on disk</h2><p>This document changed in another application while you had unsaved edits. Nothing was overwritten.</p>
+      <div class="conflict-icon" aria-hidden="true"></div><h2>File changed on disk</h2><p>This document changed in another application while you had unsaved edits. Nothing was overwritten.</p>
       <div class="compare-grid"><div><span>Your edits</span><pre>{tabs.find((tab) => tab.id === conflict?.tabId)?.source}</pre></div><div><span>Disk version</span><pre>{conflict?.diskSource}</pre></div></div>
       <div class="modal-actions"><button class="secondary-button" type="button" onclick={keepMine}>Keep Mine</button><button bind:this={conflictPrimaryButton} class="primary-button" type="button" onclick={reloadFromConflict}>Reload Disk Version</button></div>
+    </div>
+  </div>
+{/if}
+
+{#if recoveryError && !showShutdownConfirm}
+  <div class="modal-backdrop" role="presentation">
+    <div class="conflict-modal" role="alertdialog" aria-modal="true" aria-label="Recovery needs attention" tabindex="-1">
+      <h2>Recovery needs attention</h2><p>{recoveryError}</p>
+      <div class="modal-actions">
+        <button type="button" class="secondary-button" onclick={() => { recoveryError = undefined; }}>Keep editing</button>
+        <button type="button" class="primary-button" onclick={() => void retryRecovery()}>Retry snapshot</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if showShutdownConfirm}
+  <div class="modal-backdrop" role="presentation">
+    <div id="shutdown-dialog" class="conflict-modal" role="alertdialog" aria-modal="true" aria-labelledby="shutdown-title" aria-describedby="shutdown-description" aria-busy={shutdownBusy} tabindex="-1">
+      <h2 id="shutdown-title">Protect unsaved edits before quitting</h2>
+      <p id="shutdown-description">Save your documents now, or keep recovery snapshots to restore next time.</p>
+      {#if shutdownError}<p role="alert">{shutdownError}</p>{/if}
+      <div class="modal-actions">
+        <button id="shutdown-cancel" class="secondary-button" type="button" disabled={shutdownBusy} onclick={() => { showShutdownConfirm = false; }}>Cancel</button>
+        <button class="secondary-button" type="button" disabled={shutdownBusy} onclick={() => void finishShutdown('recover')}>Keep recovery and quit</button>
+        <button class="primary-button" type="button" disabled={shutdownBusy} onclick={() => void finishShutdown('save')}>Save all and quit</button>
+      </div>
     </div>
   </div>
 {/if}

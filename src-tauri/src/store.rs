@@ -41,13 +41,28 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, UNIX_EPOCH};
+use std::time::{Instant, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 use uuid::Uuid;
 
 #[tauri::command]
-pub fn save_document(
+pub async fn save_document(
+    app: AppHandle,
+    document_id: String,
+    expected_revision: String,
+    source: String,
+) -> Result<SaveResult, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<SharedState>();
+        save_document_inner(app.clone(), state, document_id, expected_revision, source)
+    })
+    .await
+    .map_err(|error| CommandError::Message(format!("save worker failed: {error}")))?
+}
+
+fn save_document_inner(
+    app: AppHandle,
     state: State<'_, SharedState>,
     document_id: String,
     expected_revision: String,
@@ -61,6 +76,20 @@ pub fn save_document(
         .cloned()
         .ok_or_else(|| CommandError::Message("document is no longer open".into()))?;
 
+    let result = save_record(&record, &expected_revision, &source)?;
+    if let Some(workspace_id) = record.workspace_id.as_deref()
+        && let Err(error) = queue_workspace_index(&app, state.inner(), workspace_id)
+    {
+        let _ = app.emit("workspace-indexed", serde_json::json!({ "workspaceId": workspace_id, "ok": false, "indexing": false, "error": error.to_string() }));
+    }
+    Ok(result)
+}
+
+fn save_record(
+    record: &StoredDocument,
+    expected_revision: &str,
+    source: &str,
+) -> Result<SaveResult, CommandError> {
     if !record.path.is_file() {
         return Err(CommandError::Message(
             "The original file is missing. Use Save As to choose a new Markdown path.".into(),
@@ -100,7 +129,7 @@ pub fn save_document(
     }
 
     let bytes = encode_source(
-        &source,
+        source,
         &record.encoding,
         record.bom,
         &record.line_ending,
@@ -108,13 +137,7 @@ pub fn save_document(
         &record.newline_sequences,
     )?;
     atomic_write_locked(&record.path, &bytes)?;
-    if let Ok(mut state) = state.lock() {
-        state.watch_ignore_until.insert(
-            document_id.clone(),
-            Instant::now() + Duration::from_millis(1200),
-        );
-    }
-    let meta = document_meta(&record.path, &bytes, &record, "github")?;
+    let meta = document_meta(&record.path, &bytes, record, "github")?;
     Ok(SaveResult {
         revision: revision_for(&bytes),
         meta,
@@ -140,6 +163,29 @@ pub fn check_document_revision(
 
 #[tauri::command]
 pub async fn save_document_as(
+    app: AppHandle,
+    document_id: String,
+    path_grant: String,
+    source: String,
+    profile: Option<String>,
+    compatibility_target: Option<String>,
+) -> Result<OpenedDocument, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        tauri::async_runtime::block_on(save_document_as_inner(
+            app.clone(),
+            app.state::<SharedState>(),
+            document_id,
+            path_grant,
+            source,
+            profile,
+            compatibility_target,
+        ))
+    })
+    .await
+    .map_err(|error| CommandError::Message(format!("save worker failed: {error}")))?
+}
+
+async fn save_document_as_inner(
     app: AppHandle,
     state: State<'_, SharedState>,
     document_id: String,
@@ -201,17 +247,29 @@ pub async fn save_document_as(
 }
 
 #[tauri::command]
-pub fn close_document(
+pub async fn close_document(
     app: AppHandle,
     state: State<'_, SharedState>,
     document_id: String,
 ) -> Result<(), CommandError> {
+    clear_recovery(app, document_id.clone()).await?;
     drop_document(&state, &document_id);
-    clear_recovery(app, document_id)
+    Ok(())
 }
 
 #[tauri::command]
-pub fn inspect_document(
+pub async fn inspect_document(
+    app: AppHandle,
+    document_id: String,
+) -> Result<ConflictResult, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        inspect_document_inner(app.state::<SharedState>(), document_id)
+    })
+    .await
+    .map_err(|error| CommandError::Message(format!("inspection worker failed: {error}")))?
+}
+
+fn inspect_document_inner(
     state: State<'_, SharedState>,
     document_id: String,
 ) -> Result<ConflictResult, CommandError> {
@@ -238,7 +296,18 @@ pub fn inspect_document(
 }
 
 #[tauri::command]
-pub fn adopt_disk_revision(
+pub async fn adopt_disk_revision(
+    app: AppHandle,
+    document_id: String,
+) -> Result<SaveResult, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        adopt_disk_revision_inner(app.state::<SharedState>(), document_id)
+    })
+    .await
+    .map_err(|error| CommandError::Message(format!("revision worker failed: {error}")))?
+}
+
+fn adopt_disk_revision_inner(
     state: State<'_, SharedState>,
     document_id: String,
 ) -> Result<SaveResult, CommandError> {
@@ -283,7 +352,9 @@ fn drop_document(state: &State<'_, SharedState>, document_id: &str) {
     if let Ok(mut state) = state.lock() {
         state.watchers.remove(document_id);
         state.documents.remove(document_id);
-        state.watch_ignore_until.remove(document_id);
+        state
+            .media_grants
+            .retain(|_, grant| grant.document_id != document_id);
         state.block_render_caches.remove(document_id);
         let staged = state
             .staged_assets
@@ -339,28 +410,53 @@ fn atomic_write_locked(path: &Path, bytes: &[u8]) -> Result<()> {
         .ok_or_else(|| anyhow!("file has no parent directory"))?;
     let mut temp = tempfile::NamedTempFile::new_in(parent)?;
     temp.write_all(bytes)?;
+    #[cfg(not(windows))]
+    if let Ok(metadata) = fs::metadata(path) {
+        temp.as_file().set_permissions(metadata.permissions())?;
+    }
     temp.as_file().sync_all()?;
-    let temp_path = temp.into_temp_path();
-    let backup = path.with_extension(format!("md-native-backup-{}", std::process::id()));
-    if backup.exists() {
-        fs::remove_file(&backup)?;
-    }
+    replace_file(temp, path)?;
+    let _ = fs::File::open(parent).and_then(|directory| directory.sync_all());
+    Ok(())
+}
+
+fn replace_file(temp: tempfile::NamedTempFile, path: &Path) -> Result<()> {
+    // ReplaceFileW opens the replacement for DELETE/WRITE_DAC; release our
+    // temporary-file handle before it attempts the atomic replacement.
+    let temp = temp.into_temp_path();
+    #[cfg(windows)]
     if path.exists() {
-        fs::rename(path, &backup)?;
-    }
-    match fs::rename(&temp_path, path) {
-        Ok(()) => {
-            let _ = fs::remove_file(&backup);
-            let _ = fs::File::open(parent).and_then(|directory| directory.sync_all());
-            Ok(())
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::ReplaceFileW;
+        let destination = path
+            .as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect::<Vec<_>>();
+        let replacement = temp
+            .as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect::<Vec<_>>();
+        // Preserve the destination ACL and attributes. Never ignore merge
+        // errors or remove the old file before committing the replacement.
+        if unsafe {
+            ReplaceFileW(
+                destination.as_ptr(),
+                replacement.as_ptr(),
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+                std::ptr::null(),
+            )
+        } == 0
+        {
+            return Err(std::io::Error::last_os_error().into());
         }
-        Err(error) => {
-            if backup.exists() {
-                let _ = fs::rename(&backup, path);
-            }
-            Err(error.into())
-        }
+        return Ok(());
     }
+    temp.persist(path).map_err(|error| error.error)?;
+    Ok(())
 }
 
 fn watch_document(
@@ -369,22 +465,19 @@ fn watch_document(
     record: &StoredDocument,
 ) -> Result<(), CommandError> {
     let document_id = record.id.clone();
-    let watched_id = record.id.clone();
     let workspace_id = record.workspace_id.clone();
     let handle = app.clone();
     let path = record.path.clone();
+    let watched_path = path.clone();
     let mut watcher = RecommendedWatcher::new(
         move |result: notify::Result<notify::Event>| {
             if let Ok(event) = result
-                && matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_))
+                && matches!(
+                    event.kind,
+                    EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_)
+                )
+                && event.paths.iter().any(|changed| changed == &watched_path)
             {
-                if let Some(shared) = handle.try_state::<SharedState>()
-                    && let Ok(state) = shared.lock()
-                    && let Some(until) = state.watch_ignore_until.get(&watched_id)
-                    && Instant::now() < *until
-                {
-                    return;
-                }
                 let _ = handle.emit("document-changed", document_id.clone());
                 if let Some(workspace_id) = workspace_id.as_deref()
                     && let Some(shared) = handle.try_state::<SharedState>()
@@ -403,7 +496,7 @@ fn watch_document(
     )
     .map_err(|e| CommandError::Message(e.to_string()))?;
     watcher
-        .watch(&path, RecursiveMode::NonRecursive)
+        .watch(path.parent().unwrap_or(&path), RecursiveMode::NonRecursive)
         .map_err(|e| CommandError::Message(e.to_string()))?;
     let mut state = state
         .lock()
@@ -417,6 +510,51 @@ fn watch_document(
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn recovered_baseline_conflicts_with_a_later_disk_write_and_utf16_saves_stay_encoded() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("recovered.md");
+        let original = encode_source("Original 😀", "UTF-16 LE", true, "LF", false, &[]).unwrap();
+        fs::write(&path, &original).unwrap();
+        let record = StoredDocument {
+            id: "test".into(),
+            path: path.clone(),
+            workspace_id: None,
+            encoding: "UTF-16 LE".into(),
+            bom: true,
+            line_ending: "LF".into(),
+            final_newline: false,
+            newline_sequences: vec![],
+        };
+        let base = revision_for(&original);
+        let saved = save_record(&record, &base, "Edited é 😀").unwrap();
+        let bytes = fs::read(&path).unwrap();
+        assert_eq!(decode_bytes(&bytes, &path).unwrap().0, "Edited é 😀");
+        assert_eq!(saved.revision, revision_for(&bytes));
+        assert!(matches!(
+            save_record(&record, &base, "Recovered edits"),
+            Err(CommandError::Conflict(_))
+        ));
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn failed_atomic_replacement_keeps_the_original() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("locked.md");
+        fs::write(&path, b"original").unwrap();
+        let open = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(&path)
+            .unwrap();
+        assert!(atomic_write(&path, b"replacement").is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"original");
+        drop(open);
+    }
 
     #[test]
     fn refreshing_workspace_preserves_worker_ownership_and_requests_latest_depth() {
@@ -506,7 +644,9 @@ mod tests {
         atomic_write(&path, b"new").unwrap();
 
         assert_eq!(fs::read(&path).unwrap(), b"new");
-        assert!(!backup.exists());
+        // Legacy backups are retained as recoverable evidence, never deleted
+        // merely because their process ID happens to match this process.
+        assert_eq!(fs::read(backup).unwrap(), b"stale");
     }
 
     #[test]

@@ -4,7 +4,7 @@
 
 import type { EditResult, TextSelection } from './formatting';
 
-export type InsertKind = 'link' | 'image' | 'table' | 'fence' | 'rule' | 'footnote' | 'math' | 'mermaid' | 'dot';
+export type InsertKind = 'link' | 'image' | 'table' | 'fence' | 'rule' | 'footnote' | 'math' | 'mermaid' | 'dot' | 'media';
 
 export type MarkdownLineEnding = '\n' | '\r\n' | '\r';
 

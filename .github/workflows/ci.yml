@@ -6,6 +6,7 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -45,7 +46,7 @@ jobs:
         with:
           version: ${{ env.PNPM_VERSION }}
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -58,6 +59,9 @@ jobs:
 
       - name: Verify Rust toolchain
         run: node scripts/verify-toolchains.mjs
+
+      - name: Verify architecture inventory
+        run: node scripts/architecture_inventory.mjs --check
 
       - uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
@@ -117,7 +121,7 @@ jobs:
         with:
           version: ${{ env.PNPM_VERSION }}
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -149,12 +153,16 @@ jobs:
       - name: Verify native artifact and branding
         run: node scripts/native_smoke.mjs
 
+      - name: Run packaged interaction acceptance (Windows x64)
+        if: matrix.name == 'Windows x64'
+        run: node scripts/packaged_acceptance.mjs --require-binary
+
       - name: Smoke test Windows uninstall cleanup
         if: runner.os == 'Windows'
         run: node scripts/uninstall_smoke.mjs
 
       - name: Upload native smoke artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: markdown-desktop-${{ matrix.os }}
           path: |

@@ -46,6 +46,7 @@ function createHarness(renderSource: RenderControllerOptions['renderSource']) {
   const snapshots: string[] = [];
   const recovery: string[] = [];
   const statuses: string[] = [];
+  const setIncrementalCommit = vi.fn();
   const controller = createRenderController({
     getTabs: () => tabs,
     setTabs: (nextTabs) => { tabs = nextTabs; },
@@ -55,12 +56,12 @@ function createHarness(renderSource: RenderControllerOptions['renderSource']) {
     getIncrementalCommit: () => ({}),
     renderSource,
     cacheSnapshot: (tabId, source) => { snapshots.push(`${tabId}:${source}`); },
-    setIncrementalCommit: vi.fn(),
+    setIncrementalCommit,
     scheduleFilesystemLintRefresh: vi.fn(),
     scheduleRecoverySnapshot: (tabId, source) => { recovery.push(`${tabId}:${source}`); },
     setStatusMessage: (message) => { statuses.push(message); },
   });
-  return { controller, getTabs: () => tabs, setTabs: (nextTabs: Tab[]) => { tabs = nextTabs; }, snapshots, recovery, statuses };
+  return { controller, getTabs: () => tabs, setTabs: (nextTabs: Tab[]) => { tabs = nextTabs; }, snapshots, recovery, statuses, setIncrementalCommit };
 }
 
 describe('render controller', () => {
@@ -111,6 +112,20 @@ describe('render controller', () => {
     expect(harness.getTabs()[0].renderedSource).toBe('one');
     expect(harness.snapshots).toEqual([]);
     expect(harness.recovery).toEqual([]);
+    harness.controller.dispose();
+  });
+
+  it('clears the visual commit token when the latest render fails', async () => {
+    const renderSource = vi.fn(async () => {
+      throw new Error('render failed');
+    });
+    const harness = createHarness(renderSource);
+
+    harness.controller.enqueue('doc', 'one', harness.controller.nextGeneration('doc'));
+    await flushQueue();
+
+    expect(harness.setIncrementalCommit).toHaveBeenCalledWith(undefined, undefined);
+    expect(harness.statuses).toEqual(['Preview refresh failed; retry the edit or reopen the document.']);
     harness.controller.dispose();
   });
 });

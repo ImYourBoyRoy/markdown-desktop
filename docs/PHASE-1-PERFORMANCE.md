@@ -1,6 +1,6 @@
 # Phase 1 performance optimization
 
-Updated: 2026-09-13
+Updated: 2026-09-24
 
 ## Audit corrections (2026-09-07)
 
@@ -105,10 +105,12 @@ experiment, not a claimed win.
 
 - The rebuilt Windows packaged acceptance now covers exact bidirectional
   rendered/source text and object selection, cross-block selection, pointer
-  block movement, composition, undo/redo, save/reload, and split edits. Its
-  synthetic five-edit split probe averaged 66.3 ms against the 150 ms budget.
-  This closes the local packaged interaction probe, not physical pointer,
-  compositor, or target-OS accessibility timing.
+  block movement, composition, undo/redo, save/reload, mapped block deletion,
+  offline Mermaid, local-video metadata/seek, and split edits. Its synthetic
+  five-edit split probe is green on three consecutive normal-package runs at
+  116.0 ms, 119.7 ms, and 124.2 ms against the 150 ms budget. This closes the local
+  packaged interaction probe, not physical pointer, compositor, or target-OS
+  accessibility timing.
 - Measure large-document first-open and repeated-edit p95 in release-like
   WebView2, and repeat the interaction checks on Linux WebKitGTK and macOS
   WKWebView. The current jsdom/native baselines cannot close those gates.
@@ -120,3 +122,18 @@ Phase 2 should retain changes only when they improve a measured target boundary
 without weakening the source-map or source-authority contracts. The pointer
 drag path is now pointer-owned and the legacy HTML drag listeners remain only
 for compatibility with older embedders/test harnesses.
+
+## Current packaged verification (2026-10-16)
+
+The current P1 tree was rebuilt into the staged Windows x64 portable package
+and exercised through the full packaged acceptance harness three times. All 20 checks
+passed, including offline Mermaid rendering, bidirectional source/render
+selection, cross-block selection, visual editing, IME composition, save/reload,
+pointer block movement, mapped block deletion, and native local-video
+metadata/seek. The synthetic five-edit split-preview probe measured 116.0 ms,
+119.7 ms, and 124.2 ms against the 150 ms budget. The fixture retains 96 top-level
+fragments so the bounded large-document mount path remains covered while the
+payload stays deterministic enough for the interaction budget. The incremental
+commit token is consumed by the DOM revision that owns it, preventing stale
+patch retries on later renders. This timing is not a claim about physical OS
+input latency.

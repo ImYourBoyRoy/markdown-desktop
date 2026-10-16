@@ -37,6 +37,46 @@ function listMarkerFor(kind: 'list_item' | 'task_item', block: string): ListMark
   return match ? { prefix: match[1], contentStart: match[0].length } : null;
 }
 
+interface ListLine {
+  start: number;
+  end: number;
+  indent: number;
+}
+
+function lineStartAt(source: string, offset: number): number {
+  const newline = Math.max(source.lastIndexOf('\n', Math.max(0, offset - 1)), source.lastIndexOf('\r', Math.max(0, offset - 1)));
+  return newline + 1;
+}
+
+function listLineAt(source: string, offset: number): ListLine | null {
+  const start = lineStartAt(source, offset);
+  const newline = source.slice(start).search(/\r|\n/);
+  const end = newline < 0 ? source.length : start + newline;
+  const line = source.slice(start, end);
+  const match = /^( *)([-+*]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/.exec(line);
+  if (!match) return null;
+  return { start, end, indent: match[1].length };
+}
+
+/**
+ * A list item can be indented only beneath a real preceding list item. This
+ * prevents Tab from manufacturing a visually indented line that Markdown
+ * parses as a sibling, paragraph, or unrelated continuation block.
+ */
+function canIndentListLine(source: string, current: ListLine): boolean {
+  if (current.start <= 0) return false;
+  const separatorLength = source[current.start - 1] === '\n' && source[current.start - 2] === '\r'
+    ? 2
+    : 1;
+  const previousEnd = current.start - separatorLength;
+  const previousStart = lineStartAt(source, previousEnd);
+  const previousLine = source.slice(previousStart, previousEnd).replace(/\r$/, '');
+  if (!previousLine.trim()) return false;
+  const previous = listLineAt(source, previousStart);
+  if (!previous || previous.end !== previousEnd) return false;
+  return previous.indent <= current.indent;
+}
+
 /**
  * Split one safe visual block at the current source-aware caret.
  *
@@ -243,6 +283,8 @@ export function indentVisualListItem(
   if (!listMarkerFor(kind, block)) return null;
 
   if (direction === 'indent') {
+    const currentLine = listLineAt(source, selection.from);
+    if (!currentLine || !canIndentListLine(source, currentLine)) return null;
     return {
       from: selection.from,
       to: selection.to,

@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use tauri::State;
 
 pub(crate) const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
+pub(crate) const MAX_MEDIA_BYTES: u64 = 32 * 1024 * 1024;
 
 pub(crate) fn normalize_asset_folder(value: &str) -> Result<PathBuf, CommandError> {
     let value = value.trim();
@@ -277,6 +278,8 @@ pub(crate) fn local_asset_candidate(
     workspace_root: Option<&Path>,
     target: &str,
 ) -> Option<PathBuf> {
+    let decoded = decode_local_target(target)?;
+    let target = decoded.as_str();
     let root_relative = target.starts_with('/') && !target.starts_with("//");
     if root_relative {
         let workspace_root = workspace_root?;
@@ -295,6 +298,54 @@ pub(crate) fn local_asset_candidate(
     }
     let root = workspace_root.unwrap_or(document_dir);
     resolve_relative_within_root(document_dir, root, trimmed)
+}
+
+/// Split URI query/fragment syntax before decoding; an encoded # or ? is a
+/// filename character. Malformed escapes and non-local schemes fail closed.
+fn decode_local_target(target: &str) -> Option<String> {
+    let target = target.split(['#', '?']).next()?.trim();
+    let mut bytes = Vec::with_capacity(target.len());
+    let input = target.as_bytes();
+    let mut index = 0;
+    while index < input.len() {
+        if input[index] == b'%' {
+            let high = (*input.get(index + 1)? as char).to_digit(16)?;
+            let low = (*input.get(index + 2)? as char).to_digit(16)?;
+            bytes.push((high * 16 + low) as u8);
+            index += 3;
+        } else {
+            bytes.push(input[index]);
+            index += 1;
+        }
+    }
+    let decoded = String::from_utf8(bytes).ok()?;
+    if decoded.is_empty()
+        || decoded.chars().any(char::is_control)
+        || decoded.contains(':')
+        || decoded.starts_with("//")
+        || decoded.starts_with('\\')
+    {
+        return None;
+    }
+    Some(decoded)
+}
+
+pub(crate) fn resolve_local_reference(
+    document_dir: &Path,
+    workspace_root: Option<&Path>,
+    target: &str,
+) -> Result<PathBuf, CommandError> {
+    let root = workspace_root.unwrap_or(document_dir);
+    let candidate =
+        local_asset_candidate(document_dir, workspace_root, target).ok_or_else(|| {
+            CommandError::Message(
+                "reference escapes the authorized folder or is not a valid local URL".into(),
+            )
+        })?;
+    let relative = candidate
+        .strip_prefix(root)
+        .map_err(|_| CommandError::Message("reference escapes the authorized folder".into()))?;
+    security::safe_child(root, &relative.to_string_lossy()).map_err(CommandError::from)
 }
 
 pub(crate) fn rollback_created_assets(created_files: &[PathBuf]) {
@@ -327,4 +378,50 @@ pub(crate) fn image_target_byte_range(
         span.source_byte_start + rest_start + offset + 1,
         span.source_byte_start + rest_start + offset + 1 + target.len(),
     ))
+}
+
+#[cfg(test)]
+mod local_reference_tests {
+    use super::*;
+    #[test]
+    fn encoded_and_root_relative_targets_share_the_same_authorized_resolution() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let docs = root.join("docs");
+        let assets = root.join("assets");
+        fs::create_dir(&docs).unwrap();
+        fs::create_dir(&assets).unwrap();
+        let note = docs.join("My Notes.md");
+        fs::write(&note, b"note").unwrap();
+        let image = assets.join("image#1.png");
+        fs::write(&image, b"image").unwrap();
+        assert_eq!(
+            resolve_local_reference(&docs, Some(root), "My%20Notes.md#heading").unwrap(),
+            fs::canonicalize(&note).unwrap()
+        );
+        assert_eq!(
+            resolve_local_reference(&docs, Some(root), "/assets/image%231.png?size=2").unwrap(),
+            fs::canonicalize(&image).unwrap()
+        );
+        assert_eq!(
+            resolve_local_reference(&docs, Some(root), "../assets/image%231.png").unwrap(),
+            fs::canonicalize(&image).unwrap()
+        );
+        for target in [
+            "../../outside.md",
+            "%2e%2e/%2e%2e/outside.md",
+            "/../outside.md",
+            "My%FGNotes.md",
+            "file:///secret",
+            "//server/file.md",
+            "%00bad",
+            "C%3A/secret",
+        ] {
+            assert!(
+                resolve_local_reference(&docs, Some(root), target).is_err(),
+                "{target}"
+            );
+        }
+        assert!(resolve_local_reference(&docs, None, "/assets/image%231.png").is_err());
+    }
 }

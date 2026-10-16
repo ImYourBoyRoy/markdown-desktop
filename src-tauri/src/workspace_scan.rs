@@ -196,6 +196,7 @@ pub fn index_workspace(db_path: &Path, root: &Path, max_depth: usize) -> Result<
     let mut insert = transaction.prepare_cached(
         "INSERT INTO markdown_fts(document_id, path, title, source) VALUES (?1, ?2, ?3, ?4)",
     )?;
+    transaction.execute_batch("DROP TABLE IF EXISTS markdown_links; CREATE TABLE markdown_links(source_path TEXT, target_path TEXT, line INTEGER, label TEXT); CREATE INDEX backlinks_target ON markdown_links(target_path);")?;
     let mut warnings = Vec::new();
     for path in bounded_markdown_walk(root, max_depth, &mut warnings) {
         if !security::is_markdown(&path) {
@@ -218,6 +219,30 @@ pub fn index_workspace(db_path: &Path, root: &Path, max_depth: usize) -> Result<
             title,
             source
         ])?;
+        let arena = comrak::Arena::new();
+        let options = comrak::Options::default();
+        let document = comrak::parse_document(&arena, &source, &options);
+        for node in document.descendants() {
+            let data = node.data.borrow();
+            if let comrak::nodes::NodeValue::Link(link) = &data.value
+                && let Ok(target) = crate::asset_ops::resolve_local_reference(
+                    path.parent().unwrap_or(root),
+                    Some(root),
+                    &link.url,
+                )
+                && security::is_markdown(&target)
+            {
+                transaction.execute(
+                    "INSERT INTO markdown_links VALUES (?1, ?2, ?3, ?4)",
+                    params![
+                        path.to_string_lossy(),
+                        target.to_string_lossy(),
+                        data.sourcepos.start.line as i64,
+                        link.url
+                    ],
+                )?;
+            }
+        }
     }
     drop(insert);
     transaction.commit()?;
@@ -285,8 +310,18 @@ fn bounded_markdown_walk(
         .into_iter()
         .filter_entry(|entry| !should_ignore(entry.path()));
     for entry in walker {
+        if files.len() >= MAX_TREE_NODES {
+            warnings.push(WorkspaceWarning {
+                path: root.to_string_lossy().into_owned(),
+                kind: "truncated".into(),
+                message: "Workspace indexing reached the 5000-file limit".into(),
+            });
+            break;
+        }
         match entry {
-            Ok(entry) if entry.file_type().is_file() => files.push(entry.into_path()),
+            Ok(entry) if entry.file_type().is_file() && security::is_markdown(entry.path()) => {
+                files.push(entry.into_path())
+            }
             Ok(_) => {}
             Err(error) => {
                 let path = error
@@ -335,6 +370,38 @@ fn permission_kind(error: &std::io::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn backlinks_follow_resolved_markdown_references_and_disappear_after_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("My Notes.md");
+        fs::write(&target, "# Notes").unwrap();
+        let source = dir.path().join("source.md");
+        fs::write(
+            &source,
+            "# Source\n\n[Notes][target]\n\n[target]: My%20Notes.md\n",
+        )
+        .unwrap();
+        let db = dir.path().join("index.sqlite3");
+        index_workspace(&db, dir.path(), 3).unwrap();
+        let connection = Connection::open(&db).unwrap();
+        let rows: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM markdown_links WHERE target_path = ?1 AND line = 3",
+                params![fs::canonicalize(&target).unwrap().to_string_lossy()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, 1);
+        drop(connection);
+        fs::write(&source, "No inbound link remains").unwrap();
+        index_workspace(&db, dir.path(), 3).unwrap();
+        let connection = Connection::open(db).unwrap();
+        let count: i64 = connection
+            .query_row("SELECT count(*) FROM markdown_links", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+    }
     use std::fs;
     use tempfile::tempdir;
 

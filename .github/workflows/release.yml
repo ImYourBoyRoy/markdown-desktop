@@ -24,7 +24,14 @@ env:
   PNPM_VERSION: '12'
 
 jobs:
+  quality:
+    name: Verify the release source
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
   release:
+    needs: quality
     if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.verify_only && !inputs.publish_existing) }}
     name: Build ${{ matrix.name }}
     strategy:
@@ -93,7 +100,7 @@ jobs:
         with:
           version: ${{ env.PNPM_VERSION }}
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -176,8 +183,15 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: node scripts/build_app.mjs ${{ matrix.args }} --config src-tauri/tauri.release.conf.json
 
+      - name: Verify embedded optional renderer budgets and offline SVG smoke
+        run: node scripts/optional_renderer_smoke.mjs
+
+      - name: Run packaged interaction acceptance (Windows x64)
+        if: matrix.name == 'Windows x64'
+        run: node scripts/packaged_acceptance.mjs --require-binary
+
       - name: Upload staged platform artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: markdown-desktop-${{ matrix.target || runner.os }}-${{ runner.arch }}
           path: Apps/**
@@ -318,8 +332,8 @@ jobs:
 
   publish:
     name: Publish and verify release
-    needs: release
-    if: ${{ always() && (needs.release.result == 'success' || (github.event_name == 'workflow_dispatch' && (inputs.verify_only || inputs.publish_existing))) }}
+    needs: [quality, release]
+    if: ${{ always() && needs.quality.result == 'success' && (needs.release.result == 'success' || (github.event_name == 'workflow_dispatch' && (inputs.verify_only || inputs.publish_existing))) }}
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -328,7 +342,7 @@ jobs:
         with:
           fetch-depth: 1
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -343,6 +357,13 @@ jobs:
             tag="v${version}"
           fi
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Require the tag to match the verified source
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          git fetch --no-tags origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          test "$(git rev-parse "${RELEASE_TAG}^{commit}")" = "$GITHUB_SHA"
 
       - name: Fetch release metadata for verification
         env:
