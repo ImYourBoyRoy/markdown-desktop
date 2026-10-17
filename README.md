@@ -182,17 +182,23 @@ pnpm verify:dependencies
 pnpm tauri build
 ```
 
-The latest local release-candidate checkpoint (2026-10-16) used Node 26.9.0,
-pnpm 12.14.0, and stable Rust/Cargo 1.99.1. The `1.1.2` Windows x64 candidate
-passed the dependency verification gate, `pnpm tauri build`, `pnpm build:app`,
-and packaged acceptance at 20/20 checks. WCAGate covered 4,143 surfaces with
-zero active findings; its one bounded shutdown-dialog `cantTell` suppression is
+The latest `v1.1.2` release checkpoint (2026-10-16) used Node 26.9.0,
+pnpm 12.14.0, and stable Rust/Cargo 1.99.1. The Windows x64 candidate passed
+the dependency verification gate, `pnpm tauri build`, `pnpm build:app`, and
+packaged acceptance at 20/20 checks. WCAGate covered 4,143 surfaces with zero
+active findings; its one bounded shutdown-dialog `cantTell` suppression is
 fingerprinted, expiry-bound, and backed by the tracked manual contrast evidence
 in `wcag-audit/manual-evidence.json`. The dependency is current at upstream
-revision `30be59d61db6f1cc3c5e80701fb28a0346588ca7`. This is local Windows
-evidence for an unpublished candidate; the release matrix, exact-commit GitHub
-CI, signing, target-OS accessibility, and live updater-install checks still
-require their respective environments.
+revision `30be59d61db6f1cc3c5e80701fb28a0346588ca7`.
+
+The exact-commit GitHub release workflow passed its quality/security gate, six
+native smoke lanes, six platform builds, and publish verifier at source
+`9f354b1ded7602dcf2dcab2befdc612bea400d12`. [Markdown Desktop v1.1.2](https://github.com/ImYourBoyRoy/markdown-desktop/releases/tag/v1.1.2)
+is public with 29 assets; its published `latest.json` reports 18 updater
+platforms with signatures. The release workflow run is
+[38978056437](https://github.com/ImYourBoyRoy/markdown-desktop/actions/runs/38978056437).
+Apple Developer signing/notarization remains deferred, so the macOS packages
+may show an unidentified-developer warning.
 
 `pnpm full:upgrade` refreshes WCAGate to the latest upstream `main` commit,
 locks that exact revision, and reruns the accessibility gate before the rest of

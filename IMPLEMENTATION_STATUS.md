@@ -7,13 +7,13 @@ clone or handoff.
 
 Updated: 2026-10-16
 
-## 2026-10-16 stable upgrade and release-candidate validation checkpoint
+## 2026-10-16 stable upgrade, release, and publication checkpoint
 
 - Ran the bounded stable upgrade workflow from the existing dirty worktree. It
   retained rollback snapshot `.upgrade-backups/run-TjxL7R`, updated the
   JavaScript, Rust, Cargo, and toolchain lines, and retained the already-current
   pinned CI action revisions.
-- The current local candidate is `1.1.2` on Node 26.9.0, pnpm 12.14.0, and
+- The published release is `v1.1.2` on Node 26.9.0, pnpm 12.14.0, and
   Rust/Cargo 1.99.1. The application is on Tauri 2.12.4, Vite 8.3.4, DOMPurify
   3.4.17, Playwright 1.64.1, Vitest 5.0.5, axe-core 4.14.0, and Mermaid 12.2.0.
   `pnpm verify:dependencies` passed with zero typecheck diagnostics, 425
@@ -46,13 +46,18 @@ Updated: 2026-10-16
   `@typescript/native` remains the separate TypeScript 7 alias. Moving the
   compiler peer is a separate compatibility migration, not an unattended
   patch update.
-- This is local Windows x64 evidence for the release candidate. Other
-  operating-system runtime, physical-input/accessibility, signing, live
-  updater-install, and exact-commit GitHub CI gates remain release-workflow
-  gates for the target environments. `pnpm install --frozen-lockfile` succeeds
-  but reports pnpm's WCAGate skill-approval notice; no approval mutation was
-  made. The candidate is ready for the next exact-commit GitHub release
-  workflow attempt.
+- The exact-commit GitHub release workflow passed on attempt 2 at source
+  `9f354b1ded7602dcf2dcab2befdc612bea400d12`. Its quality/security gate, six
+  native smoke lanes, six platform release builds, and publish verifier all
+  passed. The public release is [Markdown Desktop v1.1.2](https://github.com/ImYourBoyRoy/markdown-desktop/releases/tag/v1.1.2)
+  with 29 assets; the published `latest.json` reports 18 updater platforms,
+  each with a signature. The workflow run is [38978056437](https://github.com/ImYourBoyRoy/markdown-desktop/actions/runs/38978056437).
+- This release evidence covers the target operating-system build lanes and
+  updater metadata. Physical-input/accessibility, live updater-install, and
+  Apple Developer signing/notarization remain separate environment gates;
+  macOS packages are intentionally unsigned because the Apple credentials are
+  not configured. `pnpm install --frozen-lockfile` succeeds but reports pnpm's
+  WCAGate skill-approval notice; no approval mutation was made.
 
 ## 2026-10-06 review-remediation checkpoint
 
